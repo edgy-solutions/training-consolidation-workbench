@@ -1,5 +1,14 @@
 # Verification Script for Sensor (PowerShell)
 
+# 0. Load .env if present
+if (Test-Path ".env") {
+    Write-Host "Loading .env file..."
+    Get-Content .env | Where-Object { $_ -match '=' -and $_ -notmatch '^#' } | ForEach-Object {
+        $key, $value = $_.Split('=', 2)
+        [System.Environment]::SetEnvironmentVariable($key.Trim(), $value.Trim(), [System.EnvironmentVariableTarget]::Process)
+    }
+}
+
 # 1. Check Docker & MinIO (Skip if external)
 if (-not $Env:USE_EXTERNAL_MINIO) {
     if (Get-Command docker -ErrorAction SilentlyContinue) {

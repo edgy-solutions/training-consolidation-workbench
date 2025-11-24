@@ -1,9 +1,13 @@
 # Verification Script for Sensor-Driven Flow
 import os
 import uuid
+from dotenv import load_dotenv
 from src.storage.minio import MinioClient
 
 def main():
+    # 0. Load environment variables from .env
+    load_dotenv()
+
     # 1. Get MinIO settings from environment or use defaults
     endpoint = os.getenv("MINIO_ENDPOINT", "localhost:9000")
     access_key = os.getenv("MINIO_ACCESS_KEY", "minioadmin")

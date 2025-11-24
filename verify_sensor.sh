@@ -3,6 +3,12 @@
 # Verification Script for Sensor (Linux/macOS)
 set -e
 
+# 0. Load .env if present
+if [ -f ".env" ]; then
+    echo "Loading .env file..."
+    export $(grep -v '^#' .env | xargs)
+fi
+
 # 1. Check Docker & MinIO
 if [ -z "$USE_EXTERNAL_MINIO" ]; then
     echo "Checking Docker..."
