@@ -12,7 +12,7 @@ class MinioClient:
         self.secure = secure
         
         self.client = Minio(
-            self.endpoint,
+            endpoint=self.endpoint,
             access_key=self.access_key,
             secret_key=self.secret_key,
             secure=self.secure
@@ -20,8 +20,8 @@ class MinioClient:
 
     def ensure_bucket(self, bucket_name: str):
         """Check if bucket exists, otherwise create it."""
-        if not self.client.bucket_exists(bucket_name):
-            self.client.make_bucket(bucket_name)
+        if not self.client.bucket_exists(bucket_name=bucket_name):
+            self.client.make_bucket(bucket_name=bucket_name)
             print(f"Bucket '{bucket_name}' created.")
         else:
             print(f"Bucket '{bucket_name}' already exists.")
@@ -30,7 +30,7 @@ class MinioClient:
         """Upload a file from the local filesystem."""
         self.ensure_bucket(bucket_name)
         try:
-            self.client.fput_object(bucket_name, object_name, file_path, content_type=content_type)
+            self.client.fput_object(bucket_name=bucket_name, object_name=object_name, file_path=file_path, content_type=content_type)
             print(f"'{file_path}' is successfully uploaded as object '{object_name}' to bucket '{bucket_name}'.")
             return f"http://{self.endpoint}/{bucket_name}/{object_name}" 
         except S3Error as exc:
@@ -43,9 +43,9 @@ class MinioClient:
         try:
             data_stream = io.BytesIO(data)
             self.client.put_object(
-                bucket_name,
-                object_name,
-                data_stream,
+                bucket_name=bucket_name,
+                object_name=object_name,
+                data=data_stream,
                 length=len(data),
                 content_type=content_type
             )
@@ -59,9 +59,9 @@ class MinioClient:
         """Get a presigned URL for an object."""
         try:
             return self.client.get_presigned_url(
-                "GET",
-                bucket_name,
-                object_name,
+                method="GET",
+                bucket_name=bucket_name,
+                object_name=object_name,
                 expires=timedelta(hours=expires_hours),
             )
         except S3Error as exc:

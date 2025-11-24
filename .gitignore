@@ -1,0 +1,39 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+.venv/
+*.egg-info/
+.eggs/
+dist/
+build/
+.pytest_cache/
+.mypy_cache/
+
+# Dagster
+dagster.yaml
+workspace.yaml
+*.db
+*.db-journal
+/logs/
+/tmp/
+
+# Environment Variables
+.env
+
+# Data and Local Artifacts
+data/
+*.log
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db

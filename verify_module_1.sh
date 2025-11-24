@@ -30,7 +30,7 @@ export MINIO_ENDPOINT="localhost:9000"
 export MINIO_ACCESS_KEY="minioadmin"
 export MINIO_SECRET_KEY="minioadmin"
 
-dagster asset materialize -m src.pipelines.definitions -a raw_documents
+dagster asset materialize -m src.pipelines.definitions --select raw_documents
 
 echo "Success! Assets materialized."
 echo "You can view the MinIO console at http://localhost:9001 to verify the 'images', 'text', and 'manifests' buckets."

@@ -3,7 +3,7 @@ import uuid
 import json
 import io
 from typing import List, Dict, Any
-from dagster import asset, Output, AssetContext
+from dagster import asset, Output, AssetExecutionContext
 from src.storage.dagster_resources import MinioResource
 from src.ingestion.rendering import render_pdf_pages, render_pptx_slides
 from src.ingestion.extraction import extract_text_and_metadata
@@ -12,7 +12,7 @@ from src.ingestion.extraction import extract_text_and_metadata
 SOURCE_DIR = os.getenv("INGESTION_SOURCE_DIR", "data/raw")
 
 @asset
-def raw_documents(context: AssetContext, minio: MinioResource) -> List[Dict[str, Any]]:
+def raw_documents(context: AssetExecutionContext, minio: MinioResource) -> List[Dict[str, Any]]:
     """
     Ingests documents from the source directory.
     Renders pages to images, extracts text, and uploads everything to MinIO.
