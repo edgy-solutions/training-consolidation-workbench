@@ -14,7 +14,12 @@ dependencies = [
     "pillow",
     "requests",
     "antlr4-python3-runtime>=4.13",
-    "python-dotenv"
+    "python-dotenv",
+    "neo4j",
+    "weaviate-client",
+    "openai",
+    "instructor",
+    "pydantic"
 ]
 
 [build-system]
