@@ -1,4 +1,10 @@
+import os
+from dotenv import load_dotenv
 from dagster import Definitions, load_assets_from_modules, define_asset_job
+
+# Load env vars from .env file if present
+load_dotenv()
+
 from src.ingestion import assets as ingestion_assets
 from src.semantic import assets as semantic_assets
 from src.ingestion.sensors import course_upload_sensor

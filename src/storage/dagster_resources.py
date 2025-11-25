@@ -1,13 +1,14 @@
+import os
 from dagster import ConfigurableResource
 from src.storage.minio import MinioClient
 from src.storage.neo4j import Neo4jClient
 from src.storage.weaviate import WeaviateClient
 
 class MinioResource(ConfigurableResource):
-    endpoint: str = "localhost:9000"
-    access_key: str = "minioadmin"
-    secret_key: str = "minioadmin"
-    secure: bool = False
+    endpoint: str = os.getenv("MINIO_ENDPOINT", "localhost:9000")
+    access_key: str = os.getenv("MINIO_ACCESS_KEY", "minioadmin")
+    secret_key: str = os.getenv("MINIO_SECRET_KEY", "minioadmin")
+    secure: bool = os.getenv("MINIO_SECURE", "false").lower() == "true"
 
     def get_client(self) -> MinioClient:
         return MinioClient(
@@ -18,9 +19,9 @@ class MinioResource(ConfigurableResource):
         )
 
 class Neo4jResource(ConfigurableResource):
-    uri: str = "bolt://localhost:7687"
-    user: str = "neo4j"
-    password: str = "password"
+    uri: str = os.getenv("NEO4J_URI", "bolt://localhost:7687")
+    user: str = os.getenv("NEO4J_USER", "neo4j")
+    password: str = os.getenv("NEO4J_PASSWORD", "password")
 
     def get_client(self) -> Neo4jClient:
         return Neo4jClient(
@@ -30,7 +31,7 @@ class Neo4jResource(ConfigurableResource):
         )
 
 class WeaviateResource(ConfigurableResource):
-    url: str = "http://localhost:8080"
+    url: str = os.getenv("WEAVIATE_URL", "http://localhost:8080")
 
     def get_client(self) -> WeaviateClient:
         return WeaviateClient(
