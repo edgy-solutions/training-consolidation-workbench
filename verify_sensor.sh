@@ -42,10 +42,10 @@ echo "Installing dependencies..."
 uv pip install -e .
 
 # 3. Run Upload Script
-echo "Running upload script..."
+echo "Running upload script (test suite)..."
 # Use python from venv
 VENV_PYTHON=".venv/bin/python"
-$VENV_PYTHON verify_sensor_upload.py
+$VENV_PYTHON upload_test_suite.py
 
 # 4. Hint to run Dagster
 echo ""

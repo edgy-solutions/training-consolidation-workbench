@@ -19,7 +19,9 @@ dependencies = [
     "weaviate-client<4.0.0",
     "openai",
     "baml-py",
-    "pydantic"
+    "pydantic",
+    "reportlab",
+    "python-docx"
 ]
 
 [build-system]

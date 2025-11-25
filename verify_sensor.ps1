@@ -34,29 +34,54 @@ Write-Host "Setting up Python environment with uv..."
 
 # Check for uv
 if (-not (Get-Command uv -ErrorAction SilentlyContinue)) {
-    Write-Error "uv is not installed. Please install it first (see WARP.md)."
+    # Check if uv is in the user path but not refreshed in this session?
+    # Fallback to checking if user can run it
+    Write-Warning "uv command not found in PATH. Attempting to proceed assuming it might be an alias or missing path entry, but this may fail."
+    # Optionally try to find it in common locations or just fail later.
+    # For now, we'll error out if we truly can't find it, but let's try one more common location or just exit.
+    Write-Error "uv is not installed or not in PATH. Please install it first (see WARP.md) and ensure it is in your PATH."
     exit 1
 }
 
 # Create venv if missing
 if (-not (Test-Path ".venv")) {
     Write-Host "Creating .venv..."
-    uv venv
+    if (Get-Command uv -ErrorAction SilentlyContinue) {
+        uv venv
+    } else {
+        python -m venv .venv
+    }
 }
 
 # Install dependencies
 Write-Host "Installing dependencies..."
-uv pip install -e .
+if (Get-Command uv -ErrorAction SilentlyContinue) {
+    uv pip install -e .
+} else {
+    # Fallback to pip if uv missing (but encouraged)
+    # Check if running on Windows using .NET method
+    $IsWin = [System.Environment]::OSVersion.Platform -eq "Win32NT"
+    $PIP_CMD = if ($IsWin) { ".venv\Scripts\pip.exe" } else { ".venv/bin/pip" }
+    & $PIP_CMD install -e .
+}
 
 # 3. Run Upload Script
-Write-Host "Running upload script..."
+Write-Host "Running upload script (test suite)..."
 # Use the python from .venv
-$VENV_PYTHON = if ($IsWindows) { ".venv\Scripts\python.exe" } else { ".venv/bin/python" }
-& $VENV_PYTHON verify_sensor_upload.py
+# Check if running on Windows using .NET method since $IsWindows is unreliable in some PS versions
+$IsWin = [System.Environment]::OSVersion.Platform -eq "Win32NT"
+
+if ($IsWin) {
+    $VENV_PYTHON = ".venv\Scripts\python.exe"
+} else {
+    $VENV_PYTHON = ".venv/bin/python"
+}
+& $VENV_PYTHON upload_test_suite.py
 
 # 4. Hint to run Dagster
 Write-Host "`nTo run the Dagster UI:"
-if ($IsWindows) {
+$IsWin = [System.Environment]::OSVersion.Platform -eq "Win32NT"
+if ($IsWin) {
     Write-Host ".venv\Scripts\dagster dev -m src.pipelines.definitions"
 } else {
     Write-Host "source .venv/bin/activate; dagster dev -m src.pipelines.definitions"
