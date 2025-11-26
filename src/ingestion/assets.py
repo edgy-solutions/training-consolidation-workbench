@@ -7,7 +7,7 @@ import tempfile
 from typing import List, Dict, Any
 from dagster import asset, Output, AssetExecutionContext, Config
 from src.storage.dagster_resources import MinioResource
-from src.ingestion.rendering import render_pdf_pages, render_pptx_slides
+from src.ingestion.rendering import render_pdf_pages, render_pptx_slides, _check_libreoffice_installed
 from src.ingestion.extraction import extract_text_and_metadata
 
 BUCKET_NAME = "training-content"
@@ -30,6 +30,23 @@ def process_course_artifact(context: AssetExecutionContext, config: CourseArtifa
     course_id = config.course_id
     filename = config.filename
     source_object_name = config.object_name
+    
+    # Set LibreOffice path for Unstructured if found
+    soffice_path = _check_libreoffice_installed()
+    if soffice_path:
+        context.log.info(f"Found LibreOffice at: {soffice_path}")
+        # Add directory to PATH just in case
+        bin_dir = os.path.dirname(soffice_path)
+        if bin_dir not in os.environ["PATH"]:
+            os.environ["PATH"] = f"{bin_dir}{os.pathsep}{os.environ['PATH']}"
+            
+        # Set environment variables used by Unstructured or dependencies
+        # UNSTRUCTURED_SO_SLICE_PATH is the requested var (assuming typo for 'soffice')
+        os.environ["UNSTRUCTURED_SO_SLICE_PATH"] = soffice_path 
+        # Standard LibreOffice binary path for various tools
+        os.environ["LIBREOFFICE_BINARY"] = soffice_path
+    else:
+        context.log.warning("LibreOffice not found. PPTX extraction might fail.")
     
     context.log.info(f"Processing artifact: {source_object_name} (Course ID: {course_id})")
 
