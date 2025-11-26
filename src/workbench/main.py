@@ -14,7 +14,12 @@ from src.workbench.models import (
 )
 from src.ingestion.assets import BUCKET_NAME
 
+from dotenv import load_dotenv
+
 app = FastAPI(title="Training Consolidation Workbench API")
+
+# Load env vars
+load_dotenv()
 
 # Allow CORS for local frontend development
 app.add_middleware(
