@@ -46,7 +46,7 @@ def generate_course_a_pdf(output_dir):
     print(f"Generated {path}")
     
     metadata = {
-        "business_unit": "Software Engineering",
+        "business_unit": "Ray",
         "course_title": "Intro to Git",
         "version": "1.0",
         "scope_of_material": "Git Basics, Commits, Branches",
@@ -109,7 +109,7 @@ def generate_course_b_pptx(output_dir):
     print(f"Generated {path}")
     
     metadata = {
-        "business_unit": "DevOps",
+        "business_unit": "Collin",
         "course_title": "Git Workflows",
         "version": "2.1",
         "scope_of_material": "Feature Branching, Pull Requests",
@@ -160,7 +160,7 @@ def generate_course_c_docx(output_dir):
     print(f"Generated {path}")
     
     metadata = {
-        "business_unit": "Software Engineering",
+        "business_unit": "Pat",
         "course_title": "Collaborating with Git",
         "version": "1.5",
         "scope_of_material": "Conflicts, Merge vs Rebase",

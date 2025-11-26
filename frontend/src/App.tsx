@@ -1,6 +1,6 @@
 import { useState } from 'react';
-import { DndContext, DragOverlay, useSensor, useSensors, MouseSensor, TouchSensor, closestCenter } from '@dnd-kit/core';
-import { arrayMove } from '@dnd-kit/sortable';
+import { DndContext, DragOverlay, useSensor, useSensors, MouseSensor, TouchSensor } from '@dnd-kit/core';
+// import { arrayMove } from '@dnd-kit/sortable';
 import type { DragEndEvent } from '@dnd-kit/core';
 import { TopBar } from './components/TopBar';
 import { SourceBrowser } from './components/SourceBrowser';
@@ -35,8 +35,8 @@ function App() {
     // If active.id is in the source_refs of the over target (or we detect sorting context)
     // Actually, DndKit's DragEndEvent for sorting has both active and over as sortable IDs if sorting.
     if (active.data.current?.sortable) {
-       const oldIndex = active.data.current.sortable.index;
-       const newIndex = over.data.current?.sortable?.index;
+       // const oldIndex = active.data.current.sortable.index;
+       // const newIndex = over.data.current?.sortable?.index;
        
        // We need to know WHICH node we are sorting within.
        // Since we don't have a global state store, we'd need to update backend or lift state up.

@@ -38,27 +38,28 @@ dagster_client = DagsterGraphQLClient(DAGSTER_HOST, port_number=DAGSTER_PORT)
 # --- A. The Explorer Module ---
 
 @app.get("/source/tree", response_model=List[Dict[str, Any]])
-def get_source_tree(discipline: Optional[str] = None):
+def get_source_tree(engineering_discipline: Optional[str] = None):
     """
     Returns the hierarchy of Business Units -> Courses.
     Optional: Filter by engineering discipline.
     """
+    discipline = engineering_discipline
     if discipline:
         # Convert discipline to title case to match DB values (e.g. "software" -> "Software")
         # Or handle via backend logic if DB is strict.
         # Assuming DB uses Capitalized "Software", "Mechanical" etc.
         query = """
         MATCH (c:Course)
-        WHERE c.discipline =~ $discipline_regex
-        RETURN c.business_unit as bu, c.id as id, c.title as title, c.discipline as discipline
+        WHERE toLower(c.discipline) CONTAINS toLower($discipline)
+        RETURN c.business_unit as bu, c.id as id, c.title as title, c.discipline as engineering_discipline
         ORDER BY bu, title
         """
-        # Case-insensitive regex search for discipline
-        params = {"discipline_regex": f"(?i){discipline}"}
+        # Use simple parameter for CONTAINS check
+        params = {"discipline": discipline}
     else:
         query = """
         MATCH (c:Course)
-        RETURN c.business_unit as bu, c.id as id, c.title as title, c.discipline as discipline
+        RETURN c.business_unit as bu, c.id as id, c.title as title, c.discipline as engineering_discipline
         ORDER BY bu, title
         """
         params = {}
@@ -76,7 +77,7 @@ def get_source_tree(discipline: Optional[str] = None):
             "id": row["id"],
             "name": row["title"],
             "type": "Course",
-            "discipline": row.get("discipline"),
+            "engineering_discipline": row.get("engineering_discipline"),
             # We could fetch slides here or fetch on demand
             "has_children": True 
         })

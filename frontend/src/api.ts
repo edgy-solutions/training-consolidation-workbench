@@ -27,14 +27,14 @@ export interface CourseNode {
     id: string;
     name: string;
     type: 'BusinessUnit' | 'Course';
-    discipline?: string;
+    engineering_discipline?: string;
     children?: CourseNode[];
     has_children?: boolean;
 }
 
 export const api = {
     getSourceTree: async (discipline?: string) => {
-        const params = discipline ? { discipline } : {};
+        const params = discipline ? { engineering_discipline: discipline } : {};
         const res = await axios.get<CourseNode[]>(`${API_URL}/source/tree`, { params });
         return res.data;
     },
