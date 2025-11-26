@@ -31,7 +31,7 @@ def verify_harmonization():
         
         for term in conflicts:
             client.execute_query(
-                "MERGE (c:Concept {name: $name}) SET c.description = 'Safety procedure.'",
+                "MERGE (c:Concept {name: `$name}) SET c.description = 'Safety procedure.'",
                 {"name": term}
             )
             
@@ -83,7 +83,13 @@ $VerifyScript | Out-File -Encoding UTF8 verify_harmonization.py
 
 # 4. Run Verification
 Write-Host "Running Verification..."
-$VENV_PYTHON = if ($IsWindows) { ".venv\Scripts\python.exe" } else { ".venv/bin/python" }
+$IsWin = [System.Environment]::OSVersion.Platform -eq "Win32NT"
+
+if ($IsWin) {
+    $VENV_PYTHON = ".venv\Scripts\python.exe"
+} else {
+    $VENV_PYTHON = ".venv/bin/python"
+}
 & $VENV_PYTHON verify_harmonization.py
 
 if ($LASTEXITCODE -eq 0) {

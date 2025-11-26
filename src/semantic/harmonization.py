@@ -3,6 +3,7 @@ import dspy
 from typing import List, Dict
 from pydantic import BaseModel, Field
 from src.storage.neo4j import Neo4jClient
+from dotenv import load_dotenv
 
 class ConceptCluster(BaseModel):
     canonical_name: str = Field(description="The standardized, canonical name for this group of concepts.")
@@ -22,15 +23,20 @@ class Harmonizer:
     def __init__(self, neo4j_client: Neo4jClient):
         self.neo4j = neo4j_client
         
+        load_dotenv()
+
         # Configure DSPy with Ollama
-        base_url = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
+        # If OLLAMA_BASE_URL does not have http/https, prepend it.
+        base_url = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434").replace('/v1','')           
         model_name = os.getenv("OLLAMA_MODEL", "gpt-oss:120b")
+              
+        # If using "ollama/model", we usually don't need to pass api_base if it's standard localhost,
+        # but here we want to respect the env var.
+        print(f'Using {base_url} for ollama and model {model_name}')
+        self.lm = dspy.LM(model=f"ollama_chat/{model_name}", api_base=base_url, api_key='')
+        dspy.configure(lm=self.lm)
         
-        # dspy.Ollama is the standard provider
-        self.lm = dspy.OllamaLocal(model=model_name, base_url=base_url, timeout_ms=120000)
-        dspy.settings.configure(lm=self.lm)
-        
-        self.module = dspy.TypedPredictor(HarmonizationSignature)
+        self.module = dspy.Predict(HarmonizationSignature)
 
     def fetch_concepts(self) -> List[str]:
         """Fetch all unique concept names from Neo4j."""
@@ -44,12 +50,19 @@ class Harmonizer:
         if not concepts:
             return []
             
-        # If list is too large, we might need to chunk it. 
-        # For now, assuming reasonable size for prompt context.
         print(f"Harmonizing {len(concepts)} concepts...")
         
+        # DSPy Predict returns a Prediction object, access fields by name
         prediction = self.module(concepts=concepts)
-        return prediction.clusters
+        
+        # Check if prediction has 'clusters' attribute directly or via other means
+        # TypedPredictor usually returns strict types, but Predict might return a dspy.Prediction
+        if hasattr(prediction, "clusters"):
+            return prediction.clusters
+        else:
+            # Fallback parsing if something goes wrong or standard Predict is used
+            print("Warning: Unexpected DSPy output format.")
+            return []
 
     def apply_clusters(self, clusters: List[ConceptCluster]):
         """Write CanonicalConcept nodes and relationships to Neo4j."""

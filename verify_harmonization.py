@@ -17,7 +17,7 @@ def verify_harmonization():
         
         for term in conflicts:
             client.execute_query(
-                "MERGE (c:Concept {name: }) SET c.description = 'Safety procedure.'",
+                "MERGE (c:Concept {name: $name}) SET c.description = 'Safety procedure.'",
                 {"name": term}
             )
             
