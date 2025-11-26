@@ -38,11 +38,28 @@ def render_pdf_pages(file_path: str) -> List[Image.Image]:
         raise
 
 def _check_libreoffice_installed():
-    """Check if 'soffice' (LibreOffice) is available in PATH."""
-    if shutil.which("soffice"):
-        return "soffice"
-    
-    # Common Windows paths if not in PATH
+    """Check if 'soffice' or 'libreoffice' (including versioned binaries) is available."""
+    # 1. Check standard command names
+    for cmd in ["soffice", "libreoffice"]:
+        if shutil.which(cmd):
+            return cmd
+            
+    # 2. Check for versioned binaries on Linux (e.g., libreoffice25.8)
+    if platform.system() == "Linux":
+        import glob
+        # Check common bin locations
+        for bin_dir in ["/usr/bin", "/usr/local/bin", "/opt/libreoffice/program"]:
+            if os.path.isdir(bin_dir):
+                # Look for libreoffice* or soffice*
+                matches = glob.glob(os.path.join(bin_dir, "libreoffice*")) + glob.glob(os.path.join(bin_dir, "soffice*"))
+                # Filter out directories and ensure executable
+                matches = [m for m in matches if os.path.isfile(m) and os.access(m, os.X_OK)]
+                if matches:
+                    # Sort to be deterministic (e.g. picking higher version if naming aligns)
+                    matches.sort()
+                    return matches[0]
+
+    # 3. Common Windows paths if not in PATH
     if platform.system() == "Windows":
         common_paths = [
             r"C:\Program Files\LibreOffice\program\soffice.exe",
