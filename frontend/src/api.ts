@@ -69,5 +69,9 @@ export const api = {
     getSynthesisPreview: async (nodeId: string) => {
         const res = await axios.get<{content: string, status: string}>(`${API_URL}/synthesis/preview/${nodeId}`);
         return res.data;
+    },
+    searchConcepts: async (q: string) => {
+        const res = await axios.get<string[]>(`${API_URL}/search/concepts`, { params: { q } });
+        return res.data;
     }
 };
