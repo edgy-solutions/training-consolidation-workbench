@@ -166,7 +166,7 @@ const CourseItem: React.FC<{ course: CourseNode, highlightIds: string[] }> = ({ 
 
 const SlideRow: React.FC<{ slide: SourceSlide, isHighlighted: boolean }> = ({ slide, isHighlighted }) => {
     const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({
-        id: slide.id,
+        id: `source-${slide.id}`,
         data: { slide }
     });
 

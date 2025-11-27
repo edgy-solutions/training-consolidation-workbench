@@ -8,7 +8,7 @@ interface AppState {
     structure: TargetDraftNode[];
     activeNodeId: string | null; // The node currently being edited/viewed in Right Pane
     activeSlideId: string | null; // The source slide currently being inspected
-    
+
     // Actions
     setDiscipline: (d: string) => void;
     setProjectId: (id: string | null) => void;
@@ -17,7 +17,7 @@ interface AppState {
     fetchStructure: () => Promise<void>;
     createProjectIfNeeded: () => Promise<void>;
     addNode: (parentId: string, title: string) => Promise<void>;
-    mapSlideToNode: (nodeId: string, slideId: string) => Promise<void>;
+    mapSlideToNode: (nodeId: string, slideIds: string | string[]) => Promise<void>;
 }
 
 export const useAppStore = create<AppState>((set, get) => ({
@@ -50,7 +50,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         try {
             const p = await api.createDraftProject(`Unified ${discipline} Standard`);
             set({ projectId: p.id });
-            
+
             // Create initial default node
             await api.addDraftNode(p.id, "Module 1: Fundamentals");
             get().fetchStructure();
@@ -68,9 +68,11 @@ export const useAppStore = create<AppState>((set, get) => ({
         }
     },
 
-    mapSlideToNode: async (nodeId, slideId) => {
+    mapSlideToNode: async (nodeId, slideIds) => {
         try {
-            await api.mapSlideToNode(nodeId, [slideId]);
+            // If slideIds is a string (legacy call), wrap it. If array, use as is.
+            const ids = Array.isArray(slideIds) ? slideIds : [slideIds];
+            await api.mapSlideToNode(nodeId, ids);
             get().fetchStructure(); // Refresh to see the new link
         } catch (e) {
             console.error("Failed to map slide", e);

@@ -109,6 +109,18 @@ export const SynthBlock: React.FC<SynthBlockProps> = ({ node, onRefresh }) => {
         if (items.length > 0) load();
     }, [items]);
 
+    const handleRemove = async (slideId: string) => {
+        const newItems = items.filter(id => id !== slideId);
+        setItems(newItems); // Optimistic update
+        try {
+            await api.mapSlideToNode(node.id, newItems);
+            onRefresh();
+        } catch (e) {
+            console.error("Failed to remove slide", e);
+            onRefresh(); // Revert
+        }
+    };
+
     const handleSynthesize = async () => {
         setSynthesizing(true);
         try {
@@ -174,7 +186,13 @@ export const SynthBlock: React.FC<SynthBlockProps> = ({ node, onRefresh }) => {
                                 <div className="space-y-2">
                                     <SortableContext items={items} strategy={verticalListSortingStrategy}>
                                         {items.map(refId => (
-                                            <SortableSlideThumbnail key={refId} id={refId} url={thumbnails[refId]} parentNode={node} />
+                                            <SortableSlideThumbnail
+                                                key={refId}
+                                                id={refId}
+                                                url={thumbnails[refId]}
+                                                parentNode={node}
+                                                onRemove={() => handleRemove(refId)}
+                                            />
                                         ))}
                                     </SortableContext>
                                 </div>

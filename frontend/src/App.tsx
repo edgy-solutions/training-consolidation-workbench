@@ -10,7 +10,7 @@ import type { SourceSlide } from './api';
 import { useEffect, useState } from 'react';
 
 function App() {
-  const { discipline, setDiscipline, projectId, setProjectId, createProjectIfNeeded, mapSlideToNode } = useAppStore();
+  const { discipline, setDiscipline, projectId, setProjectId, createProjectIfNeeded, mapSlideToNode, structure } = useAppStore();
   const [activeDragSlide, setActiveDragSlide] = useState<SourceSlide | null>(null);
 
   // Ensure a project exists for the current discipline
@@ -50,31 +50,33 @@ function App() {
     // Use 'over' directly as we know SynthBlock sets 'data'
     const overData = over.data.current;
 
-    // Debug logging
-    console.log('DragEnd:', { activeId: active.id, overId: over.id, overData });
-
     if (overData) {
-      let targetNode = null;
+      let targetNodeId = null;
 
       if (overData.type === 'target') {
-        targetNode = overData.node;
+        targetNodeId = overData.node.id;
       } else if (overData.type === 'sortable-item') {
         // Dropped onto an existing item in the list
-        targetNode = overData.node;
+        targetNodeId = overData.node.id;
       }
 
       // Try to get slide from active data, or fallback to activeDragSlide state
       const slide = active.data.current?.slide || activeDragSlide;
 
-      if (targetNode && slide) {
-        console.log(`Mapping slide ${slide.id} to node ${targetNode.id}`);
+      if (targetNodeId && slide) {
         try {
-          await mapSlideToNode(targetNode.id, slide.id);
+          // Get fresh node from store using getState() to bypass any React closure staleness
+          const currentStructure = useAppStore.getState().structure;
+          const freshNode = currentStructure.find(n => n.id === targetNodeId);
+          const currentSlides = freshNode?.source_refs || [];
+
+          // Create new list, ensuring uniqueness
+          const newSlides = Array.from(new Set([...currentSlides, slide.id]));
+
+          await mapSlideToNode(targetNodeId, newSlides);
         } catch (err) {
           console.error("Error mapping slide:", err);
         }
-      } else {
-        console.warn("Drop failed: Missing targetNode or slide", { targetNode, slide });
       }
     }
 

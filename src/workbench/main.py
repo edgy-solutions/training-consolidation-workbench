@@ -242,10 +242,15 @@ def add_draft_node(parent_id: str, title: str):
 def map_slides_to_node(node_id: str, slide_ids: List[str]):
     """
     Links "Source Slides" to a "Target Node" (Drag & Drop action).
+    Now performs a full sync: removes existing links and adds new ones.
     """
     query = """
     MATCH (t:TargetNode {id: $node_id})
-    MATCH (s:Slide) WHERE s.id IN $slide_ids
+    OPTIONAL MATCH (t)-[r:DERIVED_FROM]->(:Slide)
+    DELETE r
+    WITH t
+    UNWIND $slide_ids as sid
+    MATCH (s:Slide {id: sid})
     MERGE (t)-[:DERIVED_FROM]->(s)
     """
     neo4j_client.execute_query(query, {"node_id": node_id, "slide_ids": slide_ids})
