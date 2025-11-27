@@ -46,12 +46,12 @@ def process_course_artifact(context: AssetExecutionContext, minio: MinioResource
         client.download_file(BUCKET_NAME, source_object_name, file_path)
         
         # Try to download metadata.json if it exists
-        metadata = {}
+        course_metadata = {}
         try:
             metadata_path = os.path.join(temp_dir, "metadata.json")
             client.download_file(BUCKET_NAME, f"{course_id}/metadata.json", metadata_path)
             with open(metadata_path, 'r', encoding='utf-8') as f:
-                metadata = json.load(f)
+                course_metadata = json.load(f)
             context.log.info("Downloaded course metadata.")
         except Exception:
             context.log.warning("No metadata.json found for this course.")
@@ -113,14 +113,25 @@ def process_course_artifact(context: AssetExecutionContext, minio: MinioResource
             text_json = json.dumps(elements, indent=2)
             client.upload_bytes(BUCKET_NAME, text_object_name, text_json.encode('utf-8'), content_type="application/json")
             context.log.info(f"Uploaded text extraction for {filename}")
+            
+            # Capture extraction metadata (e.g. from first element)
+            extraction_metadata = {}
+            if elements:
+                # Use the first element's metadata as representative for file-level info (filetype, languages, etc.)
+                # Exclude element-specific fields like coordinates or page_number
+                first_meta = elements[0].get("metadata", {})
+                extraction_metadata = {k: v for k, v in first_meta.items() if k not in ["coordinates", "page_number", "image_path"]}
+
         except Exception as e:
             context.log.error(f"Failed to extract text from {filename}: {e}")
+            extraction_metadata = {"error": str(e)}
 
         # 3. Create Manifest
         manifest = {
             "course_id": course_id,
             "filename": filename,
-            "metadata": metadata,
+            "metadata": course_metadata,
+            "extraction_metadata": extraction_metadata,
             "source_url": f"http://{minio.endpoint}/{BUCKET_NAME}/{source_object_name}",
             "page_count": len(images) if images else 0,
             "image_urls": image_urls,
