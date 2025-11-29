@@ -94,8 +94,17 @@ def render_pptx_slides(file_path: str) -> List[Image.Image]:
                 file_path
             ]
             
-            # Run LibreOffice conversion
-            subprocess.run(cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            print(f"Running LibreOffice conversion: {' '.join(cmd)}")
+            
+            # Run LibreOffice conversion and capture output
+            result = subprocess.run(cmd, capture_output=True, text=True)
+            
+            # Check for errors
+            if result.returncode != 0:
+                print(f"LibreOffice conversion failed with exit code {result.returncode}")
+                print(f"STDOUT: {result.stdout}")
+                print(f"STDERR: {result.stderr}")
+                return []
             
             # Expect filename.pdf in temp_dir
             base_name = os.path.splitext(os.path.basename(file_path))[0]
@@ -103,6 +112,7 @@ def render_pptx_slides(file_path: str) -> List[Image.Image]:
             
             if not os.path.exists(pdf_path):
                 print(f"Error: PDF conversion failed. Expected output at {pdf_path}")
+                print(f"Files in temp dir: {os.listdir(temp_dir)}")
                 return []
                 
             # Now render the PDF
@@ -110,4 +120,6 @@ def render_pptx_slides(file_path: str) -> List[Image.Image]:
             
     except Exception as e:
         print(f"Error rendering PPTX {file_path}: {e}")
+        import traceback
+        traceback.print_exc()
         return []

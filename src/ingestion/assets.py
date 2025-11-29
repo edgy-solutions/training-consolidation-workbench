@@ -60,8 +60,11 @@ def process_course_artifact(context: AssetExecutionContext, minio: MinioResource
         images = []
         if filename.lower().endswith(".pdf"):
             images = render_pdf_pages(file_path)
-        elif filename.lower().endswith(".pptx"):
+        elif filename.lower().endswith((".pptx", ".ppt")):
             images = render_pptx_slides(file_path)
+        elif filename.lower().endswith((".docx", ".doc")):
+            # DOCX files are rendered same way as PPTX (convert to PDF first)
+            images = render_pptx_slides(file_path)  # This function works for any Office doc
         
         image_urls = {}
         for i, img in enumerate(images):
