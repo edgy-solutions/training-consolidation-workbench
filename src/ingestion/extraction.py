@@ -1,7 +1,64 @@
 import json
+import os
+import shutil
 from typing import List, Any, Dict
 from unstructured.partition.auto import partition
 from unstructured.staging.base import elements_to_json
+
+# Configure Tesseract OCR path
+def configure_tesseract():
+    """
+    Auto-discover and configure tesseract executable path for both Windows and Linux.
+    Checks: PATH, environment variables, and common installation locations.
+    """
+    try:
+        # Unstructured uses unstructured_pytesseract, not standard pytesseract
+        import unstructured_pytesseract as pytesseract
+        
+        # First check if tesseract is already in PATH
+        if shutil.which('tesseract'):
+            return  # Already accessible, no need to configure
+        
+        # Check TESSERACT_CMD environment variable
+        tesseract_env = os.getenv('TESSERACT_CMD')
+        if tesseract_env and os.path.isfile(tesseract_env):
+            pytesseract.pytesseract.tesseract_cmd = tesseract_env
+            print(f"Configured tesseract from TESSERACT_CMD: {tesseract_env}")
+            return
+        
+        # Platform-specific common installation paths
+        common_paths = []
+        if os.name == 'nt':  # Windows
+            common_paths = [
+                r'C:\Program Files\Tesseract-OCR\tesseract.exe',
+                r'C:\Program Files (x86)\Tesseract-OCR\tesseract.exe',
+                os.path.expanduser(r'~\AppData\Local\Tesseract-OCR\tesseract.exe'),
+            ]
+        else:  # Linux/Mac
+            common_paths = [
+                '/usr/bin/tesseract',
+                '/usr/local/bin/tesseract',
+                '/opt/homebrew/bin/tesseract',  # Mac with Homebrew
+            ]
+        
+        # Try each common path
+        for path in common_paths:
+            if os.path.isfile(path):
+                pytesseract.pytesseract.tesseract_cmd = path
+                print(f"Found and configured tesseract at: {path}")
+                return
+        
+        # If we get here, tesseract wasn't found
+        print("Warning: Tesseract not found. OCR may not work properly.")
+        print("Install tesseract or set TESSERACT_CMD environment variable.")
+        
+    except ImportError as e:
+        # unstructured_pytesseract not installed
+        print(f"Warning: Could not import unstructured_pytesseract: {e}")
+        pass
+
+# Configure tesseract when module is imported
+configure_tesseract()
 
 def extract_text_and_metadata(file_path: str, extract_images: bool = False, image_output_dir: str = None) -> List[Dict[str, Any]]:
     """

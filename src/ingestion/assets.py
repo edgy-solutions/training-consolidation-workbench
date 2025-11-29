@@ -78,6 +78,7 @@ def process_course_artifact(context: AssetExecutionContext, minio: MinioResource
         # 2. Extract Text & Embedded Images
         elements = []
         embedded_images_map = {}
+        extraction_metadata = {}
         try:
             with tempfile.TemporaryDirectory() as temp_extract_dir:
                 elements = extract_text_and_metadata(
@@ -108,23 +109,24 @@ def process_course_artifact(context: AssetExecutionContext, minio: MinioResource
                         img_filename = os.path.basename(image_path)
                         if img_filename in embedded_images_map:
                             metadata["image_url"] = embedded_images_map[img_filename]
-
-            text_object_name = f"{course_id}/generated/text.json"
-            text_json = json.dumps(elements, indent=2)
-            client.upload_bytes(BUCKET_NAME, text_object_name, text_json.encode('utf-8'), content_type="application/json")
-            context.log.info(f"Uploaded text extraction for {filename}")
             
             # Capture extraction metadata (e.g. from first element)
-            extraction_metadata = {}
             if elements:
                 # Use the first element's metadata as representative for file-level info (filetype, languages, etc.)
                 # Exclude element-specific fields like coordinates or page_number
                 first_meta = elements[0].get("metadata", {})
                 extraction_metadata = {k: v for k, v in first_meta.items() if k not in ["coordinates", "page_number", "image_path"]}
+            
+            # Upload text.json only if extraction succeeded
+            text_object_name = f"{course_id}/generated/text.json"
+            text_json = json.dumps(elements, indent=2)
+            client.upload_bytes(BUCKET_NAME, text_object_name, text_json.encode('utf-8'), content_type="application/json")
+            context.log.info(f"Uploaded text extraction for {filename} ({len(elements)} elements)")
 
         except Exception as e:
             context.log.error(f"Failed to extract text from {filename}: {e}")
-            extraction_metadata = {"error": str(e)}
+            # Re-raise to fail the asset - don't silently continue with no data
+            raise
 
         # 3. Create Manifest
         manifest = {
