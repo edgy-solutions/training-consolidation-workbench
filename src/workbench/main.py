@@ -435,6 +435,22 @@ def get_draft_structure(project_id: str):
     results = neo4j_client.execute_query(query, {"project_id": project_id})
     
     nodes = []
+    
+    # Explicitly fetch the project node to ensure it's included as the root
+    project_query = "MATCH (p:Project {id: $project_id}) RETURN p.id as id, p.title as title, p.status as status"
+    project_result = neo4j_client.execute_query(project_query, {"project_id": project_id})
+    
+    if project_result:
+        p_row = project_result[0]
+        nodes.append(TargetDraftNode(
+            id=p_row["id"],
+            title=p_row["title"],
+            parent_id=None, # Root has no parent
+            status=p_row["status"] or "draft",
+            content_markdown=None,
+            source_refs=[]
+        ))
+
     for row in results:
         # Project node itself might be returned if matched by *0.. 
         # but if it's :Project and not :TargetNode it might depend on labels.
@@ -571,7 +587,7 @@ def generate_project_skeleton(request: SkeletonRequest):
         project_id = result['project_id']
         query = """
         MATCH (p:Project {id: $project_id})
-        OPTIONAL MATCH (p)-[:HAS_TARGET]->(t:TargetNode)
+        OPTIONAL MATCH (p)-[:HAS_CHILD]->(t:TargetNode)
         OPTIONAL MATCH (t)-[:SUGGESTED_SOURCE]->(s:Slide)
         WITH p, t, collect(s.id) as suggested_ids
         ORDER BY t.order
@@ -585,7 +601,7 @@ def generate_project_skeleton(request: SkeletonRequest):
                    is_suggestion: true,
                    suggested_source_ids: suggested_ids,
                    source_refs: [],
-                   parent_id: null,
+                   parent_id: p.id,
                    content_markdown: null
                }) as nodes
         """

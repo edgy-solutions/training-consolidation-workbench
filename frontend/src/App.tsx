@@ -3,6 +3,7 @@ import type { DragEndEvent } from '@dnd-kit/core';
 import { Panel, PanelGroup, PanelResizeHandle } from 'react-resizable-panels';
 import { TopBar } from './components/TopBar';
 import { SourceBrowser } from './components/SourceBrowser';
+import { SidebarActionPanel } from './components/SidebarActionPanel';
 import { ConsolidationCanvas } from './components/ConsolidationCanvas';
 import { SlideInspector } from './components/SlideInspector';
 import { useAppStore } from './store';
@@ -84,21 +85,24 @@ function App() {
   };
 
   return (
-    <div className="h-screen w-screen flex flex-col bg-slate-50 text-slate-900 font-sans overflow-hidden">
-      <TopBar discipline={discipline} setDiscipline={setDiscipline} />
-
+    <div className="h-screen flex flex-col">
       <DndContext
         sensors={sensors}
-        collisionDetection={pointerWithin}
         onDragStart={handleDragStart}
         onDragEnd={handleDragEnd}
+        collisionDetection={pointerWithin}
       >
+        {/* Top Bar */}
+        <TopBar discipline={discipline} setDiscipline={setDiscipline} />
+
+        {/* Main Content Area - Three Resizable Panes */}
         <div className="flex-1 overflow-hidden">
           <PanelGroup direction="horizontal">
 
-            {/* Left Pane: Source Map (20%) */}
-            <Panel defaultSize={20} minSize={15} className="bg-white border-r border-slate-200">
+            {/* Left Pane: Source Browser (20%) */}
+            <Panel defaultSize={20} minSize={15} className="bg-white border-r border-slate-200 relative">
               <SourceBrowser discipline={discipline} />
+              <SidebarActionPanel />
             </Panel>
 
             <PanelResizeHandle className="w-1 bg-slate-200 hover:bg-brand-teal transition-colors cursor-col-resize" />

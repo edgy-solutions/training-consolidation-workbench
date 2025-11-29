@@ -81,7 +81,21 @@ export const api = {
     getFilterOptions: async () => {
         const res = await axios.get<{ origins: string[], domains: string[], intents: string[], types: string[] }>(`${API_URL}/source/filters`);
         return res.data;
-    }
+    },
+    generateProjectSkeleton: async (request: {
+        title: string;
+        domain: string | null;
+        selected_source_ids: string[];
+    }) => {
+        const res = await axios.post(`${API_URL}/project/generate_skeleton`, request);
+        return res.data;
+    },
+    acceptSuggestedNode: async (nodeId: string) => {
+        const res = await axios.post(`${API_URL}/draft/node/accept`, null, {
+            params: { node_id: nodeId }
+        });
+        return res.data;
+    },
 };
 
 export interface SearchRequest {
@@ -93,3 +107,5 @@ export interface SearchRequest {
         type?: string;
     };
 }
+
+export default api;

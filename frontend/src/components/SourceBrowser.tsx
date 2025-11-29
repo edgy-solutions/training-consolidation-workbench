@@ -4,6 +4,7 @@ import { api } from '../api';
 import type { CourseNode, SourceSlide } from '../api';
 import { useDraggable } from '@dnd-kit/core';
 import { useAppStore } from '../store';
+import { useSelectionStore } from '../stores/selectionStore';
 import clsx from 'clsx';
 
 interface SourceBrowserProps {
@@ -164,16 +165,57 @@ export const SourceBrowser: React.FC<SourceBrowserProps> = ({ discipline }) => {
 
 const BusinessUnitNode: React.FC<{ node: CourseNode }> = ({ node }) => {
     const [expanded, setExpanded] = useState(true);
+    const { selectedSourceIds, selectMultiple, deselectMultiple } = useSelectionStore();
+
+    // Get all descendant IDs (courses in this BU)
+    const getAllDescendantIds = (n: CourseNode): string[] => {
+        const ids: string[] = [];
+        if (n.children) {
+            for (const child of n.children) {
+                ids.push(child.id);
+                ids.push(...getAllDescendantIds(child));
+            }
+        }
+        return ids;
+    };
+
+    const descendantIds = getAllDescendantIds(node);
+    const selectedCount = descendantIds.filter(id => selectedSourceIds.has(id)).length;
+    const isFullySelected = selectedCount === descendantIds.length && descendantIds.length > 0;
+    const isPartiallySelected = selectedCount > 0 && selectedCount < descendantIds.length;
+
+    const handleCheckboxChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+        e.stopPropagation();
+        if (isFullySelected) {
+            deselectMultiple(descendantIds);
+        } else {
+            selectMultiple(descendantIds);
+        }
+    };
 
     return (
         <div className="mb-2">
             <div
                 className="flex items-center gap-2 p-2 hover:bg-slate-50 rounded cursor-pointer select-none group"
-                onClick={() => setExpanded(!expanded)}
             >
-                {expanded ? <ChevronDown size={14} className="text-slate-400 group-hover:text-slate-600" /> : <ChevronRight size={14} className="text-slate-400 group-hover:text-slate-600" />}
-                <span className="text-xs font-bold text-slate-700 uppercase tracking-wide">{node.name}</span>
-                <span className="text-[10px] text-slate-400 bg-slate-100 px-1.5 rounded-full">{node.children?.length || 0}</span>
+                <input
+                    type="checkbox"
+                    checked={isFullySelected}
+                    ref={(input) => {
+                        if (input) input.indeterminate = isPartiallySelected;
+                    }}
+                    onChange={handleCheckboxChange}
+                    onClick={(e) => e.stopPropagation()}
+                    className="w-4 h-4 text-blue-600 rounded focus:ring-blue-500 cursor-pointer"
+                />
+                <div
+                    className="flex items-center gap-2 flex-1"
+                    onClick={() => setExpanded(!expanded)}
+                >
+                    {expanded ? <ChevronDown size={14} className="text-slate-400 group-hover:text-slate-600" /> : <ChevronRight size={14} className="text-slate-400 group-hover:text-slate-600" />}
+                    <span className="text-xs font-bold text-slate-700 uppercase tracking-wide">{node.name}</span>
+                    <span className="text-[10px] text-slate-400 bg-slate-100 px-1.5 rounded-full">{node.children?.length || 0}</span>
+                </div>
             </div>
 
             {expanded && (
@@ -193,6 +235,9 @@ const CourseItem: React.FC<{ course: CourseNode }> = ({ course }) => {
     const [expanded, setExpanded] = useState(!!preloadedSlides);
     const [slides, setSlides] = useState<SourceSlide[]>(preloadedSlides || []);
     const [loading, setLoading] = useState(false);
+    const { selectedSourceIds, toggleSelection } = useSelectionStore();
+
+    const isSelected = selectedSourceIds.has(course.id);
 
     // Update slides if prop changes (e.g. new search results)
     useEffect(() => {
@@ -228,6 +273,11 @@ const CourseItem: React.FC<{ course: CourseNode }> = ({ course }) => {
         setExpanded(!expanded);
     };
 
+    const handleCheckboxChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+        e.stopPropagation();
+        toggleSelection(course.id);
+    };
+
     return (
         <div>
             <div
@@ -235,12 +285,20 @@ const CourseItem: React.FC<{ course: CourseNode }> = ({ course }) => {
                     "flex items-center gap-2 p-2 rounded cursor-pointer text-xs transition-colors select-none",
                     expanded ? "bg-brand-teal/5 text-brand-teal font-medium" : "text-slate-600 hover:bg-slate-50"
                 )}
-                onClick={toggle}
             >
-                <FileText size={14} className="opacity-70" />
-                <span className="truncate flex-1">{course.name}</span>
-                {loading && <span className="animate-spin">⟳</span>}
-                {preloadedSlides && <span className="text-[9px] bg-brand-teal/10 px-1 rounded text-brand-teal">{preloadedSlides.length}</span>}
+                <input
+                    type="checkbox"
+                    checked={isSelected}
+                    onChange={handleCheckboxChange}
+                    onClick={(e) => e.stopPropagation()}
+                    className="w-4 h-4 text-blue-600 rounded focus:ring-blue-500 cursor-pointer"
+                />
+                <div className="flex items-center gap-2 flex-1" onClick={toggle}>
+                    <FileText size={14} className="opacity-70" />
+                    <span className="truncate flex-1">{course.name}</span>
+                    {loading && <span className="animate-spin">⟳</span>}
+                    {preloadedSlides && <span className="text-[9px] bg-brand-teal/10 px-1 rounded text-brand-teal">{preloadedSlides.length}</span>}
+                </div>
             </div>
 
             {expanded && (

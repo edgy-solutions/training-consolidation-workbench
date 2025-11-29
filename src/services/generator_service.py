@@ -2,11 +2,25 @@
 Service for generating consolidated curricula from source materials.
 """
 import uuid
+import os
 from typing import List, Dict, Any
+from dotenv import load_dotenv
 from src.storage.neo4j import Neo4jClient
 from src.storage.weaviate import WeaviateClient
 from src.dspy_modules.outline_harmonizer import OutlineHarmonizer
 import dspy
+
+# Configure DSPy once at module level to avoid thread conflicts
+load_dotenv()
+base_url = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434").replace('/v1', '')
+model_name = os.getenv("OLLAMA_MODEL", "gpt-oss:120b")
+
+try:
+    print(f'Configuring DSPy with {base_url} and model {model_name}')
+    lm = dspy.LM(model=f"ollama_chat/{model_name}", api_base=base_url, api_key='')
+    dspy.configure(lm=lm)
+except Exception as e:
+    print(f'DSPy configuration warning: {e}')
 
 
 class GeneratorService:
@@ -15,11 +29,6 @@ class GeneratorService:
     def __init__(self):
         self.neo4j_client = Neo4jClient()
         self.weaviate_client = WeaviateClient()
-        
-        # Configure DSPy (use Ollama or your preferred LLM)
-        lm = dspy.OllamaLocal(model="llama3.2", max_tokens=4000, timeout_s=120)
-        dspy.settings.configure(lm=lm)
-        
         self.harmonizer = OutlineHarmonizer()
     
     def generate_skeleton(self, selected_source_ids: List[str], title: str = "New Curriculum") -> Dict[str, Any]:
@@ -40,7 +49,7 @@ class GeneratorService:
             raise ValueError("No source outlines found for the given IDs")
         
         # Step 2: Call DSPy to generate consolidated plan
-        consolidated_sections = self.harmonizer.forward(source_outlines)
+        consolidated_sections = self.harmonizer(source_outlines)
         
         # Step 3: For each target section, find matching slides
         enriched_sections = []
@@ -149,7 +158,7 @@ class GeneratorService:
                     status: 'suggestion',
                     order: $order
                 })
-                CREATE (p)-[:HAS_TARGET]->(t)
+                CREATE (p)-[:HAS_CHILD]->(t)
                 """,
                 {
                     "project_id": project_id,
