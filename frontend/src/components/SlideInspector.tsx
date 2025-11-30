@@ -3,6 +3,7 @@ import { FileText, Image as ImageIcon, Maximize2, XCircle } from 'lucide-react';
 import { useAppStore } from '../store';
 import { api } from '../api';
 import type { SourceSlide } from '../api';
+import clsx from 'clsx';
 
 export const SlideInspector: React.FC = () => {
     const activeSlideId = useAppStore(state => state.activeSlideId);
@@ -73,9 +74,19 @@ export const SlideInspector: React.FC = () => {
                 <div className="mb-6">
                     <h3 className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-2">Detected Concepts</h3>
                     <div className="flex flex-wrap gap-2">
-                        {slide.concepts.map((c, i) => (
-                            <span key={i} className="text-xs bg-brand-teal/5 text-brand-teal border border-brand-teal/20 px-2 py-1 rounded-md">
-                                {c.name}
+                        {([...slide.concepts])
+                            .sort((a, b) => (b.salience || 0) - (a.salience || 0))
+                            .map((c, i) => (
+                            <span key={i} className="text-xs bg-brand-teal/5 text-brand-teal border border-brand-teal/20 px-2 py-1 rounded-md flex items-center gap-2">
+                                <span>{c.name}</span>
+                                {c.salience !== undefined && (
+                                    <span className={clsx(
+                                        "font-mono text-[10px] px-1 rounded",
+                                        c.salience > 0.7 ? "bg-teal-100 text-teal-700 font-bold border border-teal-200" : "bg-slate-100 text-slate-500 border border-slate-200"
+                                    )}>
+                                        {c.salience.toFixed(2)}
+                                    </span>
+                                )}
                             </span>
                         ))}
                         {slide.concepts.length === 0 && <span className="text-xs text-slate-400 italic">None detected</span>}

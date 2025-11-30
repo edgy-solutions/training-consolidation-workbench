@@ -5,6 +5,7 @@ from typing import List, Optional, Dict, Any
 class ConceptNode(BaseModel):
     name: str
     domain: str
+    salience: Optional[float] = None
 
 
 class SourceSlide(BaseModel):

@@ -111,8 +111,8 @@ def get_slide_details(slide_id: str):
     # 1. Fetch Metadata and Concepts from Neo4j
     query = """
     MATCH (s:Slide {id: $id})
-    OPTIONAL MATCH (s)-[:TEACHES]->(c:Concept)
-    RETURN s.id as id, s.number as number, s.text as text, collect(c) as concepts
+    OPTIONAL MATCH (s)-[t:TEACHES]->(c:Concept)
+    RETURN s.id as id, s.number as number, s.text as text, collect({name: c.name, salience: t.salience}) as concepts
     """
     results = neo4j_client.execute_query(query, {"id": slide_id})
     
@@ -143,8 +143,12 @@ def get_slide_details(slide_id: str):
     # 3. Format Concepts
     concepts = []
     for c in row.get("concepts", []):
-        if c: # check if not null
-            concepts.append(ConceptNode(name=c.get("name", ""), domain="General")) # Domain not in graph yet?
+        if c and c.get("name"): # check if not null and has name
+            concepts.append(ConceptNode(
+                name=c.get("name"), 
+                domain="General",
+                salience=c.get("salience")
+            ))
             
     return SourceSlide(
         id=row["id"],

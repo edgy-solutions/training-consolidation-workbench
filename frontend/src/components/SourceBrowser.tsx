@@ -375,13 +375,28 @@ const SlideRow: React.FC<{ slide: SourceSlide, isHighlighted: boolean }> = ({ sl
                 </div>
 
                 {/* Concepts Tags */}
-                <div className="flex gap-1 mt-1 overflow-hidden">
-                    {(slide.concepts || []).slice(0, 2).map((c, i) => (
-                        <span key={i} className="text-[9px] bg-slate-100 text-slate-500 px-1 rounded truncate max-w-[60px]">
-                            {c.name}
+                <div className="flex flex-wrap gap-1 mt-1">
+                    {([...(slide.concepts || [])])
+                        .sort((a, b) => (b.salience || 0) - (a.salience || 0))
+                        .slice(0, 6)
+                        .map((c, i) => (
+                        <span key={i} className="text-[9px] bg-slate-100 text-slate-500 px-1.5 py-0.5 rounded truncate max-w-[100px] border border-slate-200 flex items-center gap-1">
+                            <span className="truncate">{c.name}</span>
+                            {c.salience !== undefined && (
+                                <span className={clsx(
+                                    "font-mono text-[8px]",
+                                    c.salience > 0.7 ? "text-green-600 font-bold" : "text-slate-400"
+                                )}>
+                                    {c.salience.toFixed(1)}
+                                </span>
+                            )}
                         </span>
                     ))}
-                    {(slide.concepts || []).length > 2 && <span className="text-[9px] text-slate-400">+{(slide.concepts || []).length - 2}</span>}
+                    {(slide.concepts || []).length > 6 && (
+                        <span className="text-[9px] text-slate-400 self-center pl-1">
+                            +{(slide.concepts || []).length - 6}
+                        </span>
+                    )}
                 </div>
             </div>
         </div>
