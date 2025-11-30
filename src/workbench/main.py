@@ -274,7 +274,8 @@ def get_concept_heatmap(term: str):
         # Aggregate Course Score
         if c_id not in heatmap:
             heatmap[c_id] = {"score": 0, "type": "course"}
-        heatmap[c_id]["score"] += score
+        # Use MAX aggregation so the course color reflects the "hottest" content inside it
+        heatmap[c_id]["score"] = max(heatmap[c_id]["score"], score)
         
     return heatmap
 

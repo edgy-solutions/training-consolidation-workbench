@@ -304,10 +304,10 @@ const CourseItem: React.FC<{ course: CourseNode, heatmapData?: Record<string, { 
     const containerClass = useMemo(() => {
         if (!heatmapMode) return "text-slate-600 hover:bg-slate-50";
         if (intensity > 0) {
-            // Orange scale
-            if (intensity > 5) return "bg-orange-100 text-orange-900 border-l-4 border-orange-500";
-            if (intensity > 2) return "bg-orange-50 text-orange-800 border-l-4 border-orange-400";
-            return "bg-orange-50/50 text-orange-700 border-l-4 border-orange-300";
+            // Red-Orange-Yellow scale (matching Slide thresholds now that we use Max aggregation)
+            if (intensity > 0.8) return "bg-red-100 text-red-900 border-l-4 border-red-500";
+            if (intensity > 0.4) return "bg-orange-50 text-orange-900 border-l-4 border-orange-400";
+            return "bg-yellow-50 text-yellow-800 border-l-4 border-yellow-400";
         }
         return "text-slate-300 opacity-50"; // Fade out irrelevant
     }, [heatmapMode, intensity]);
@@ -492,7 +492,9 @@ const SlideRow: React.FC<{ slide: SourceSlide, isHighlighted: boolean, heatmapDa
                             // Heatmap Logic: Highlight concept tag if it likely matches the search
                             // Simple heuristic: Check if search query is part of concept name
                             (heatmapMode && intensity > 0 && searchQuery && c.name.toLowerCase().includes(searchQuery.toLowerCase()))
-                                ? "bg-red-100 text-red-700 border-red-300 font-medium ring-1 ring-red-200"
+                                ? (c.salience > 0.7 
+                                    ? "bg-red-100 text-red-700 border-red-300 font-medium ring-1 ring-red-200" 
+                                    : "bg-orange-100 text-orange-700 border-orange-300 font-medium ring-1 ring-orange-200")
                                 : "bg-slate-100 text-slate-500 border-slate-200"
                         )}>
                             <span className="truncate">{c.name}</span>
@@ -502,9 +504,9 @@ const SlideRow: React.FC<{ slide: SourceSlide, isHighlighted: boolean, heatmapDa
                                     // Heatmap Mode: Only color red if this specific concept is a match
                                     // Otherwise default to slate (grayscale parent handles opacity)
                                     heatmapMode && intensity > 0
-                                        ? (searchQuery && c.name.toLowerCase().includes(searchQuery.toLowerCase()) && c.salience > 0.7 
-                                            ? "text-red-600 font-bold" 
-                                            : "text-slate-500")
+                                        ? (searchQuery && c.name.toLowerCase().includes(searchQuery.toLowerCase()) 
+                                            ? (c.salience > 0.7 ? "text-red-600 font-bold" : "text-orange-500 font-medium") // Match: Red if high, Orange if low
+                                            : "text-slate-500") // Non-Match: Force Slate
                                         : (c.salience > 0.7 ? "text-green-600 font-bold" : "text-slate-400")
                                 )}>
                                     {c.salience.toFixed(1)}
