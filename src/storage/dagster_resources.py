@@ -11,6 +11,7 @@ class MinioResource(ConfigurableResource):
     secure: bool = os.getenv("MINIO_SECURE", "false").lower() == "true"
     region: str = os.getenv("MINIO_REGION", "us-east-1")
     external_endpoint: str = os.getenv("MINIO_EXTERNAL_ENDPOINT", endpoint)
+    external_secure: bool = os.getenv("MINIO_EXTERNAL_SECURE", str(secure)).lower() == "true"
 
     def get_client(self) -> MinioClient:
         return MinioClient(
@@ -19,7 +20,8 @@ class MinioResource(ConfigurableResource):
             secret_key=self.secret_key,
             secure=self.secure,
             external_endpoint=self.external_endpoint,
-            region=self.region # Pass region explicitly
+            region=self.region,
+            external_secure=self.external_secure
         )
 
 class Neo4jResource(ConfigurableResource):

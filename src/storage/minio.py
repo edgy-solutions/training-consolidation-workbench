@@ -5,13 +5,22 @@ from minio import Minio
 from minio.error import S3Error
 
 class MinioClient:
-    def __init__(self, endpoint=None, access_key=None, secret_key=None, secure=False, external_endpoint=None, region=None):
+    def __init__(self, endpoint=None, access_key=None, secret_key=None, secure=False, external_endpoint=None, region=None, external_secure=None):
         self.endpoint = endpoint or os.getenv("MINIO_ENDPOINT", "localhost:9000")
         self.access_key = access_key or os.getenv("MINIO_ACCESS_KEY", "minioadmin")
         self.secret_key = secret_key or os.getenv("MINIO_SECRET_KEY", "minioadmin")
         self.secure = secure
         self.region = region or os.getenv("MINIO_REGION", "us-east-1")
         self.external_endpoint = external_endpoint or os.getenv("MINIO_EXTERNAL_ENDPOINT", self.endpoint)
+        # External secure defaults to internal secure if not explicitly set
+        if external_secure is None:
+            external_secure_env = os.getenv("MINIO_EXTERNAL_SECURE", None)
+            if external_secure_env is not None:
+                self.external_secure = external_secure_env.lower() == "true"
+            else:
+                self.external_secure = self.secure
+        else:
+            self.external_secure = external_secure
         
         self.client = Minio(
             endpoint=self.endpoint,
@@ -21,12 +30,12 @@ class MinioClient:
             region=self.region
         )
 
-        if self.external_endpoint != self.endpoint:
+        if self.external_endpoint != self.endpoint or self.external_secure != self.secure:
             self.signer_client = Minio(
                 endpoint=self.external_endpoint,
                 access_key=self.access_key,
                 secret_key=self.secret_key,
-                secure=self.secure,
+                secure=self.external_secure,
                 region=self.region
             )
         else:
