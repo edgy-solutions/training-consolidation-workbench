@@ -11,6 +11,9 @@ export const SlideInspector: React.FC = () => {
     const activeNodeId = useAppStore(state => state.activeNodeId);
     const structure = useAppStore(state => state.structure);
     const projectId = useAppStore(state => state.projectId);
+    const heatmapMode = useAppStore(state => state.heatmapMode);
+    const searchQuery = useAppStore(state => state.searchQuery);
+    const heatmapData = useAppStore(state => state.heatmapData);
 
     const [slide, setSlide] = useState<SourceSlide | null>(null);
     const [loading, setLoading] = useState(false);
@@ -187,19 +190,38 @@ export const SlideInspector: React.FC = () => {
                     <div className="flex flex-wrap gap-2">
                         {([...slide.concepts])
                             .sort((a, b) => (b.salience || 0) - (a.salience || 0))
-                            .map((c, i) => (
-                                <span key={i} className="text-xs bg-teal-50 text-teal-600 border border-teal-100 px-2 py-1 rounded-md flex items-center gap-2">
-                                    <span>{c.name}</span>
-                                    {c.salience !== undefined && (
-                                        <span className={clsx(
-                                            "font-mono text-[10px] px-1 rounded",
-                                            c.salience > 0.7 ? "bg-teal-100 text-teal-700 font-bold border border-teal-200" : "bg-slate-100 text-slate-500 border border-slate-200"
-                                        )}>
-                                            {c.salience.toFixed(2)}
-                                        </span>
-                                    )}
-                                </span>
-                            ))}
+                            .map((c, i) => {
+                                // Heatmap Logic
+                                const heat = (slide && heatmapData) ? heatmapData[slide.id] : undefined;
+                                const intensity = heat?.score || 0;
+
+                                return (
+                                    <span key={i} className={clsx(
+                                        "text-xs px-2 py-1 rounded-md flex items-center gap-2 border transition-colors",
+                                        // Heatmap Logic: Highlight concept tag if it likely matches the search
+                                        (heatmapMode && intensity > 0 && searchQuery && c.name.toLowerCase().includes(searchQuery.toLowerCase()))
+                                            ? (c.salience > 0.7
+                                                ? "bg-red-100 text-red-700 border-red-300 font-medium ring-1 ring-red-200"
+                                                : "bg-orange-100 text-orange-700 border-orange-300 font-medium ring-1 ring-orange-200")
+                                            : "bg-teal-50 text-teal-600 border-teal-100"
+                                    )}>
+                                        <span>{c.name}</span>
+                                        {c.salience !== undefined && (
+                                            <span className={clsx(
+                                                "font-mono text-[10px] px-1 rounded",
+                                                // Heatmap Mode: Only color red if this specific concept is a match
+                                                heatmapMode && intensity > 0
+                                                    ? (searchQuery && c.name.toLowerCase().includes(searchQuery.toLowerCase())
+                                                        ? (c.salience > 0.7 ? "text-red-600 font-bold" : "text-orange-500 font-medium")
+                                                        : "text-slate-500")
+                                                    : (c.salience > 0.7 ? "bg-teal-100 text-teal-700 font-bold border border-teal-200" : "bg-slate-100 text-slate-500 border border-slate-200")
+                                            )}>
+                                                {c.salience.toFixed(2)}
+                                            </span>
+                                        )}
+                                    </span>
+                                )
+                            })}
                         {slide.concepts.length === 0 && <span className="text-xs text-slate-400 italic">None detected</span>}
                     </div>
                 </div>

@@ -18,6 +18,13 @@ interface AppState {
     createProjectIfNeeded: () => Promise<void>;
     addNode: (parentId: string, title: string) => Promise<void>;
     mapSlideToNode: (nodeId: string, slideIds: string | string[]) => Promise<void>;
+    // Heatmap State
+    heatmapMode: boolean;
+    searchQuery: string;
+    heatmapData: Record<string, { score: number, type: string }>;
+    setHeatmapMode: (mode: boolean) => void;
+    setSearchQuery: (query: string) => void;
+    setHeatmapData: (data: Record<string, { score: number, type: string }>) => void;
 }
 
 export const useAppStore = create<AppState>((set, get) => ({
@@ -27,10 +34,19 @@ export const useAppStore = create<AppState>((set, get) => ({
     activeNodeId: null,
     activeSlideId: null,
 
+    // Heatmap State
+    heatmapMode: false,
+    searchQuery: '',
+    heatmapData: {},
+
     setDiscipline: (d) => set({ discipline: d, projectId: null, structure: [] }),
     setProjectId: (id) => set({ projectId: id }),
     setActiveNodeId: (id) => set({ activeNodeId: id }),
     setActiveSlideId: (id) => set({ activeSlideId: id }),
+
+    setHeatmapMode: (mode) => set({ heatmapMode: mode }),
+    setSearchQuery: (query) => set({ searchQuery: query }),
+    setHeatmapData: (data) => set({ heatmapData: data }),
 
     fetchStructure: async () => {
         const { projectId } = get();

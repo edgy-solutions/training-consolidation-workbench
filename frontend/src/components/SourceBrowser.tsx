@@ -13,9 +13,14 @@ interface SourceBrowserProps {
 
 export const SourceBrowser: React.FC<SourceBrowserProps> = ({ discipline }) => {
     const [tree, setTree] = useState<CourseNode[]>([]);
-    const [searchQuery, setSearchQuery] = useState('');
-    const [heatmapMode, setHeatmapMode] = useState(false);
-    const [heatmapData, setHeatmapData] = useState<Record<string, { score: number, type: string }>>({});
+
+    // Global State
+    const heatmapMode = useAppStore(state => state.heatmapMode);
+    const searchQuery = useAppStore(state => state.searchQuery);
+    const heatmapData = useAppStore(state => state.heatmapData);
+    const setHeatmapMode = useAppStore(state => state.setHeatmapMode);
+    const setSearchQuery = useAppStore(state => state.setSearchQuery);
+    const setHeatmapData = useAppStore(state => state.setHeatmapData);
 
     // Filter State
     const [filters, setFilters] = useState({
@@ -66,9 +71,9 @@ export const SourceBrowser: React.FC<SourceBrowserProps> = ({ discipline }) => {
                 // But also if search query is cleared, we need to restore original tree structure (preserving expansion state if possible, but api returns new structure)
                 // The issue is if we search, setTree overwrites. If we clear search, we need to fetch default tree.
                 if (tree.length === 0 || (!searchQuery && !heatmapMode && !hasFilters)) {
-                     const results = await api.getSourceTree(discipline);
-                     setTree(results);
-                     currentTree = results;
+                    const results = await api.getSourceTree(discipline);
+                    setTree(results);
+                    currentTree = results;
                 }
             }
 
@@ -125,7 +130,7 @@ export const SourceBrowser: React.FC<SourceBrowserProps> = ({ discipline }) => {
                         value={searchQuery}
                         onChange={(e) => setSearchQuery(e.target.value)}
                     />
-                    
+
                     {/* Heatmap Toggle inside input */}
                     <div className="absolute right-8 top-2 flex items-center gap-1">
                         <label className="flex items-center gap-1 cursor-pointer select-none">
@@ -133,11 +138,11 @@ export const SourceBrowser: React.FC<SourceBrowserProps> = ({ discipline }) => {
                                 Heatmap
                             </span>
                             <div className="relative inline-flex items-center">
-                                <input 
-                                    type="checkbox" 
-                                    className="sr-only peer" 
-                                    checked={heatmapMode} 
-                                    onChange={() => setHeatmapMode(!heatmapMode)} 
+                                <input
+                                    type="checkbox"
+                                    className="sr-only peer"
+                                    checked={heatmapMode}
+                                    onChange={() => setHeatmapMode(!heatmapMode)}
                                 />
                                 <div className="w-6 h-3 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[1px] after:left-[1px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-2.5 after:w-2.5 after:transition-all peer-checked:bg-red-500"></div>
                             </div>
@@ -216,7 +221,7 @@ const BusinessUnitNode: React.FC<{ node: CourseNode, heatmapData?: Record<string
     // Determine if this BU has heat (sum of child courses)
     // We don't have course IDs at BU level easily unless we iterate children
     // Just pass data down. 
-    
+
     // Optional: Highlight BU if it contains any heat?
     const hasHeat = useMemo(() => {
         if (!heatmapMode || !heatmapData) return false;
@@ -298,7 +303,7 @@ const CourseItem: React.FC<{ course: CourseNode, heatmapData?: Record<string, { 
     // Heatmap Logic for Course
     const heat = heatmapData ? heatmapData[course.id] : undefined;
     const intensity = heat?.score || 0;
-    
+
     // Styling based on Heat
     // If heatmapMode is on, gray out non-matches, highlight matches
     const containerClass = useMemo(() => {
@@ -327,7 +332,7 @@ const CourseItem: React.FC<{ course: CourseNode, heatmapData?: Record<string, { 
             // OR keep existing slides if they were manually fetched? 
             // The issue is `setTree` creates new object references for courses, so this component re-mounts or updates.
             // If course prop changes from "Search Course" to "Default Course", preloadedSlides becomes undefined.
-            setSlides([]); 
+            setSlides([]);
             setExpanded(false);
         }
     }, [preloadedSlides, course.id]); // Add course.id to force reset if course identity changes logically but not physically (React key)
@@ -415,7 +420,7 @@ const SlideRow: React.FC<{ slide: SourceSlide, isHighlighted: boolean, heatmapDa
         // Fix: Don't grayscale internal content, just the container or handle opacity carefully
         // Actually, applying grayscale to the container affects images.
         // Let's use opacity but keep color if needed, or just reduce contrast.
-        return "opacity-40 grayscale"; 
+        return "opacity-40 grayscale";
     }, [heatmapMode, intensity]);
 
     // Check usage status from store
@@ -451,9 +456,9 @@ const SlideRow: React.FC<{ slide: SourceSlide, isHighlighted: boolean, heatmapDa
             )}
         >
             {/* Thumbnail */
-            /* Note: Removed grayscale from container to avoid blanking out images in some browsers if mixed with opacity. 
-               If images are blank, it might be opacity+grayscale interaction on the parent div affecting the img tag.
-               Let's apply grayscale only to the image wrapper if needed, or ensure opacity isn't too low. */
+                /* Note: Removed grayscale from container to avoid blanking out images in some browsers if mixed with opacity. 
+                   If images are blank, it might be opacity+grayscale interaction on the parent div affecting the img tag.
+                   Let's apply grayscale only to the image wrapper if needed, or ensure opacity isn't too low. */
             }
             <div className={clsx(
                 "w-12 h-9 bg-slate-100 rounded overflow-hidden flex-shrink-0 relative",
@@ -487,33 +492,33 @@ const SlideRow: React.FC<{ slide: SourceSlide, isHighlighted: boolean, heatmapDa
                         .sort((a, b) => (b.salience || 0) - (a.salience || 0))
                         .slice(0, 6)
                         .map((c, i) => (
-                        <span key={i} className={clsx(
-                            "text-[9px] px-1.5 py-0.5 rounded truncate max-w-[100px] border flex items-center gap-1",
-                            // Heatmap Logic: Highlight concept tag if it likely matches the search
-                            // Simple heuristic: Check if search query is part of concept name
-                            (heatmapMode && intensity > 0 && searchQuery && c.name.toLowerCase().includes(searchQuery.toLowerCase()))
-                                ? (c.salience > 0.7 
-                                    ? "bg-red-100 text-red-700 border-red-300 font-medium ring-1 ring-red-200" 
-                                    : "bg-orange-100 text-orange-700 border-orange-300 font-medium ring-1 ring-orange-200")
-                                : "bg-slate-100 text-slate-500 border-slate-200"
-                        )}>
-                            <span className="truncate">{c.name}</span>
-                            {c.salience !== undefined && (
-                                <span className={clsx(
-                                    "font-mono text-[8px]",
-                                    // Heatmap Mode: Only color red if this specific concept is a match
-                                    // Otherwise default to slate (grayscale parent handles opacity)
-                                    heatmapMode && intensity > 0
-                                        ? (searchQuery && c.name.toLowerCase().includes(searchQuery.toLowerCase()) 
-                                            ? (c.salience > 0.7 ? "text-red-600 font-bold" : "text-orange-500 font-medium") // Match: Red if high, Orange if low
-                                            : "text-slate-500") // Non-Match: Force Slate
-                                        : (c.salience > 0.7 ? "text-green-600 font-bold" : "text-slate-400")
-                                )}>
-                                    {c.salience.toFixed(1)}
-                                </span>
-                            )}
-                        </span>
-                    ))}
+                            <span key={i} className={clsx(
+                                "text-[9px] px-1.5 py-0.5 rounded truncate max-w-[100px] border flex items-center gap-1",
+                                // Heatmap Logic: Highlight concept tag if it likely matches the search
+                                // Simple heuristic: Check if search query is part of concept name
+                                (heatmapMode && intensity > 0 && searchQuery && c.name.toLowerCase().includes(searchQuery.toLowerCase()))
+                                    ? (c.salience > 0.7
+                                        ? "bg-red-100 text-red-700 border-red-300 font-medium ring-1 ring-red-200"
+                                        : "bg-orange-100 text-orange-700 border-orange-300 font-medium ring-1 ring-orange-200")
+                                    : "bg-slate-100 text-slate-500 border-slate-200"
+                            )}>
+                                <span className="truncate">{c.name}</span>
+                                {c.salience !== undefined && (
+                                    <span className={clsx(
+                                        "font-mono text-[8px]",
+                                        // Heatmap Mode: Only color red if this specific concept is a match
+                                        // Otherwise default to slate (grayscale parent handles opacity)
+                                        heatmapMode && intensity > 0
+                                            ? (searchQuery && c.name.toLowerCase().includes(searchQuery.toLowerCase())
+                                                ? (c.salience > 0.7 ? "text-red-600 font-bold" : "text-orange-500 font-medium") // Match: Red if high, Orange if low
+                                                : "text-slate-500") // Non-Match: Force Slate
+                                            : (c.salience > 0.7 ? "text-green-600 font-bold" : "text-slate-400")
+                                    )}>
+                                        {c.salience.toFixed(1)}
+                                    </span>
+                                )}
+                            </span>
+                        ))}
                     {(slide.concepts || []).length > 6 && (
                         <span className="text-[9px] text-slate-400 self-center pl-1">
                             +{(slide.concepts || []).length - 6}
