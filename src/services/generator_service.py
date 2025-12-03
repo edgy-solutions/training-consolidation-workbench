@@ -8,19 +8,11 @@ from dotenv import load_dotenv
 from src.storage.neo4j import Neo4jClient
 from src.storage.weaviate import WeaviateClient
 from src.dspy_modules.outline_harmonizer import OutlineHarmonizer
+from src.dspy_modules.config import shared_lm as lm
 import dspy
 
-# Configure DSPy once at module level to avoid thread conflicts
-load_dotenv()
-base_url = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434").replace('/v1', '')
-model_name = os.getenv("OLLAMA_MODEL", "gpt-oss:120b")
-
-try:
-    print(f'Configuring DSPy with {base_url} and model {model_name}')
-    lm = dspy.LM(model=f"ollama_chat/{model_name}", api_base=base_url, api_key='')
-    dspy.configure(lm=lm)
-except Exception as e:
-    print(f'DSPy configuration warning: {e}')
+# Configure DSPy using shared configuration
+# load_dotenv() and dspy.configure() are handled in src.dspy_modules.config
 
 
 class GeneratorService:
@@ -60,6 +52,13 @@ class GeneratorService:
             # Call DSPy to generate consolidated plan using Standard Template
             print("DEBUG: Calling harmonizer with Standard Course Template...")
             consolidated_sections = self.harmonizer(source_outlines)
+            
+            # Inspect DSPy history to see prompt and response in console
+            try:
+                lm.inspect_history(n=1)
+            except Exception as e:
+                print(f"Could not inspect DSPy history: {e}")
+                
             print(f"DEBUG: Harmonizer returned {len(consolidated_sections)} sections")
             for s in consolidated_sections:
                 section_type = s.get('type', 'technical')
@@ -228,21 +227,35 @@ class GeneratorService:
         UNWIND $source_ids as sid
         MATCH (n) WHERE n.id = sid
         
-        // Determine type and parent info
-        OPTIONAL MATCH (n:Section)<-[:HAS_SECTION*]-(c:Course)
-        WITH n, coalesce(c.business_unit, n.business_unit, 'Unknown') as bu, coalesce(c.id, n.id) as course_id
+        // Expand Course into Sections if available
+        OPTIONAL MATCH (n)-[:HAS_SECTION*]->(child:Section)
+        WITH n, collect(child) as children
+        
+        // If we found sections, use them. Otherwise, treat the input node 'n' as the unit (e.g. a flat Course or a single Section)
+        WITH n, CASE WHEN size(children) > 0 THEN children ELSE [n] END as targets
+        
+        UNWIND targets as target
+        
+        // Determine context (Business Unit and Course ID)
+        OPTIONAL MATCH (target)<-[:HAS_SECTION*]-(c:Course)
+        WITH n, target, 
+             coalesce(c.business_unit, target.business_unit, n.business_unit, 'Unknown') as bu, 
+             coalesce(c.id, n.id) as course_id
         
         // Get concepts from linked slides (HAS_SLIDE)
-        // This works for both Course and Section if they have HAS_SLIDE relationships
-        OPTIONAL MATCH (n)-[:HAS_SLIDE]->(slide:Slide)-[t:TEACHES]->(con:Concept)
+        OPTIONAL MATCH (target)-[:HAS_SLIDE]->(slide:Slide)-[t:TEACHES]->(con:Concept)
         WHERE coalesce(t.salience, 0) >= 0.5
         
-        WITH n, bu, course_id, collect(DISTINCT con.name) as concepts
+        WITH target, bu, course_id, collect(DISTINCT con.name) as concepts
         
-        RETURN n.title as section_title,
+        // Filter out empty targets unless they are explicitly sections (to preserve structure)
+        // WHERE size(concepts) > 0 OR target:Section
+        
+        RETURN target.title as section_title,
                bu,
                course_id,
                concepts[0..15] as concepts
+        ORDER BY bu, course_id
         """
         results = self.neo4j_client.execute_query(query, {"source_ids": source_ids})
         

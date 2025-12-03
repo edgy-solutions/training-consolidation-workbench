@@ -4,17 +4,10 @@ from typing import List, Dict, Any
 from src.storage.neo4j import Neo4jClient
 from src.storage.weaviate import WeaviateClient
 from src.dspy_modules.synthesizer import ContentSynthesizer
+from src.dspy_modules.config import shared_lm as lm
+import dspy
 
-from dotenv import load_dotenv
-
-# Configure DSPy (same as generator_service)
-load_dotenv()
-ollama_base_url = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434").replace('/v1', '')
-ollama_model = os.getenv("OLLAMA_MODEL", "gpt-oss:120b")
-
-print(f"Configuring Synthesis Service DSPy with {ollama_base_url} and model {ollama_model}")
-lm = dspy.LM(model=f"ollama_chat/{ollama_model}", api_base=ollama_base_url, api_key="")
-dspy.configure(lm=lm)
+# DSPy configuration is handled in src.dspy_modules.config
 
 class SynthesisService:
     def __init__(self):
@@ -103,6 +96,12 @@ class SynthesisService:
             if not result:
                 raise last_error or Exception("Failed to synthesize content after retries")
             
+            # Inspect DSPy history to see prompt and response in console
+            try:
+                lm.inspect_history(n=1)
+            except Exception as e:
+                print(f"Could not inspect DSPy history: {e}")
+
             # Extract markdown from structured output
             # The synthesizer now returns a dict with 'markdown', 'assets', 'callouts'
             if isinstance(result, dict):
