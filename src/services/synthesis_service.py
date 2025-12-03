@@ -85,14 +85,14 @@ class SynthesisService:
             print(f"Synthesizing content from {len(slides_content)} slides...")
             
             max_retries = 3
-            markdown = None
+            result = None
             last_error = None
             
             for attempt in range(max_retries):
                 try:
                     print(f"DEBUG: Synthesis attempt {attempt + 1}/{max_retries}")
-                    markdown = self.synthesizer(slides_content, instruction)
-                    if markdown:
+                    result = self.synthesizer(slides_content, instruction)
+                    if result:
                         break
                 except Exception as e:
                     print(f"DEBUG: Attempt {attempt + 1} failed: {e}")
@@ -100,8 +100,21 @@ class SynthesisService:
                     import time
                     time.sleep(1) # Brief pause before retry
             
-            if not markdown:
+            if not result:
                 raise last_error or Exception("Failed to synthesize content after retries")
+            
+            # Extract markdown from structured output
+            # The synthesizer now returns a dict with 'markdown', 'assets', 'callouts'
+            if isinstance(result, dict):
+                markdown = result.get('markdown', '')
+                assets = result.get('assets', [])
+                callouts = result.get('callouts', [])
+                print(f"DEBUG: Synthesizer returned {len(assets)} assets and {len(callouts)} callouts")
+            else:
+                # Fallback for old string return (shouldn't happen anymore)
+                markdown = str(result)
+                assets = []
+                callouts = []
             
             # 4. Update Neo4j
             self._update_result(target_node_id, markdown)

@@ -57,12 +57,13 @@ class GeneratorService:
             print(f"DEBUG: Using master outline from course: {master_course_id}")
             consolidated_sections = self._use_master_outline(master_course_id)
         else:
-            # Call DSPy to generate consolidated plan
-            print("DEBUG: Calling harmonizer...")
+            # Call DSPy to generate consolidated plan using Standard Template
+            print("DEBUG: Calling harmonizer with Standard Course Template...")
             consolidated_sections = self.harmonizer(source_outlines)
             print(f"DEBUG: Harmonizer returned {len(consolidated_sections)} sections")
             for s in consolidated_sections:
-                print(f"DEBUG: Section '{s['title']}' has concepts: {s.get('key_concepts')}")
+                section_type = s.get('type', 'technical')
+                print(f"DEBUG: Section '{s['title']}' (type: {section_type}) has concepts: {s.get('key_concepts')}")
         
         # Step 3: For each target section, find matching slides (FILTERED by source courses)
         enriched_sections = []
@@ -131,10 +132,12 @@ class GeneratorService:
         results = self.neo4j_client.execute_query(query, {"course_ids": course_ids})
         return results
     
+    
     def _use_master_outline(self, master_course_id: str) -> List[Dict]:
         """
         Use a master course's outline as the structure for the new curriculum.
-        Returns a list of sections with titles, rationale, and key_concepts.
+        Wraps sections into the standard template: Introduction → Safety → Technical → Assessment
+        Returns a list of sections with titles, rationale, key_concepts, and type.
         """
         query = """
         MATCH (c:Course {id: $course_id})-[:HAS_SECTION*]->(s:Section)
@@ -148,15 +151,68 @@ class GeneratorService:
         """
         results = self.neo4j_client.execute_query(query, {"course_id": master_course_id})
         
-        sections = []
-        for row in results:
-            sections.append({
-                'title': row['title'],
-                'rationale': f"Section from master outline: {row['title']}",
-                'key_concepts': row.get('concepts', [])[:10]  # Limit to 10 concepts
+        if not results:
+            print("[WARN] No sections found in master course")
+            return []
+        
+        # Build standard template structure from master sections
+        standard_sections = []
+        
+        # 1. Introduction (use first section or create placeholder)
+        intro_section = results[0] if results else None
+        if intro_section:
+            standard_sections.append({
+                'title': intro_section['title'],
+                'rationale': f"Introduction from master course: {intro_section['title']}",
+                'key_concepts': intro_section.get('concepts', [])[:10],
+                'type': 'introduction'
+            })
+        else:
+            standard_sections.append({
+                'title': 'Course Introduction',
+                'rationale': 'Placeholder introduction section',
+                'key_concepts': [],
+                'type': 'introduction'
             })
         
-        return sections
+        # 2. Safety Module (create placeholder - master courses typically don't have explicit safety sections)
+        standard_sections.append({
+            'title': 'Safety and Compliance',
+            'rationale': 'Mandatory safety module - review and populate with relevant safety information',
+            'key_concepts': ['Safety Procedures', 'Hazard Identification', 'Compliance Requirements'],
+            'type': 'mandatory_safety'
+        })
+        
+        # 3. Technical Content (all remaining master sections except last)
+        technical_sections = results[1:-1] if len(results) > 2 else results[1:] if len(results) > 1 else []
+        for section in technical_sections:
+            standard_sections.append({
+                'title': section['title'],
+                'rationale': f"Technical content from master course: {section['title']}",
+                'key_concepts': section.get('concepts', [])[:10],
+                'type': 'technical'
+            })
+        
+        # 4. Assessment (use last section or create placeholder)
+        if len(results) > 1:
+            last_section = results[-1]
+            standard_sections.append({
+                'title': last_section['title'],
+                'rationale': f"Assessment from master course: {last_section['title']}",
+                'key_concepts': last_section.get('concepts', [])[:10],
+                'type': 'mandatory_assessment'
+            })
+        else:
+            standard_sections.append({
+                'title': 'Knowledge Assessment',
+                'rationale': 'Placeholder assessment section',
+                'key_concepts': ['Quiz', 'Review', 'Final Assessment'],
+                'type': 'mandatory_assessment'
+            })
+        
+        print(f"[DEBUG] Master outline wrapped into {len(standard_sections)} standard sections")
+        return standard_sections
+
     
     def _fetch_source_outlines(self, source_ids: List[str]) -> tuple:
         """
