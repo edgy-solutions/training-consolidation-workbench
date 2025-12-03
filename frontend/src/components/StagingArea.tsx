@@ -334,7 +334,6 @@ export const StagingArea: React.FC = () => {
                                                 course.sections.map(section => {
                                                     // Calculate indentation based on level (0 = no indent, 1+ = indent)
                                                     const indentLevel = section.level || 0;
-                                                    const indentClass = indentLevel > 0 ? `ml-${Math.min(indentLevel * 4, 12)}` : '';
 
                                                     return (
                                                         <div

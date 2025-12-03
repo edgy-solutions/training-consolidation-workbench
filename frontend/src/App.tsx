@@ -11,7 +11,7 @@ import type { SourceSlide } from './api';
 import { useEffect, useState } from 'react';
 
 function App() {
-  const { discipline, setDiscipline, projectId, setProjectId, createProjectIfNeeded, mapSlideToNode, structure, stagingMode } = useAppStore();
+  const { discipline, setDiscipline, projectId, setProjectId, createProjectIfNeeded, mapSlideToNode, stagingMode } = useAppStore();
   const [activeDragSlide, setActiveDragSlide] = useState<SourceSlide | null>(null);
 
   // Ensure a project exists for the current discipline

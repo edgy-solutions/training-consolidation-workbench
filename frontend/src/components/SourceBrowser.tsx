@@ -49,7 +49,6 @@ export const SourceBrowser: React.FC<SourceBrowserProps> = ({ discipline }) => {
             // 1. Always fetch tree data first (either search results or default tree)
             // Check if any filter is active or query exists
             const hasFilters = Object.values(filters).some(v => v !== '') || searchQuery.length > 0;
-            let currentTree = tree;
 
             if (hasFilters) {
                 try {
@@ -63,7 +62,6 @@ export const SourceBrowser: React.FC<SourceBrowserProps> = ({ discipline }) => {
                         }
                     });
                     setTree(results);
-                    currentTree = results;
                 } catch (e) {
                     console.error("Search failed", e);
                 }
@@ -74,7 +72,6 @@ export const SourceBrowser: React.FC<SourceBrowserProps> = ({ discipline }) => {
                 if (tree.length === 0 || (!searchQuery && !heatmapMode && !hasFilters)) {
                     const results = await api.getSourceTree(discipline);
                     setTree(results);
-                    currentTree = results;
                 }
             }
 
@@ -227,10 +224,6 @@ const BusinessUnitNode: React.FC<{ node: CourseNode, heatmapData?: Record<string
     // Just pass data down. 
 
     // Optional: Highlight BU if it contains any heat?
-    const hasHeat = useMemo(() => {
-        if (!heatmapMode || !heatmapData) return false;
-        return node.children?.some(child => heatmapData[child.id]);
-    }, [node, heatmapData, heatmapMode]);
 
     // Get all descendant IDs (courses in this BU)
     const getAllDescendantIds = (n: CourseNode): string[] => {
@@ -501,7 +494,7 @@ const SlideRow: React.FC<{ slide: SourceSlide, isHighlighted: boolean, heatmapDa
                                 // Heatmap Logic: Highlight concept tag if it likely matches the search
                                 // Simple heuristic: Check if search query is part of concept name
                                 (heatmapMode && intensity > 0 && searchQuery && c.name.toLowerCase().includes(searchQuery.toLowerCase()))
-                                    ? (c.salience > 0.7
+                                    ? ((c.salience || 0) > 0.7
                                         ? "bg-red-100 text-red-700 border-red-300 font-medium ring-1 ring-red-200"
                                         : "bg-orange-100 text-orange-700 border-orange-300 font-medium ring-1 ring-orange-200")
                                     : "bg-slate-100 text-slate-500 border-slate-200"

@@ -1,7 +1,6 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect } from 'react';
 import { Plus, GitMerge } from 'lucide-react';
 import { api } from '../api';
-import type { TargetDraftNode } from '../api';
 import { SynthBlock } from './SynthBlock';
 
 interface ConsolidationCanvasProps {

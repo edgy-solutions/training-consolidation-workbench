@@ -2,7 +2,7 @@ import React, { useEffect, useState, useRef } from 'react';
 import { FileText, Image as ImageIcon, Maximize2, XCircle, Sparkles, Download } from 'lucide-react';
 import { useAppStore } from '../store';
 import { api } from '../api';
-import type { SourceSlide, TargetDraftNode } from '../api';
+import type { SourceSlide } from '../api';
 import clsx from 'clsx';
 import ReactMarkdown from 'react-markdown';
 
@@ -87,7 +87,7 @@ export const SlideInspector: React.FC = () => {
                     {synthesizedNodes.map((node, index) => (
                         <div
                             key={node.id}
-                            ref={el => nodeRefs.current[node.id] = el}
+                            ref={el => { nodeRefs.current[node.id] = el; }}
                             className={clsx(
                                 "bg-white border rounded-lg shadow-sm p-6 transition-all duration-500",
                                 node.id === activeNodeId ? "ring-2 ring-teal-600 shadow-md" : "border-slate-200 opacity-80 hover:opacity-100"
@@ -200,7 +200,7 @@ export const SlideInspector: React.FC = () => {
                                         "text-xs px-2 py-1 rounded-md flex items-center gap-2 border transition-colors",
                                         // Heatmap Logic: Highlight concept tag if it likely matches the search
                                         (heatmapMode && intensity > 0 && searchQuery && c.name.toLowerCase().includes(searchQuery.toLowerCase()))
-                                            ? (c.salience > 0.7
+                                            ? ((c.salience || 0) > 0.7
                                                 ? "bg-red-100 text-red-700 border-red-300 font-medium ring-1 ring-red-200"
                                                 : "bg-orange-100 text-orange-700 border-orange-300 font-medium ring-1 ring-orange-200")
                                             : "bg-teal-50 text-teal-600 border-teal-100"
