@@ -13,10 +13,11 @@ def configure_dspy():
     """
     ollama_base_url = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434").replace('/v1', '')
     ollama_model = os.getenv("OLLAMA_MODEL", "gpt-oss:120b")
+    ollama_num_ctx = int(os.getenv("OLLAMA_NUM_CTX", "8192"))
     
-    print(f"[Config] Initializing shared DSPy LM: {ollama_base_url} -> {ollama_model}")
+    print(f"[Config] Initializing shared DSPy LM: {ollama_base_url} -> {ollama_model} (ctx={ollama_num_ctx})")
     
-    lm = dspy.LM(model=f"ollama_chat/{ollama_model}", api_base=ollama_base_url, api_key="")
+    lm = dspy.LM(model=f"ollama_chat/{ollama_model}", api_base=ollama_base_url, api_key="", num_ctx=ollama_num_ctx)
     dspy.configure(lm=lm)
     return lm
 

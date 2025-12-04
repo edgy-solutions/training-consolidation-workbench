@@ -46,6 +46,8 @@ services:
       ENABLE_MODULES: 'text2vec-transformers'
       TRANSFORMERS_INFERENCE_API: 'http://t2v-transformers:8080'
       CLUSTER_HOSTNAME: 'node1'
+      DISK_USE_WARNING_PERCENTAGE: '90'
+      DISK_USE_READONLY_PERCENTAGE: '95'
     volumes:
       - ./data/weaviate:/var/lib/weaviate
 
