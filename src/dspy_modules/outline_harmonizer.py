@@ -63,6 +63,14 @@ class GenerateConsolidatedSkeleton(dspy.Signature):
     }
     
     If sources lack safety/assessment content, define placeholder sections anyway.
+
+    CRITICAL INSTRUCTIONS FOR MISSING CONTENT:
+    1. You MUST include the standard modules (Introduction, Safety, Assessment) even if source material is missing.
+    2. However, if the source material does NOT contain concepts relevant to a module (e.g., no safety info provided):
+       - Create the module in the JSON.
+       - Set 'key_concepts' to an EMPTY LIST [].
+       - Set 'rationale' to "NO_SOURCE_DATA".
+    3. DO NOT invent or hallunicate concepts to fill these gaps. Only use concepts derived from the input.
     """
     
     # Input: Raw string representation of the source JSON

@@ -36,7 +36,7 @@ class GeneratorService:
             Dictionary with project_id and generated structure
         """
         # Step 1: Fetch source outlines from Neo4j
-        source_outlines, source_course_ids = self._fetch_source_outlines(selected_source_ids)
+        source_outlines, source_course_ids, known_source_concepts = self._fetch_source_outlines(selected_source_ids)
         
         if not source_outlines:
             raise ValueError("No source outlines found for the given IDs")
@@ -49,8 +49,8 @@ class GeneratorService:
             print(f"DEBUG: Using master outline from course: {master_course_id}")
             consolidated_sections = self._use_master_outline(master_course_id)
         else:
-            # Call DSPy to generate consolidated plan using Standard Template
-            print("DEBUG: Calling harmonizer with Standard Course Template...")
+            print("DEBUG: Calling harmonizer with Weighted Concepts...")
+            # The Harmonizer now sees "Voltage (Primary)" vs "Safety (Mention)"
             consolidated_sections = self.harmonizer(source_outlines)
             
             # Inspect DSPy history to see prompt and response in console
@@ -67,50 +67,56 @@ class GeneratorService:
         # Step 3: For each target section, find matching slides (FILTERED by source courses)
         enriched_sections = []
         for section in consolidated_sections:
-            suggested_slides = self._find_matching_slides(
+            
+            # New Logic: Trust the explicit signal from the LLM
+            if section.get('rationale') == "NO_SOURCE_DATA" or not section.get('key_concepts'):
+                print(f"DEBUG: Section '{section['title']}' is explicitly empty. Creating placeholder.")
+                
+                enriched_sections.append({
+                    **section,
+                    'suggested_slides': [],
+                    'is_placeholder': True # Frontend renders this with a "Missing Content" warning
+                })
+                continue
+
+            # Normal logic for populated sections
+            suggested_slides = self._find_matching_slides_iterative(
                 section.get('key_concepts', []),
                 allowed_course_ids=source_course_ids
             )
+
             enriched_sections.append({
                 **section,
                 'suggested_slides': suggested_slides
             })
         
-        # Step 4: Calculate Unassigned Slides (Set Difference)
-        # Get all available slides from the source courses
+        # Step 4: Calculate Unassigned Slides (Parking Lot)
         all_source_slides = self._fetch_all_slides_for_courses(source_course_ids)
         all_slide_ids = set(s['id'] for s in all_source_slides)
         
-        # Get all assigned slides
         assigned_slide_ids = set()
         for section in enriched_sections:
             for slide in section.get('suggested_slides', []):
                 assigned_slide_ids.add(slide['slide_id'])
                 
-        # Calculate difference
         unassigned_ids = all_slide_ids - assigned_slide_ids
         
-        # Create "Unassigned" section if there are leftovers
         if unassigned_ids:
             print(f"DEBUG: Found {len(unassigned_ids)} unassigned slides")
-            # We need text previews for these. We can get them from all_source_slides
             unassigned_slides_data = [
-                {
-                    'slide_id': s['id'],
-                    'text_preview': s['text'][:100] + "..."
-                }
+                {'slide_id': s['id'], 'text_preview': s['text'][:100] + "..."}
                 for s in all_source_slides if s['id'] in unassigned_ids
             ]
             
             enriched_sections.append({
-                'title': "Unassigned / For Review",
-                'rationale': "Slides available in source material but not explicitly assigned to a specific section by the AI.",
+                'title': "⚠️ Unassigned / For Review",
+                'rationale': "Slides available in source material but not used by the AI strategy.",
                 'key_concepts': [],
                 'suggested_slides': unassigned_slides_data,
-                'is_unassigned': True  # Flag for frontend styling
+                'is_unassigned': True
             })
 
-        # Step 5: Create Project and persist to Neo4j
+        # Step 5: Persist
         project_id = self._persist_project(enriched_sections, title=title)
         
         return {
@@ -215,120 +221,132 @@ class GeneratorService:
     
     def _fetch_source_outlines(self, source_ids: List[str]) -> tuple:
         """
-        Fetch section titles and concept summaries from Neo4j.
-        Handles both Course and Section IDs.
-        Returns (outlines, course_ids).
+        Fetch outlines and FORMAT concepts with importance tags.
+        Returns: (outlines, course_ids, all_known_concepts_set)
         """
-        # We need to handle two cases:
-        # 1. Input is a Course -> Get all its concepts
-        # 2. Input is a Section -> Get its specific concepts via HAS_SLIDE
-        
         query = """
         UNWIND $source_ids as sid
         MATCH (n) WHERE n.id = sid
         
-        // Expand Course into Sections if available
+        // Expand Course into Sections
         OPTIONAL MATCH (n)-[:HAS_SECTION*]->(child:Section)
-        WITH n, collect(child) as children
-        
-        // If we found sections, use them. Otherwise, treat the input node 'n' as the unit (e.g. a flat Course or a single Section)
-        WITH n, CASE WHEN size(children) > 0 THEN children ELSE [n] END as targets
-        
+        WITH n, CASE WHEN size(collect(child)) > 0 THEN collect(child) ELSE [n] END as targets
         UNWIND targets as target
         
-        // Determine context (Business Unit and Course ID)
+        // Determine Context
         OPTIONAL MATCH (target)<-[:HAS_SECTION*]-(c:Course)
         WITH n, target, 
              coalesce(c.business_unit, target.business_unit, n.business_unit, 'Unknown') as bu, 
              coalesce(c.id, n.id) as course_id
         
-        // Get concepts from linked slides (HAS_SLIDE)
+        // Get Concepts WITH MAX SCORE (Aggregation)
         OPTIONAL MATCH (target)-[:HAS_SLIDE]->(slide:Slide)-[t:TEACHES]->(con:Concept)
-        WHERE coalesce(t.salience, 0) >= 0.5
-        
-        WITH target, bu, course_id, collect(DISTINCT con.name) as concepts
-        
-        // Filter out empty targets unless they are explicitly sections (to preserve structure)
-        // WHERE size(concepts) > 0 OR target:Section
+        // We take the MAX salience of a concept across all slides in this section
+        WITH target, bu, course_id, con.name as c_name, max(coalesce(t.salience, 0)) as max_score
+        WHERE c_name IS NOT NULL
         
         RETURN target.title as section_title,
-               bu,
-               course_id,
-               concepts[0..15] as concepts
+                bu,
+                course_id,
+                collect({name: c_name, score: max_score}) as concepts
         ORDER BY bu, course_id
         """
         results = self.neo4j_client.execute_query(query, {"source_ids": source_ids})
         
-        outlines = [
-            {
+        outlines = []
+        all_known_concepts = set()
+        course_ids = set()
+
+        for r in results:
+            if not r['section_title']: continue
+            
+            course_ids.add(r['course_id'])
+            
+            # Format Concepts: "Name (Primary)"
+            formatted_concepts = []
+            
+            # Sort by score descending
+            sorted_concepts = sorted(r['concepts'], key=lambda x: x['score'], reverse=True)
+            
+            for c in sorted_concepts[:15]: # Limit to top 15 per section
+                all_known_concepts.add(c['name'])
+                
+                # Semantic Bucketing
+                if c['score'] >= 0.8:
+                    tag = "(Primary)"
+                elif c['score'] >= 0.5:
+                    tag = "(Secondary)"
+                else:
+                    tag = "(Mention)"
+                
+                formatted_concepts.append(f"{c['name']} {tag}")
+
+            outlines.append({
                 'bu': r['bu'],
                 'section_title': r['section_title'],
-                'concepts': r['concepts'] or []
-            }
-            for r in results if r['section_title']
-        ]
+                'concepts': formatted_concepts
+            })
         
-        # Collect unique course IDs for slide filtering
-        course_ids = list(set(r['course_id'] for r in results if r.get('course_id')))
-        
-        return outlines, course_ids
+        return outlines, list(course_ids), all_known_concepts
     
-    def _find_matching_slides(self, key_concepts: List[str], top_n: int = 3, allowed_course_ids: List[str] = None) -> List[Dict]:
-        """Use Weaviate to find slides that best match the concepts, optionally filtered by course IDs"""
+    def _find_matching_slides_iterative(self, key_concepts: List[str], allowed_course_ids: List[str] = None) -> List[Dict]:
+        """
+        Iterative Search: Queries each concept individually to ensure specific coverage.
+        Deduplicates results.
+        """
         if not key_concepts:
             return []
         
-        # Combine concepts into a search query
-        search_query = " ".join(key_concepts)
+        unique_slides = {} # Map slide_id -> slide_data
         
-        try:
-            # Build the query
-            query = self.weaviate_client.client.query.get(
-                "SlideText", ["slide_id", "text", "course_id"]  # Also retrieve course_id for debugging
-            ).with_near_text({
-                "concepts": [search_query],
-                "certainty": 0.6
-            }).with_limit(top_n * 3 if allowed_course_ids else top_n)  # Get more results before filtering
-            
-            # Add course ID filter if provided
-            if allowed_course_ids:
-                # Weaviate where filter for course_id
-                where_filter = {
-                    "operator": "Or",
-                    "operands": [
-                        {
+        # 1. Prioritize the first 5 concepts (usually the most important)
+        priority_concepts = key_concepts[:5]
+        
+        print(f"DEBUG: Searching for concepts: {priority_concepts}")
+
+        for concept in priority_concepts:
+            try:
+                # Build Filter
+                where_filter = None
+                if allowed_course_ids:
+                    where_filter = {
+                        "operator": "Or",
+                        "operands": [{
                             "path": ["course_id"],
                             "operator": "Equal",
-                            "valueString": course_id
-                        }
-                        for course_id in allowed_course_ids
-                    ]
-                }
-                query = query.with_where(where_filter)
-            
-            response = query.do()
-            
-            if "data" in response and "Get" in response["data"]:
-                slides = response["data"]["Get"]["SlideText"]
-                if not slides:
-                    print(f"DEBUG: No slides found for query: '{search_query}' with {len(allowed_course_ids) if allowed_course_ids else 'no'} course filters")
-                else:
-                    print(f"DEBUG: Found {len(slides)} slides for query: '{search_query}', courses: {allowed_course_ids}")
-                
-                # Return top_n results
-                return [
-                    {
-                        'slide_id': s['slide_id'],
-                        'text_preview': s['text'][:100] + "..."
+                            "valueString": cid
+                        } for cid in allowed_course_ids]
                     }
-                    for s in slides[:top_n]
-                ]
-        except Exception as e:
-            print(f"Error finding matching slides: {e}")
-            import traceback
-            traceback.print_exc()
-        
-        return []
+
+                # Targeted Query: Just ONE concept at a time
+                query = self.weaviate_client.client.query.get(
+                    "SlideText", ["slide_id", "text"]
+                ).with_near_text({
+                    "concepts": [concept],
+                    "certainty": 0.65 
+                }).with_limit(2)
+                
+                if where_filter:
+                    query = query.with_where(where_filter)
+                
+                response = query.do()
+                
+                if "data" in response and "Get" in response["data"]:
+                    hits = response["data"]["Get"]["SlideText"]
+                    if hits:
+                        for hit in hits:
+                            sid = hit['slide_id']
+                            if sid not in unique_slides:
+                                unique_slides[sid] = {
+                                    'slide_id': sid,
+                                    'text_preview': hit['text'][:100] + "...",
+                                    'match_reason': concept
+                                }
+            except Exception as e:
+                print(f"Search failed for concept '{concept}': {e}")
+
+        # Return list (limit to reasonable number, e.g. 6 slides max per section)
+        return list(unique_slides.values())[:6]
     
     def _persist_project(self, sections: List[Dict], title: str = "New Curriculum") -> str:
         """Create Project and TargetNode entries in Neo4j"""
