@@ -1,0 +1,32 @@
+# 1-Hour Workshop Template
+# Designed for focused skill development or awareness training
+# Emphasizes immediate applicability and single learning objective
+
+modules:
+  # Opening (0-5 min): Context Setting
+  - key: workshop_intro
+    title: "Workshop Objectives"
+    type: introduction
+    is_list: false
+    description: "Clear, specific learning outcome and relevance to participants (5 min)"
+  
+  # Essential Safety (5-10 min): Critical Only
+  - key: safety_highlights
+    title: "Key Safety Points"
+    type: mandatory_safety
+    is_list: false
+    description: "Most critical safety considerations for this specific skill/task (5 min)"
+  
+  # Core Training (10-50 min): Focused skill development
+  - key: technical_modules
+    title: null
+    type: technical
+    is_list: true
+    description: "Training modules. Create 2-3 focused modules: (1) Essential Knowledge, (2) Live Demonstration, (3) Hands-On Practice"
+  
+  # Closing (50-60 min): Reinforcement
+  - key: quick_check
+    title: "Knowledge Check & Summary"
+    type: mandatory_assessment
+    is_list: false
+    description: "Brief assessment and key takeaways with job aid reference (10 min)"

@@ -76,6 +76,7 @@ class SkeletonRequest(BaseModel):
     domain: Optional[str] = Field(None, description="Engineering domain/discipline")
     selected_source_ids: List[str] = Field(description="Source section/course IDs to merge")
     master_course_id: Optional[str] = Field(None, description="If provided, use this course's outline as the master structure")
+    template_name: Optional[str] = Field("standard", description="Template to use for curriculum generation")
 
 
 class RenderRequest(BaseModel):

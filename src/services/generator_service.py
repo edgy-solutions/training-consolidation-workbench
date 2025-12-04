@@ -44,7 +44,7 @@ class GeneratorService:
         self.weaviate_client = WeaviateClient()
         self.harmonizer = OutlineHarmonizer()
     
-    def generate_skeleton(self, selected_source_ids: List[str], title: str = "New Curriculum", master_course_id: Optional[str] = None) -> Dict[str, Any]:
+    def generate_skeleton(self, selected_source_ids: List[str], title: str = "New Curriculum", master_course_id: Optional[str] = None, template_name: str = "standard") -> Dict[str, Any]:
         """
         Generate a curriculum skeleton from selected source sections/courses.
         
@@ -70,9 +70,11 @@ class GeneratorService:
             print(f"DEBUG: Using master outline from course: {master_course_id}")
             consolidated_sections = self._use_master_outline(master_course_id)
         else:
-            print("DEBUG: Calling harmonizer with Weighted Concepts...")
+            print("DEBUG: Cal Harmonizer with Weighted Concepts...")
+            # Create harmonizer with selected template
+            harmonizer = OutlineHarmonizer(template_name=template_name)
             # The Harmonizer now sees "Voltage (Primary)" vs "Safety (Mention)"
-            consolidated_sections = self.harmonizer(source_outlines)
+            consolidated_sections = harmonizer(source_outlines)
             
             # Inspect DSPy history to see prompt and response in console
             try:

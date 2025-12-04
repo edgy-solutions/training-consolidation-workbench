@@ -1,0 +1,32 @@
+# 30-Minute Micro-Learning Template
+# Designed for awareness, overview, or single-task instruction
+# Follows microlearning best practices for knowledge retention
+
+modules:
+  # Opening (0-3 min): Hook and Objective
+  - key: learning_goal
+    title: "What You'll Learn"
+    type: introduction
+    is_list: false
+    description: "Single, clear learning objective with immediate workplace relevance (3 min)"
+  
+  # Critical Safety (3-6 min): Safety First
+  - key: critical_safety
+    title: "Safety Alert"
+    type: mandatory_safety
+    is_list: false
+    description: "Most critical safety warning or precaution for this task (3 min)"
+  
+  # Core Teaching (6-27 min): Focused micro-content
+  - key: technical_modules
+    title: null
+    type: technical
+    is_list: true
+    description: "Training modules. Create 2 concise modules: (1) Key Information with Visual Demo, (2) Try It Yourself Practice Tip"
+  
+  # Closing (27-30 min): Reinforcement
+  - key: takeaway
+    title: "Key Takeaway & Quick Check"
+    type: mandatory_assessment
+    is_list: false
+    description: "One critical point to remember and brief knowledge verification (3 min)"

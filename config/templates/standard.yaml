@@ -1,0 +1,32 @@
+# Standard Engineering Course Template
+# This file defines the structure that all generated curricula will follow.
+# Modify modules to add, remove, or reorder sections.
+
+modules:
+  - key: overview
+    title: "Course Introduction"
+    type: introduction
+    mandatory: true
+    default_concepts: []
+    description: "Module 0: Intro, Purpose, Scope, and Prerequisites."
+    
+  - key: safety_module
+    title: "Safety and Compliance"
+    type: mandatory_safety
+    mandatory: true
+    default_concepts: ["Safety Procedures", "Hazard Identification", "Compliance Requirements"]
+    description: "Module 1: Safety, Hazards, and Compliance."
+    
+  - key: technical_modules
+    title: null  # Dynamic from source
+    type: technical
+    mandatory: false
+    is_list: true
+    description: "Core teaching modules. Merge source topics into a logical flow and de-duplicate. "
+    
+  - key: assessment
+    title: "Knowledge Assessment"
+    type: mandatory_assessment
+    mandatory: true
+    default_concepts: ["Quiz", "Review", "Final Assessment"]
+    description: "Module N: Knowledge checks, quizzes, and final review."

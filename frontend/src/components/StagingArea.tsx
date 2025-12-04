@@ -23,6 +23,8 @@ export const StagingArea: React.FC = () => {
     const [strategy, setStrategy] = useState<'union' | 'intersection' | 'master_outline'>('union');
     const [sharedConcepts, setSharedConcepts] = useState<Set<string>>(new Set());
     const [masterCourseId, setMasterCourseId] = useState<string | null>(null);
+    const [templates, setTemplates] = useState<Array<{ name: string; display_name: string }>>([]);
+    const [selectedTemplate, setSelectedTemplate] = useState<string>("standard");
 
     const [generating, setGenerating] = useState(false);
 
@@ -125,6 +127,21 @@ export const StagingArea: React.FC = () => {
         }
     }, [selectedSourceIds]);
 
+    // Fetch available templates
+    useEffect(() => {
+        const fetchTemplates = async () => {
+            try {
+                const data = await api.getTemplates();
+                setTemplates(data.templates);
+            } catch (error) {
+                console.error('Error fetching templates:', error);
+                // Fallback to standard
+                setTemplates([{ name: 'standard', display_name: 'Standard' }]);
+            }
+        };
+        fetchTemplates();
+    }, []);
+
     const handleGenerate = async () => {
         if (generating) return;
         setGenerating(true);
@@ -140,6 +157,9 @@ export const StagingArea: React.FC = () => {
             if (strategy === 'master_outline' && masterCourseId) {
                 payload.master_course_id = masterCourseId;
             }
+
+            // Add selected template
+            payload.template_name = selectedTemplate;
 
             const result = await api.generateProjectSkeleton(payload);
 
@@ -177,28 +197,45 @@ export const StagingArea: React.FC = () => {
                             <p className="text-xs text-slate-500">Review selected courses before generating outline</p>
                         </div>
                     </div>
-                    <button
-                        onClick={handleGenerate}
-                        disabled={generating}
-                        className={clsx(
-                            "flex items-center gap-2 px-4 py-2 rounded-lg font-medium transition-colors",
-                            generating
-                                ? "bg-slate-300 text-slate-500 cursor-not-allowed"
-                                : "bg-blue-600 text-white hover:bg-blue-700"
-                        )}
-                    >
-                        {generating ? (
-                            <>
-                                <div className="animate-spin h-4 w-4 border-2 border-slate-500 border-t-transparent rounded-full" />
-                                Generating...
-                            </>
-                        ) : (
-                            <>
-                                <Zap size={16} />
-                                Generate Outline
-                            </>
-                        )}
-                    </button>
+
+                    {/* Template Selector and Generate Button */}
+                    <div className="flex items-center gap-3">
+                        <label className="text-sm font-medium text-slate-700">Template:</label>
+                        <select
+                            value={selectedTemplate}
+                            onChange={(e) => setSelectedTemplate(e.target.value)}
+                            className="px-3 py-1.5 rounded-md border-2 border-slate-300 text-sm font-medium text-slate-700 bg-white hover:border-blue-400 focus:outline-none focus:border-blue-500 transition-colors"
+                        >
+                            {templates.map(template => (
+                                <option key={template.name} value={template.name}>
+                                    {template.display_name}
+                                </option>
+                            ))}
+                        </select>
+
+                        <button
+                            onClick={handleGenerate}
+                            disabled={generating}
+                            className={clsx(
+                                "flex items-center gap-2 px-4 py-2 rounded-lg font-medium transition-colors",
+                                generating
+                                    ? "bg-slate-300 text-slate-500 cursor-not-allowed"
+                                    : "bg-blue-600 text-white hover:bg-blue-700"
+                            )}
+                        >
+                            {generating ? (
+                                <>
+                                    <div className="animate-spin h-4 w-4 border-2 border-slate-500 border-t-transparent rounded-full" />
+                                    Generating...
+                                </>
+                            ) : (
+                                <>
+                                    <Zap size={16} />
+                                    Generate Outline
+                                </>
+                            )}
+                        </button>
+                    </div>
                 </div>
 
                 {/* Strategy Toggle */}

@@ -732,8 +732,49 @@ def get_synthesis_preview(node_id: str):
         
     return {"content": results[0]["content"], "status": results[0]["status"]}
 
-
 # --- F. Curriculum Generator ---
+
+@app.get("/templates/list")
+def list_templates():
+    """
+    List all available curriculum templates from the templates directory.
+    
+    Returns a list of template names (without .yaml extension).
+    """
+    import os
+    # Use absolute path from project root
+    templates_dir = os.path.join(os.path.dirname(__file__), '..', '..', 'config', 'templates')
+    templates_dir = os.path.abspath(templates_dir)
+    
+    print(f"[DEBUG] Looking for templates in: {templates_dir}")
+    
+    try:
+        templates = []
+        if os.path.exists(templates_dir):
+            files = os.listdir(templates_dir)
+            print(f"[DEBUG] Found files: {files}")
+            
+            for filename in files:
+                if filename.endswith('.yaml'):
+                    template_name = filename[:-5]  # Remove .yaml extension
+                    templates.append({
+                        "name": template_name,
+                        "display_name": template_name.replace('_', ' ').title()
+                    })
+        else:
+            print(f"[WARN] Templates directory does not exist: {templates_dir}")
+        
+        if not templates:
+            # Return default if no templates found
+            templates = [{"name": "standard", "display_name": "Standard"}]
+        
+        print(f"[DEBUG] Returning {len(templates)} templates: {[t['name'] for t in templates]}")
+        return {"templates": templates}
+    except Exception as e:
+        print(f"Error listing templates: {e}")
+        import traceback
+        traceback.print_exc()
+        return {"templates": [{"name": "standard", "display_name": "Standard"}]}
 
 @app.post("/curriculum/generate", response_model=GenerateSkeletonResponse)
 def generate_curriculum(request: GenerateSkeletonRequest):
@@ -776,7 +817,8 @@ def generate_project_skeleton(request: SkeletonRequest):
         result = service.generate_skeleton(
             request.selected_source_ids, 
             title=request.title,
-            master_course_id=request.master_course_id
+            master_course_id=request.master_course_id,
+            template_name=request.template_name or "standard"
         )
         
         # Fetch full project tree

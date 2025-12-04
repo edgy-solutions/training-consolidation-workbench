@@ -1,0 +1,69 @@
+# Multi-Day Comprehensive Course Template
+# Based on ADDIE model and Bloom's Taxonomy
+# Designed for in-depth technical training with hands-on practice
+
+modules:
+  # Day 1: Foundation and Safety
+  - key: course_introduction
+    title: "Course Introduction & Learning Objectives"
+    type: introduction
+    is_list: false
+    description: "Overview of course goals, expectations, and learning outcomes aligned with job performance"
+    
+  - key: safety_overview
+    title: "Safety Protocols & Compliance"
+    type: mandatory_safety
+    is_list: false
+    description: "Comprehensive safety training including PPE, hazard identification, emergency procedures, and regulatory compliance"
+  
+  # Day 1-2: Core Knowledge (Bloom's: Remember & Understand)
+  - key: foundational_concepts
+    title: "Fundamental Principles"
+    type: technical
+    is_list: false
+    description: "Core theoretical concepts, terminology, and foundational knowledge required for skill development"
+  
+  - key: systems_overview
+    title: "Systems and Components Overview"
+    type: technical
+    is_list: false
+    description: "Detailed examination of system architecture, components, and their relationships"
+  
+  # Day 2-3: Application (Bloom's: Apply & Analyze)
+  - key: technical_modules
+    title: null  # Will use description
+    type: technical
+    is_list: true
+    description: "Technical skill modules. Create multiple progressive modules from basic to advanced applications"
+  
+  - key: troubleshooting
+    title: "Troubleshooting & Problem-Solving"
+    type: technical
+    is_list: false
+    description: "Systematic approach to diagnosing issues, root cause analysis, and solution implementation"
+  
+  # Day 3-4: Synthesis (Bloom's: Evaluate & Create)
+  - key: hands_on_practice
+    title: "Hands-On Laboratory Practice"
+    type: technical
+    is_list: false
+    description: "Supervised practical exercises applying learned skills in realistic scenarios"
+  
+  - key: case_studies
+    title: "Real-World Case Studies"
+    type: technical
+    is_list: false
+    description: "Analysis of actual industry scenarios requiring integration of multiple concepts"
+  
+  # Final Day: Assessment and Planning
+  - key: performance_assessment
+    title: "Skills Assessment & Certification"
+    type: mandatory_assessment
+    is_list: false
+    description: "Comprehensive practical and theoretical assessment measuring competency against learning objectives"
+  
+  - key: continuous_improvement
+    title: "Continuous Learning & Resources"
+    type: technical
+    is_list: false
+    description: "Additional resources, ongoing learning pathways, and professional development opportunities"

@@ -106,8 +106,14 @@ export const api = {
         title: string;
         domain: string | null;
         selected_source_ids: string[];
+        master_course_id?: string | null;
+        template_name?: string;
     }) => {
         const res = await axios.post(`${API_URL}/project/generate_skeleton`, request);
+        return res.data;
+    },
+    getTemplates: async () => {
+        const res = await axios.get<{ templates: Array<{ name: string; display_name: string }> }>(`${API_URL}/templates/list`);
         return res.data;
     },
     acceptSuggestedNode: async (nodeId: string) => {

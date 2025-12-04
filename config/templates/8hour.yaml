@@ -1,0 +1,39 @@
+# 8-Hour Full Day Course Template
+# Optimized for single-day intensive training
+# Follows adult learning principles with regular breaks and varied activities
+
+modules:
+  # Morning Session (0-15 min): Orientation
+  - key: course_introduction
+    title: "Welcome & Course Overview"
+    type: introduction
+    is_list: false
+    description: "Learning objectives, agenda, and relevance to job role (15 min)"
+  
+  # Morning Session (15-45 min): Critical Safety
+  - key: safety_essentials
+    title: "Critical Safety Requirements"
+    type: mandatory_safety
+    is_list: false
+    description: "Essential safety protocols, hazards, and emergency procedures (30 min)"
+  
+  # Core Training Content (120-420 min): Mix of theory, skills, and practice
+  - key: technical_modules
+    title: null
+    type: technical
+    is_list: true
+    description: "Training modules. Create modules for: (1) Core Concepts & Principles, (2-3) Essential Technical Skills, (4) Guided Practice, (5) Troubleshooting Basics"
+  
+  # Late Afternoon (420-450 min): Assessment
+  - key: skills_check
+    title: "Skills Verification & Assessment"
+    type: mandatory_assessment
+    is_list: false
+    description: "Performance-based assessment of critical competencies (30 min)"
+  
+  # Closing (450-480 min): Wrap-up
+  - key: review_resources
+    title: "Summary & Next Steps"
+    type: technical
+    is_list: false
+    description: "Key takeaways, job aids, and additional learning resources (30 min)"
