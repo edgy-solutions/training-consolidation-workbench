@@ -26,6 +26,7 @@ export interface TargetDraftNode {
     is_suggestion?: boolean;
     is_placeholder?: boolean; // Flag for "NO_SOURCE_DATA" sections
     is_unassigned?: boolean; // Flag for "Unassigned / For Review" section
+    section_type?: string; // Template section type (introduction, mandatory_safety, technical, mandatory_assessment)
     suggested_source_ids?: string[];
     rationale?: string;
     order?: number;

@@ -584,6 +584,7 @@ def get_draft_structure(project_id: str):
     RETURN n.id as id, n.title as title, n.status as status, n.content_markdown as content, 
            n.rationale as rationale, n.order as order, coalesce(n.is_unassigned, false) as is_unassigned,
            coalesce(n.is_placeholder, false) as is_placeholder,
+           coalesce(n.section_type, 'technical') as section_type,
            parent.id as parent_id, 
            collect(distinct s.id) as source_refs,
            collect(distinct ss.id) as suggested_source_ids
@@ -627,7 +628,8 @@ def get_draft_structure(project_id: str):
             rationale=row["rationale"],
             order=row.get("order", 0),
             is_unassigned=row.get("is_unassigned") or False,
-            is_placeholder=row.get("is_placeholder") or False
+            is_placeholder=row.get("is_placeholder") or False,
+            section_type=row.get("section_type", "technical")
         ))
     return nodes
 
