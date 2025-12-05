@@ -111,24 +111,47 @@ def process_course_artifact(context: AssetExecutionContext, minio: MinioResource
                         extract_images=True, 
                         image_output_dir=temp_extract_dir
                     )
-                except Exception as extract_err:
-                    # Fallback for PPTX: If direct extraction failed, try converting to PDF and retrying
+
+                    # PPTX Special Handling: Direct Extraction + PDF Fallback
                     if filename.lower().endswith((".pptx", ".ppt")) and not is_converted_pdf:
-                        context.log.warning(f"PPTX extraction failed: {extract_err}. Retrying with PDF conversion...")
-                        try:
+                        # 1. Try Direct Extraction using python-pptx (Preserves quality and slide context)
+                        from src.ingestion.pptx_media_extractor import extract_images_from_pptx
+                        
+                        direct_images = extract_images_from_pptx(processing_file_path, temp_extract_dir)
+                        context.log.info(f"Direct PPTX extraction found {len(direct_images)} images.")
+                        
+                        # Check total images found so far (unstructured + direct)
+                        all_images = [f for f in os.listdir(temp_extract_dir) if f.lower().endswith(('.png', '.jpg', '.jpeg'))]
+                        
+                        # 2. If still no images, trigger PDF Fallback (Visual extraction)
+                        if not all_images:
+                            context.log.warning("No images found via direct extraction. Triggering PDF fallback...")
                             from src.ingestion.rendering import convert_to_pdf
+                            
+                            # Convert to PDF
                             pdf_path = convert_to_pdf(file_path, temp_dir) # Use main temp_dir for PDF file
-                            elements = extract_text_and_metadata(
+                            
+                            # Extract from PDF (using unstructured's CV)
+                            # Note: This will extract images *from* the rendered PDF pages
+                            elements_pdf = extract_text_and_metadata(
                                 pdf_path,
                                 extract_images=True,
                                 image_output_dir=temp_extract_dir
                             )
-                            context.log.info("Fallback PDF extraction successful.")
-                        except Exception as fallback_err:
-                            context.log.error(f"Fallback PDF extraction also failed: {fallback_err}")
-                            raise extract_err # Raise original error
-                    else:
-                        raise extract_err
+                            
+                            # Merge elements? Or just rely on the images being in temp_extract_dir?
+                            # The images are now in temp_extract_dir, which is what we iterate over below.
+                            # We might want to update 'elements' with the PDF elements if the original PPTX text extraction was also poor,
+                            # but for now we are focusing on images.
+                            context.log.info("PDF fallback extraction completed.")
+                            
+                except Exception as extract_err:
+                    context.log.error(f"Extraction error: {extract_err}")
+                    # If it was a critical error, we might want to re-raise, but for now we log and continue
+                    # to ensure at least text/other assets are processed if possible.
+                    # But if this was the main extraction, 'elements' might be empty.
+                    if not elements:
+                         raise extract_err
                 
                 # Upload extracted embedded images
                 for img_filename in os.listdir(temp_extract_dir):
