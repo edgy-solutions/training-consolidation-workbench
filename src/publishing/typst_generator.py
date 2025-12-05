@@ -11,7 +11,7 @@ def sanitize_typst_string(text: str) -> str:
 def markdown_to_typst(markdown: str) -> str:
     """
     Naive Markdown to Typst converter.
-    Replaces headers, lists, and bold/italic text.
+    Replaces headers, lists, bold/italic text, and images.
     """
     if not markdown:
         return ""
@@ -20,6 +20,14 @@ def markdown_to_typst(markdown: str) -> str:
     typst_lines = []
     
     for line in lines:
+        # Check for markdown image: ![alt](url)
+        # Convert to Typst image: #image("url", alt: "alt")
+        line = re.sub(
+            r'!\[([^\]]*)\]\(([^)]+)\)', 
+            lambda m: f'#figure(\n  image("{m.group(2)}", width: 80%),\n  caption: [{m.group(1)}]\n)' if m.group(1) else f'#image("{m.group(2)}", width: 80%)',
+            line
+        )
+        
         # Headers
         if line.startswith('# '):
             typst_lines.append(f"= {line[2:]}")
@@ -46,6 +54,7 @@ def markdown_to_typst(markdown: str) -> str:
 def generate_typst_document(project_title: str, nodes: List[Dict[str, Any]]) -> str:
     """
     Generates a full Typst document string from the project structure.
+    Images are converted to Typst image syntax.
     """
     
     header = f"""

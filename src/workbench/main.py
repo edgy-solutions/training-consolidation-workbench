@@ -213,6 +213,107 @@ def get_slide_details(slide_id: str):
         concepts=concepts
     )
 
+@app.get("/source/embedded-images/{course_id}")
+def get_embedded_images(course_id: str):
+    """
+    Returns all embedded images extracted from a course's source documents.
+    These are diagrams, charts, photos, etc. extracted during ingestion.
+    Includes coordinates and canvas size for proper scaling.
+    """
+    # List objects in the course's generated/images folder
+    prefix = f"{course_id}/generated/images/"
+    
+    try:
+        # First, try to load text.json to get image coordinates
+        image_metadata = {}
+        text_json_path = f"{course_id}/generated/text.json"
+        try:
+            response = minio_client.get_object(BUCKET_NAME, text_json_path)
+            text_data = json.loads(response.read().decode('utf-8'))
+            response.close()
+            response.release_conn()
+            
+            # Extract coordinates for Image elements
+            for element in text_data:
+                if element.get("type") == "Image":
+                    metadata = element.get("metadata", {})
+                    image_path = metadata.get("image_path")
+                    if image_path:
+                        filename = os.path.basename(image_path)
+                        coords = metadata.get("coordinates", {})
+                        image_metadata[filename] = {
+                            "coordinates": coords,
+                            "page_number": metadata.get("page_number"),
+                            # Canvas size might be in coordinates.layout_width/height or system.layout_width/height
+                            "layout_width": coords.get("layout_width") or coords.get("system", {}).get("layout_width"),
+                            "layout_height": coords.get("layout_height") or coords.get("system", {}).get("layout_height"),
+                        }
+        except Exception as e:
+            print(f"Could not load text.json for {course_id}: {e}")
+        
+        objects = minio_client.list_objects(BUCKET_NAME, prefix=prefix, recursive=True)
+        images = []
+        
+        for obj in objects:
+            if obj.is_dir:
+                continue
+            
+            # Get presigned URL for each image
+            url = minio_client.get_presigned_url(BUCKET_NAME, obj.object_name)
+            filename = os.path.basename(obj.object_name)
+            
+            # Get coordinates if available
+            meta = image_metadata.get(filename, {})
+            coords = meta.get("coordinates", {})
+            points = coords.get("points", [])
+            
+            # Calculate bounding box if points are available
+            bbox = None
+            if points and len(points) >= 2:
+                xs = [p[0] for p in points]
+                ys = [p[1] for p in points]
+                bbox = {
+                    "x": min(xs),
+                    "y": min(ys),
+                    "width": max(xs) - min(xs),
+                    "height": max(ys) - min(ys)
+                }
+            
+            images.append({
+                "filename": filename,
+                "url": url,
+                "size": obj.size,
+                "object_name": obj.object_name,
+                "bbox": bbox,
+                "canvas_width": meta.get("layout_width"),
+                "canvas_height": meta.get("layout_height"),
+                "page_number": meta.get("page_number")
+            })
+        
+        return {"course_id": course_id, "images": images}
+    except Exception as e:
+        return {"course_id": course_id, "images": [], "error": str(e)}
+
+@app.post("/source/embedded-images-for-slides")
+def get_embedded_images_for_slides(slide_ids: List[str]):
+    """
+    Given a list of slide IDs, returns all embedded images from the source courses.
+    Slide ID format is {course_id}_p{page_num}.
+    """
+    # Extract unique course IDs from slide IDs
+    course_ids = set()
+    for slide_id in slide_ids:
+        parts = slide_id.rsplit("_p", 1)
+        if len(parts) == 2:
+            course_ids.add(parts[0])
+    
+    all_images = []
+    for course_id in course_ids:
+        result = get_embedded_images(course_id)
+        all_images.extend(result.get("images", []))
+    
+    return {"images": all_images}
+
 @app.get("/search/concepts", response_model=List[str])
 def search_concepts(q: str):
     """

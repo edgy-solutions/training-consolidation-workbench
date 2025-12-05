@@ -7,6 +7,7 @@ import { api } from '../api';
 import type { TargetDraftNode } from '../api';
 import { useAppStore } from '../store';
 import { MarkdownEditor } from './MarkdownEditor';
+import { AssetDrawer } from './AssetDrawer';
 
 // Reuse the SortableThumbnail from previous implementation (will need to export/move it or redefine)
 // For now, I'll redefine a simpler version or import if I extract it. 
@@ -390,7 +391,7 @@ export const SynthBlock: React.FC<SynthBlockProps> = ({ node, onRefresh }) => {
 
                                 {/* Output Preview/Editor (if exists) */}
                                 {node.content_markdown ? (
-                                    <div className="mb-4">
+                                    <div className="mb-4 overflow-hidden">
                                         <div className="flex items-center justify-between mb-2">
                                             <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">
                                                 Editable Content
@@ -412,8 +413,8 @@ export const SynthBlock: React.FC<SynthBlockProps> = ({ node, onRefresh }) => {
                                             onSave={async (markdown) => {
                                                 try {
                                                     await api.updateNodeContent(node.id, markdown);
-                                                    // Optionally refresh to show updated content
-                                                    // onRefresh();
+                                                    // Update store locally so Inspector stays in sync
+                                                    useAppStore.getState().updateNodeContent(node.id, markdown);
                                                 } catch (e) {
                                                     console.error('Failed to save content:', e);
                                                 }
@@ -423,6 +424,18 @@ export const SynthBlock: React.FC<SynthBlockProps> = ({ node, onRefresh }) => {
                                             <Sparkles size={10} className="text-brand-teal" />
                                             Auto-saved as you type
                                         </div>
+
+                                        {/* Visual Assets Drawer */}
+                                        <AssetDrawer
+                                            slideIds={items}
+                                            onInsert={(url, filename) => {
+                                                // Insert markdown image at cursor or end
+                                                const imageMarkdown = `\n\n![${filename}](${url})\n\n`;
+                                                const currentContent = node.content_markdown || '';
+                                                const newContent = currentContent + imageMarkdown;
+                                                api.updateNodeContent(node.id, newContent).then(onRefresh);
+                                            }}
+                                        />
                                     </div>
                                 ) : null}
 

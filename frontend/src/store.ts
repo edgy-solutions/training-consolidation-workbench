@@ -20,6 +20,7 @@ interface AppState {
     createProjectIfNeeded: () => Promise<void>;
     addNode: (parentId: string, title: string) => Promise<void>;
     mapSlideToNode: (nodeId: string, slideIds: string | string[]) => Promise<void>;
+    updateNodeContent: (nodeId: string, markdown: string) => void;
     // Heatmap State
     heatmapMode: boolean;
     searchQuery: string;
@@ -105,5 +106,14 @@ export const useAppStore = create<AppState>((set, get) => ({
         } catch (e) {
             console.error("Failed to map slide", e);
         }
+    },
+
+    updateNodeContent: (nodeId, markdown) => {
+        // Update the node's content locally without refetching from backend
+        set((state) => ({
+            structure: state.structure.map(node =>
+                node.id === nodeId ? { ...node, content_markdown: markdown } : node
+            )
+        }));
     }
 }));

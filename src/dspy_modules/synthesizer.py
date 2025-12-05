@@ -109,18 +109,44 @@ class ContentSynthesizer(dspy.Module):
         )
         
         # 5. Parse JSON response
+        raw_output = prediction.rich_content
+        
+        # Strip markdown code blocks if present (LLMs often wrap JSON in ```json ... ```)
+        if raw_output.strip().startswith('```'):
+            lines = raw_output.strip().split('\n')
+            # Remove first line (```json) and last line (```)
+            if lines[0].startswith('```'):
+                lines = lines[1:]
+            if lines and lines[-1].strip() == '```':
+                lines = lines[:-1]
+            raw_output = '\n'.join(lines)
+        
         try:
-            result_data = json.loads(prediction.rich_content)
+            result_data = json.loads(raw_output)
             
             # Validate and create RichSection object
             result = RichSection(**result_data)
             
         except json.JSONDecodeError as e:
             print(f"[ERROR] Failed to parse JSON from LLM: {e}")
-            print(f"[ERROR] Raw output: {prediction.rich_content}")
-            # Fallback: return simple markdown without assets
+            print(f"[ERROR] Raw output: {raw_output[:500]}...")
+            
+            # Try to extract markdown_content even if JSON is malformed
+            import re
+            md_match = re.search(r'"markdown_content"\s*:\s*"((?:[^"\\]|\\.)*)"', raw_output, re.DOTALL)
+            if md_match:
+                markdown = md_match.group(1)
+                # Unescape JSON string escapes
+                markdown = markdown.replace('\\n', '\n').replace('\\"', '"').replace('\\\\', '\\')
+                return {
+                    "markdown": markdown,
+                    "assets": [],
+                    "callouts": []
+                }
+            
+            # Fallback: return a placeholder
             return {
-                "markdown": prediction.rich_content,  # Use raw output as markdown
+                "markdown": "Error: Failed to parse synthesized content. Please try again.",
                 "assets": [],
                 "callouts": []
             }
