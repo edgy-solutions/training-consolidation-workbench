@@ -85,8 +85,8 @@ def rendered_course_file(context: AssetExecutionContext, config: RenderConfig, m
         bucket_name = "published"
         
         # Ensure bucket exists
-        if not minio_client.client.bucket_exists(bucket_name):
-            minio_client.client.make_bucket(bucket_name)
+        # Ensure bucket exists
+        minio_client.ensure_bucket(bucket_name)
             
         # Upload
         minio_client.upload_file(bucket_name, filename, local_path)
