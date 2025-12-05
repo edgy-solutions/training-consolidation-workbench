@@ -1,5 +1,5 @@
 import os
-from dagster import sensor, RunRequest, SensorEvaluationContext
+from dagster import sensor, RunRequest, SensorEvaluationContext, DefaultSensorStatus
 from src.storage.minio import MinioClient
 from src.ingestion.assets import BUCKET_NAME, process_course_artifact, CourseArtifactConfig
 
@@ -15,7 +15,12 @@ def get_minio_client():
         secure=False # Assuming local dev for now
     )
 
-@sensor(job_name="process_course_job")
+# Check env var for default sensor status
+# Set DAGSTER_SENSOR_DEFAULT_ENABLED=true to auto-start
+_sensor_default_enabled = os.getenv("DAGSTER_SENSOR_DEFAULT_ENABLED", "false").lower() == "true"
+_sensor_status = DefaultSensorStatus.RUNNING if _sensor_default_enabled else DefaultSensorStatus.STOPPED
+
+@sensor(job_name="process_course_job", default_status=_sensor_status)
 def course_upload_sensor(context: SensorEvaluationContext):
     """
     Monitors MinIO 'training-content' bucket for new course artifacts.

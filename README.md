@@ -145,6 +145,22 @@ If you need to inspect pipelines or trigger jobs manually.
 dagster dev
 ```
 
+#### Auto-Enable the Ingestion Sensor
+By default, the `course_upload_sensor` starts in a **stopped** state and must be enabled manually via the Dagster UI.
+
+To have the sensor start **automatically enabled**, set the following environment variable before starting Dagster:
+```powershell
+$env:DAGSTER_SENSOR_DEFAULT_ENABLED = "true"
+dagster dev
+```
+
+Or add it to your `.env` file:
+```env
+DAGSTER_SENSOR_DEFAULT_ENABLED=true
+```
+
+> **Note**: Changes to env vars require restarting Dagster to take effect.
+
 ## Data Management
 
 ### Ingesting Data (Priming the Sensor)
