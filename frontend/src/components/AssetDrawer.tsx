@@ -120,7 +120,7 @@ export const AssetDrawer: React.FC<AssetDrawerProps> = ({ slideIds, onInsert }) 
                 <div
                     ref={scrollRef}
                     onScroll={handleScroll}
-                    className="flex gap-3 overflow-x-auto py-2 px-1 scrollbar-thin scrollbar-thumb-slate-300 scrollbar-track-transparent"
+                    className="flex gap-3 overflow-x-auto py-2 px-1 scrollbar-thin scrollbar-thumb-slate-300 scrollbar-track-transparent w-full max-w-full"
                 >
                     {images.map((image, idx) => (
                         <div

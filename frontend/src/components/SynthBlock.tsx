@@ -310,7 +310,7 @@ export const SynthBlock: React.FC<SynthBlockProps> = ({ node, onRefresh }) => {
                     </div>
 
                     {/* Right: Synthesis (Instruction + Output) */}
-                    <div className="flex-1 flex flex-col">
+                    <div className="flex-1 flex flex-col min-w-0">
                         {isSuggestion ? (
                             <div className="flex-1 flex flex-col items-center justify-center text-center p-6 bg-white/50 rounded-lg border border-purple-100 border-dashed">
                                 <Sparkles size={24} className="text-purple-300 mb-3" />
