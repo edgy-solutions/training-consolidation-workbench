@@ -118,6 +118,53 @@ def convert_to_pdf(file_path: str, output_dir: str) -> str:
         
     return pdf_path
 
+def convert_to_pptx(file_path: str, output_dir: str) -> str:
+    """
+    Convert a legacy .ppt presentation to .pptx using LibreOffice.
+    Returns the path to the generated .pptx.
+    """
+    soffice_cmd = _check_libreoffice_installed()
+    
+    if not soffice_cmd:
+        raise RuntimeError("LibreOffice 'soffice' command not found. Cannot convert document to pptx.")
+
+    # Create a temporary directory for the user profile to avoid locking issues
+    user_profile_dir = os.path.join(output_dir, "soffice_profile_pptx")
+    os.makedirs(user_profile_dir, exist_ok=True)
+    
+    # Format path for LibreOffice URL (file:///)
+    user_profile_url = f"file:///{user_profile_dir.replace(os.sep, '/')}"
+
+    cmd = [
+        soffice_cmd,
+        f"-env:UserInstallation={user_profile_url}",
+        "--headless",
+        "--convert-to", "pptx",
+        "--outdir", output_dir,
+        file_path
+    ]
+    
+    print(f"Running LibreOffice conversion to PPTX: {' '.join(cmd)}")
+    
+    # Run LibreOffice conversion and capture output
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    
+    # Check for errors
+    if result.returncode != 0:
+        print(f"LibreOffice conversion failed with exit code {result.returncode}")
+        print(f"STDOUT: {result.stdout}")
+        print(f"STDERR: {result.stderr}")
+        raise RuntimeError(f"LibreOffice conversion failed: {result.stderr}")
+    
+    # Expect filename.pptx in output_dir
+    base_name = os.path.splitext(os.path.basename(file_path))[0]
+    pptx_path = os.path.join(output_dir, f"{base_name}.pptx")
+    
+    if not os.path.exists(pptx_path):
+        raise RuntimeError(f"PPTX conversion failed. Expected output at {pptx_path}")
+        
+    return pptx_path
+
 def render_pptx_slides(file_path: str) -> List[Image.Image]:
     """
     Render each slide of a PPTX to a PIL Image by converting to PDF first.

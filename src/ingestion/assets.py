@@ -62,7 +62,7 @@ def process_course_artifact(context: AssetExecutionContext, minio: MinioResource
         processing_file_path = file_path
         is_converted_pdf = False
         
-        # Determine if conversion is needed (Force for DOCX)
+        # Determine if conversion is needed (Force for DOCX, and PPT -> PPTX)
         if filename.lower().endswith((".docx", ".doc")):
             try:
                 # We use the temp_dir for the converted PDF
@@ -73,6 +73,17 @@ def process_course_artifact(context: AssetExecutionContext, minio: MinioResource
                 context.log.info(f"Conversion successful: {processing_file_path}")
             except Exception as e:
                 context.log.error(f"PDF conversion failed: {e}. Falling back to original file.")
+                processing_file_path = file_path
+        
+        elif filename.lower().endswith(".ppt"):
+            try:
+                # Convert PPT to PPTX for python-pptx compatibility
+                from src.ingestion.rendering import convert_to_pptx
+                context.log.info(f"Converting legacy {filename} to PPTX for extraction...")
+                processing_file_path = convert_to_pptx(file_path, temp_dir)
+                context.log.info(f"Conversion successful: {processing_file_path}")
+            except Exception as e:
+                context.log.error(f"PPTX conversion failed: {e}. Falling back to original file (likely to fail extraction).")
                 processing_file_path = file_path
 
         # 2. Render Images (Slides/Pages)
