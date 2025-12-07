@@ -44,7 +44,7 @@ class GeneratorService:
         self.weaviate_client = WeaviateClient()
         self.harmonizer = OutlineHarmonizer()
     
-    def generate_skeleton(self, selected_source_ids: List[str], title: str = "New Curriculum", master_course_id: Optional[str] = None, template_name: str = "standard") -> Dict[str, Any]:
+    def generate_skeleton(self, selected_source_ids: List[str], title: str = "New Curriculum", master_course_id: Optional[str] = None, template_name: str = "standard", user_id: Optional[str] = None) -> Dict[str, Any]:
         """
         Generate a curriculum skeleton from selected source sections/courses.
         
@@ -140,7 +140,7 @@ class GeneratorService:
             })
 
         # Step 5: Persist
-        project_id = self._persist_project(enriched_sections, title=title)
+        project_id = self._persist_project(enriched_sections, title=title, user_id=user_id)
         
         return {
             'project_id': project_id,
@@ -356,7 +356,7 @@ class GeneratorService:
         # 1. Prioritize the first 5 concepts (usually the most important)
         priority_concepts = key_concepts[:5]
         
-        print(f"DEBUG: Searching for concepts: {priority_concepts}")
+        print(f"DEBUG: Searching for concepts: {priority_concepts} in courses: {allowed_course_ids}")
 
         for concept in priority_concepts:
             try:
@@ -374,11 +374,11 @@ class GeneratorService:
 
                 # Targeted Query: Just ONE concept at a time
                 query = self.weaviate_client.client.query.get(
-                    "SlideText", ["slide_id", "text"]
+                    "SlideText", ["slide_id", "text", "course_id"]
                 ).with_near_text({
                     "concepts": [concept],
-                    "certainty": 0.65 
-                }).with_limit(2)
+                    "certainty": 0.5  # Lowered from 0.65 for debugging
+                }).with_limit(5) # Increased limit for debugging
                 
                 if where_filter:
                     query = query.with_where(where_filter)
@@ -387,22 +387,27 @@ class GeneratorService:
                 
                 if "data" in response and "Get" in response["data"]:
                     hits = response["data"]["Get"]["SlideText"]
+                    print(f"DEBUG: Concept '{concept}' found {len(hits)} hits")
                     if hits:
                         for hit in hits:
                             sid = hit['slide_id']
+                            print(f"DEBUG: Hit: {sid} (Course: {hit.get('course_id')})")
                             if sid not in unique_slides:
                                 unique_slides[sid] = {
                                     'slide_id': sid,
                                     'text_preview': hit['text'][:100] + "...",
                                     'match_reason': concept
                                 }
+                else:
+                    print(f"DEBUG: Unexpected Weaviate response: {response}")
+
             except Exception as e:
                 print(f"Search failed for concept '{concept}': {e}")
 
         # Return list (limit to reasonable number, e.g. 6 slides max per section)
         return list(unique_slides.values())[:6]
     
-    def _persist_project(self, sections: List[Dict], title: str = "New Curriculum") -> str:
+    def _persist_project(self, sections: List[Dict], title: str = "New Curriculum", user_id: Optional[str] = None) -> str:
         """Create Project and TargetNode entries in Neo4j with hierarchy support"""
         project_id = str(uuid.uuid4())
         
@@ -418,6 +423,17 @@ class GeneratorService:
             """,
             {"project_id": project_id, "title": title}
         )
+
+        # Link to User if provided
+        if user_id:
+            self.neo4j_client.execute_query(
+                """
+                MATCH (u:User {id: $user_id})
+                MATCH (p:Project {id: $project_id})
+                MERGE (u)-[:OWNS]->(p)
+                """,
+                {"user_id": user_id, "project_id": project_id}
+            )
         
         # Create TargetNode entries
         # First pass: create all nodes and build ID mapping

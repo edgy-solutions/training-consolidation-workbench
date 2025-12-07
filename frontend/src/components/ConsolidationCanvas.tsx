@@ -25,25 +25,13 @@ export const ConsolidationCanvas: React.FC<ConsolidationCanvasProps> = ({ projec
     const fetchStructure = useAppStore(state => state.fetchStructure);
     const addNode = useAppStore(state => state.addNode);
 
-    // Initial Project Creation if needed
+    // Initial Project Creation is handled by App.tsx -> store.createProjectIfNeeded
+    // We just need to fetch structure when projectId changes
     useEffect(() => {
-        if (!projectId) {
-            let ignore = false;
-
-            api.createDraftProject(`Unified ${discipline} Standard`).then(p => {
-                if (ignore) return;
-                setProjectId(p.id);
-                api.addDraftNode(p.id, "Topic 1").then(() => {
-                    if (ignore) return;
-                    fetchStructure();
-                });
-            });
-
-            return () => { ignore = true; };
-        } else {
+        if (projectId) {
             fetchStructure();
         }
-    }, [projectId, discipline, refreshTrigger, setProjectId, fetchStructure]);
+    }, [projectId, refreshTrigger, fetchStructure]);
 
     // Get all project nodes (excluding the project root itself)
     const allProjectNodes = useMemo(() => {

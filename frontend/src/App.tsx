@@ -12,14 +12,18 @@ import { useEffect, useState } from 'react';
 import { AuthProvider } from './auth/AuthProvider';
 import { RequireAuth } from './auth/RequireAuth';
 
-function App() {
-  const { discipline, setDiscipline, projectId, setProjectId, createProjectIfNeeded, mapSlideToNode, stagingMode } = useAppStore();
-  const [activeDragSlide, setActiveDragSlide] = useState<SourceSlide | null>(null);
-
-  // Ensure a project exists for the current discipline
+// Component to handle project loading AFTER auth is confirmed
+const ProjectLoader = () => {
+  const { createProjectIfNeeded, discipline } = useAppStore();
   useEffect(() => {
     createProjectIfNeeded();
   }, [discipline, createProjectIfNeeded]);
+  return null;
+};
+
+function App() {
+  const { discipline, setDiscipline, projectId, setProjectId, mapSlideToNode, stagingMode } = useAppStore();
+  const [activeDragSlide, setActiveDragSlide] = useState<SourceSlide | null>(null);
 
   const sensors = useSensors(
     useSensor(MouseSensor, { activationConstraint: { distance: 10 } }),
@@ -90,6 +94,7 @@ function App() {
     <div className="h-screen flex flex-col">
       <AuthProvider>
         <RequireAuth>
+          <ProjectLoader />
           <DndContext
             sensors={sensors}
             onDragStart={handleDragStart}

@@ -147,8 +147,9 @@ export const StagingArea: React.FC = () => {
         setGenerating(true);
         try {
             // Build the payload
+            const { discipline } = useAppStore.getState();
             const payload: any = {
-                title: `Consolidated Curriculum`,
+                title: `Unified ${discipline} Standard`, // Must match createProjectIfNeeded logic
                 domain: null,
                 selected_source_ids: Array.from(selectedSourceIds)
             };

@@ -88,6 +88,10 @@ export const api = {
         const res = await axios.post<TargetDraftNode>(`${API_URL}/draft/create`, null, { params: { title } });
         return res.data;
     },
+    listUserProjects: async () => {
+        const res = await axios.get<TargetDraftNode[]>(`${API_URL}/draft/list`);
+        return res.data;
+    },
     addDraftNode: async (parentId: string, title: string) => {
         const res = await axios.post<TargetDraftNode>(`${API_URL}/draft/node/add`, null, { params: { parent_id: parentId, title } });
         return res.data;

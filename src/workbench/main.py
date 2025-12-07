@@ -1,5 +1,5 @@
 from fastapi import FastAPI, HTTPException, Query, Body, Depends
-from src.auth.security import get_current_user
+from src.auth.security import get_current_user, User
 from fastapi.middleware.cors import CORSMiddleware
 from typing import List, Dict, Any, Optional
 import os
@@ -590,25 +590,68 @@ def search_source_tree(request: SearchRequest):
 # --- B. The Builder Module ---
 
 @app.post("/draft/create", response_model=TargetDraftNode)
-def create_draft_project(title: str):
+def create_draft_project(title: str, current_user: User = Depends(get_current_user)):
     """
-    Initializes a new empty consolidation project.
+    Initializes a new empty consolidation project linked to the current user.
     """
     import uuid
     project_id = str(uuid.uuid4())
+    user_id = current_user.id
     
     query = """
-    CREATE (p:Project:TargetNode {id: $id, title: $title, status: "empty", content_markdown: ""})
-    RETURN p.id as id, p.title as title, p.status as status
+    MATCH (u:User {id: $user_id})
+    CREATE (p:Project:TargetNode {id: $id, title: $title, status: "empty", content_markdown: "", created_at: datetime()})
+    MERGE (u)-[:OWNS]->(p)
+    RETURN p.id as id, p.title as title, p.status as status, p.created_at as created_at
     """
-    results = neo4j_client.execute_query(query, {"id": project_id, "title": title})
+    results = neo4j_client.execute_query(query, {"id": project_id, "title": title, "user_id": user_id})
+    
+    # Fallback if user node doesn't exist (shouldn't happen due to sync, but safety first)
+    if not results:
+        query_fallback = """
+        CREATE (p:Project:TargetNode {id: $id, title: $title, status: "empty", content_markdown: "", created_at: datetime()})
+        RETURN p.id as id, p.title as title, p.status as status, p.created_at as created_at
+        """
+        results = neo4j_client.execute_query(query_fallback, {"id": project_id, "title": title})
+
     row = results[0]
+    created_at = row.get("created_at")
+    if created_at and hasattr(created_at, 'iso_format'):
+        created_at = created_at.iso_format()
     
     return TargetDraftNode(
         id=row["id"],
         title=row["title"],
-        status=row["status"]
+        status=row["status"],
+        created_at=created_at
     )
+
+@app.get("/draft/list", response_model=List[TargetDraftNode])
+def list_user_projects(current_user: User = Depends(get_current_user)):
+    """
+    Returns a list of projects owned by the current user.
+    """
+    user_id = current_user.id
+    query = """
+    MATCH (u:User {id: $user_id})-[:OWNS]->(p:Project)
+    RETURN p.id as id, p.title as title, p.status as status, p.created_at as created_at
+    ORDER BY coalesce(p.created_at, datetime('1970-01-01T00:00:00Z')) DESC
+    """
+    results = neo4j_client.execute_query(query, {"user_id": user_id})
+    
+    projects = []
+    for row in results:
+        created_at = row["created_at"]
+        if created_at and hasattr(created_at, 'iso_format'):
+            created_at = created_at.iso_format()
+            
+        projects.append(TargetDraftNode(
+            id=row["id"],
+            title=row["title"],
+            status=row["status"],
+            created_at=created_at
+        ))
+    return projects
 
 @app.post("/draft/node/add", response_model=TargetDraftNode)
 def add_draft_node(parent_id: str, title: str):
@@ -897,7 +940,7 @@ def list_templates():
         return {"templates": [{"name": "standard", "display_name": "Standard"}]}
 
 @app.post("/curriculum/generate", response_model=GenerateSkeletonResponse)
-def generate_curriculum(request: GenerateSkeletonRequest):
+def generate_curriculum(request: GenerateSkeletonRequest, current_user: User = Depends(get_current_user)):
     """
     Generate a consolidated curriculum skeleton from selected source sections.
     
@@ -913,7 +956,13 @@ def generate_curriculum(request: GenerateSkeletonRequest):
     
     service = GeneratorService()
     try:
-        result = service.generate_skeleton(request.source_ids)
+        result = service.generate_skeleton(
+            request.source_ids, 
+            title=request.title or "New Curriculum",
+            master_course_id=request.master_course_id,
+            template_name=request.template_name or "standard",
+            user_id=current_user.id
+        )
         return result
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -922,7 +971,7 @@ def generate_curriculum(request: GenerateSkeletonRequest):
 
 
 @app.post("/project/generate_skeleton", response_model=ProjectTreeResponse)
-def generate_project_skeleton(request: SkeletonRequest):
+def generate_project_skeleton(request: SkeletonRequest, current_user: User = Depends(get_current_user)):
     """
     Generate a new curriculum project with AI-suggested sections.
     
@@ -938,7 +987,8 @@ def generate_project_skeleton(request: SkeletonRequest):
             request.selected_source_ids, 
             title=request.title,
             master_course_id=request.master_course_id,
-            template_name=request.template_name or "standard"
+            template_name=request.template_name or "standard",
+            user_id=current_user.id
         )
         
         # Fetch full project tree
@@ -1004,9 +1054,10 @@ def accept_suggested_node(node_id: str):
     WITH t
     OPTIONAL MATCH (t)-[r:SUGGESTED_SOURCE]->(s:Slide)
     DELETE r
-    CREATE (t)-[:DERIVED_FROM]->(s)
+    WITH t, collect(s) as slides
+    FOREACH (slide IN slides | CREATE (t)-[:DERIVED_FROM]->(slide))
     
-    RETURN t.id as id, t.status as status, count(s) as sources_accepted
+    RETURN t.id as id, t.status as status, size(slides) as sources_accepted
     """
     
     results = neo4j_client.execute_query(query, {"node_id": node_id})

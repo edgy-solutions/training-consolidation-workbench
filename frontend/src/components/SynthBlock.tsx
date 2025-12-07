@@ -410,14 +410,9 @@ export const SynthBlock: React.FC<SynthBlockProps> = ({ node, onRefresh }) => {
                                         </div>
                                         <MarkdownEditor
                                             content={node.content_markdown}
-                                            onSave={async (markdown) => {
-                                                try {
-                                                    await api.updateNodeContent(node.id, markdown);
-                                                    // Update store locally so Inspector stays in sync
-                                                    useAppStore.getState().updateNodeContent(node.id, markdown);
-                                                } catch (e) {
-                                                    console.error('Failed to save content:', e);
-                                                }
+                                            onSave={(markdown) => {
+                                                // Use the store's debounced action
+                                                useAppStore.getState().updateNodeContent(node.id, markdown);
                                             }}
                                         />
                                         <div className="text-[10px] text-slate-500 mt-2 flex items-center gap-1">
@@ -433,7 +428,7 @@ export const SynthBlock: React.FC<SynthBlockProps> = ({ node, onRefresh }) => {
                                                 const imageMarkdown = `\n\n![${filename}](${url})\n\n`;
                                                 const currentContent = node.content_markdown || '';
                                                 const newContent = currentContent + imageMarkdown;
-                                                api.updateNodeContent(node.id, newContent).then(onRefresh);
+                                                useAppStore.getState().updateNodeContent(node.id, newContent);
                                             }}
                                         />
                                     </div>
