@@ -6,6 +6,23 @@ load_dotenv()
 from fastapi import FastAPI, HTTPException, Query, Body, Depends
 from src.auth.security import get_current_user, User
 from fastapi.middleware.cors import CORSMiddleware
+from typing import List, Dict, Any, Optional
+import os
+import json
+from datetime import timedelta
+from dagster_graphql import DagsterGraphQLClient, DagsterGraphQLClientError
+
+from src.storage.neo4j import Neo4jClient
+from src.storage.weaviate import WeaviateClient
+from src.storage.minio import MinioClient
+from src.workbench.models import (
+    ConceptNode, SourceSlide, TargetDraftNode, SynthesisRequest, SearchRequest,
+    GenerateSkeletonRequest, GenerateSkeletonResponse, SkeletonRequest, ProjectTreeResponse,
+    RenderRequest
+)
+from src.ingestion.assets import BUCKET_NAME
+
+app = FastAPI(title="Training Consolidation Workbench API")
 
 # Allow CORS for local frontend development
 app.add_middleware(
