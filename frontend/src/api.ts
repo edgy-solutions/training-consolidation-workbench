@@ -165,10 +165,7 @@ export const api = {
         const res = await axios.post(`${API_URL}/source/embedded-images-for-slides`, slideIds);
         return res.data;
     },
-    getEmbeddedImagesForSlides: async (slideIds: string[]): Promise<{ images: { filename: string; url: string; size: number }[] }> => {
-        const res = await axios.post(`${API_URL}/source/embedded-images-for-slides`, slideIds);
-        return res.data;
-    },
+
 };
 
 export interface SearchRequest {
