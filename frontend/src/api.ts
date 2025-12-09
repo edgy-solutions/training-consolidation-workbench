@@ -21,7 +21,9 @@ export interface TargetDraftNode {
     parent_id?: string;
     source_refs: string[];
     status: string;
-    content_markdown?: string;
+    target_layout?: string; // Layout archetype (hero, documentary, split, etc.)
+    suggested_layout?: string;
+
     // Suggestion fields
     is_suggestion?: boolean;
     is_placeholder?: boolean; // Flag for "NO_SOURCE_DATA" sections
@@ -151,6 +153,16 @@ export const api = {
         const res = await axios.put(`${API_URL}/draft/node/title`, { title }, {
             params: { node_id: nodeId }
         });
+        return res.data;
+    },
+    updateNodeLayout: async (nodeId: string, layout: string) => {
+        const res = await axios.put(`${API_URL}/draft/node/layout`, { target_layout: layout }, {
+            params: { node_id: nodeId }
+        });
+        return res.data;
+    },
+    getEmbeddedImagesForSlides: async (slideIds: string[]): Promise<{ images: { filename: string; url: string; size: number }[] }> => {
+        const res = await axios.post(`${API_URL}/source/embedded-images-for-slides`, slideIds);
         return res.data;
     },
     getEmbeddedImagesForSlides: async (slideIds: string[]): Promise<{ images: { filename: string; url: string; size: number }[] }> => {

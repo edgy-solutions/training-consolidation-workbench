@@ -154,7 +154,10 @@ def build_knowledge_graph(
 
     # 5. Process Slides/Pages (Content Extraction)
     from collections import defaultdict
+    from src.ingestion.layout_detector import detect_layout
+    
     pages = defaultdict(list)
+    page_elements = defaultdict(list)
     
     current_chunk_page = 1
     current_chunk_size = 0
@@ -169,9 +172,12 @@ def build_knowledge_graph(
             # Use explicit page number from extractor
             page_num = metadata["page_number"]
             pages[page_num].append(text)
+            page_elements[page_num].append(el)
         else:
             # Fallback: Assign to synthetic page chunks
             pages[current_chunk_page].append(text)
+            page_elements[current_chunk_page].append(el)
+            
             current_chunk_size += len(text)
             if current_chunk_size > CHUNK_LIMIT:
                 current_chunk_page += 1
@@ -202,6 +208,10 @@ def build_knowledge_graph(
         slide_id = f"{course_id}_p{page_num}"
         context.log.info(f"Processing Slide {page_num} (ID: {slide_id})")
         
+        # Detect Layout
+        elements = page_elements.get(page_num, [])
+        layout_style = detect_layout(elements)
+        
         # Derive asset type
         filename = manifest["filename"]
         file_ext = os.path.splitext(filename)[1].upper().replace('.', '')
@@ -214,10 +224,11 @@ def build_knowledge_graph(
             MERGE (sl:Slide {id: $id})
             SET sl.number = $page_num, 
                 sl.text = $text,
-                sl.asset_type = $asset_type
+                sl.asset_type = $asset_type,
+                sl.layout_style = $layout_style
             MERGE (c)-[:HAS_SLIDE]->(sl)
             """,
-            {"course_id": course_id, "id": slide_id, "page_num": page_num, "text": slide_text[:500], "asset_type": asset_type}
+            {"course_id": course_id, "id": slide_id, "page_num": page_num, "text": slide_text[:500], "asset_type": asset_type, "layout_style": layout_style}
         )
         
         # Extract Concepts (BAML)

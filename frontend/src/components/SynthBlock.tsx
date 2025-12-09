@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useDroppable } from '@dnd-kit/core';
 import { SortableContext, verticalListSortingStrategy } from '@dnd-kit/sortable';
-import { Sparkles, GripVertical, X, MessageSquare, ChevronRight, ChevronDown } from 'lucide-react';
+import { Sparkles, GripVertical, X, MessageSquare, ChevronRight, ChevronDown, LayoutTemplate } from 'lucide-react';
 import clsx from 'clsx';
 import { api } from '../api';
 import type { TargetDraftNode } from '../api';
@@ -245,6 +245,33 @@ export const SynthBlock: React.FC<SynthBlockProps> = ({ node, onRefresh }) => {
                 </div>
 
                 <div className="flex items-center gap-3">
+                    {/* Layout Selector */}
+                    {!isSuggestion && !isUnassigned && !isPlaceholder && (
+                        <div className="relative group/layout">
+                            <select
+                                className="appearance-none bg-slate-100 hover:bg-slate-200 text-[10px] font-medium text-slate-600 px-2 py-1 pr-6 rounded cursor-pointer border-transparent focus:border-brand-teal outline-none transition-colors"
+                                value={node.target_layout || 'documentary'}
+                                onChange={async (e) => {
+                                    try {
+                                        await api.updateNodeLayout(node.id, e.target.value);
+                                        onRefresh();
+                                    } catch (err) {
+                                        console.error("Failed to update layout", err);
+                                    }
+                                }}
+                            >
+                                <option value="documentary">Content (Standard)</option>
+                                <option value="hero">Title Slide</option>
+                                <option value="split">Split (Text + Img)</option>
+                                <option value="content_caption">Image w/ Caption</option>
+                                <option value="grid">Grid (Multi-Img)</option>
+                                <option value="table">Table</option>
+                                <option value="blank">Blank</option>
+                            </select>
+                            <LayoutTemplate size={12} className="absolute right-1.5 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
+                        </div>
+                    )}
+
                     {/* Suggestion Badge Inline */}
                     {isSuggestion && (
                         <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full bg-purple-100 text-purple-700 text-[10px] font-medium border border-purple-200 whitespace-nowrap">
