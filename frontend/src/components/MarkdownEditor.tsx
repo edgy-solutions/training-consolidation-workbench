@@ -1,13 +1,15 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { useEditor, EditorContent } from '@tiptap/react';
+import { useEditor, EditorContent, ReactNodeViewRenderer, NodeViewWrapper } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
 import Placeholder from '@tiptap/extension-placeholder';
 import Link from '@tiptap/extension-link';
 import Image from '@tiptap/extension-image';
-import { Bold, Italic, List, ListOrdered, Heading2, Link as LinkIcon, Code } from 'lucide-react';
+import { Bold, Italic, List, ListOrdered, Heading2, Link as LinkIcon, Code, X } from 'lucide-react';
 import clsx from 'clsx';
 import { marked } from 'marked';
 import TurndownService from 'turndown';
+
+// ... (other code)
 
 interface MarkdownEditorProps {
     content: string;
@@ -35,12 +37,105 @@ turndownService.addRule('images', {
     filter: 'img',
     replacement: function (content, node) {
         const img = node as HTMLImageElement;
-        const alt = img.alt || '';
+        const alt = (img.alt || '').replace(/"/g, '&quot;'); // Escape quotes in ALT
         const src = img.src || '';
-        const title = img.title ? ` "${img.title}"` : '';
-        return `![${alt}](${src}${title})`;
+        const title = (img.title || '').replace(/"/g, '&quot;'); // Escape quotes in TITLE
+        const width = img.getAttribute('width');
+
+        // If width is explicitly set (resized), enable HTML output to persist it
+        if (width) {
+            return `<img src="${src}" alt="${alt}" width="${width}"${title ? ` title="${title}"` : ''} />`;
+        }
+
+        // standard markdown fallback
+        return `![${alt}](${src}${title ? ` "${title}"` : ''})`;
     }
 });
+
+// Custom Resizable Image Node View
+const ImageNodeView = (props: any) => {
+    const { node, updateAttributes, deleteNode, selected } = props;
+    const [resizing, setResizing] = useState(false);
+    const [width, setWidth] = useState(node.attrs.width || '100%');
+    const imgRef = useRef<HTMLImageElement>(null);
+    const startXRef = useRef(0);
+    const startWidthRef = useRef(0);
+
+    useEffect(() => {
+        setWidth(node.attrs.width || '100%');
+    }, [node.attrs.width]);
+
+    const handleMouseDown = (e: React.MouseEvent) => {
+        e.preventDefault();
+        e.stopPropagation();
+        if (!imgRef.current) return;
+
+        setResizing(true);
+        startXRef.current = e.clientX;
+        startWidthRef.current = imgRef.current.offsetWidth;
+
+        const handleMouseMove = (moveEvent: MouseEvent) => {
+            if (resizing || startWidthRef.current) {
+                const currentX = moveEvent.clientX;
+                const diffX = currentX - startXRef.current;
+                const newWidth = Math.max(50, startWidthRef.current + diffX); // Min width 50px
+                setWidth(`${newWidth}px`);
+            }
+        };
+
+        const handleMouseUp = (upEvent: MouseEvent) => {
+            document.removeEventListener('mousemove', handleMouseMove);
+            document.removeEventListener('mouseup', handleMouseUp);
+            setResizing(false);
+
+            // Commit the width change
+            const currentX = upEvent.clientX;
+            const diffX = currentX - startXRef.current;
+            const finalWidth = Math.max(50, startWidthRef.current + diffX);
+            updateAttributes({ width: `${finalWidth}px` });
+        };
+
+        document.addEventListener('mousemove', handleMouseMove);
+        document.addEventListener('mouseup', handleMouseUp);
+    };
+
+    return (
+        <NodeViewWrapper className="relative inline-block group leading-none my-2 max-w-full">
+            <div className="relative inline-block">
+                <img
+                    ref={imgRef}
+                    {...node.attrs}
+                    style={{ ...node.attrs.style, width: width }}
+                    className={clsx(
+                        "max-w-full h-auto rounded-lg shadow-sm transition-shadow",
+                        selected ? "ring-2 ring-brand-teal" : ""
+                    )}
+                />
+
+                {/* Resize Handle */}
+                <div
+                    onMouseDown={handleMouseDown}
+                    className="absolute bottom-1 right-1 w-3 h-3 bg-brand-teal border border-white rounded-full cursor-nwse-resize opacity-0 group-hover:opacity-100 transition-opacity z-20 shadow-sm"
+                    title="Resize image"
+                />
+
+                {/* Delete Button */}
+                <button
+                    onClick={() => deleteNode()}
+                    className="absolute top-2 right-2 bg-white/90 p-1.5 rounded-full text-slate-500 hover:text-red-500 hover:bg-white shadow-md opacity-0 group-hover:opacity-100 transition-opacity z-10"
+                    title="Remove image"
+                    type="button"
+                >
+                    <X size={14} />
+                </button>
+            </div>
+        </NodeViewWrapper>
+    );
+};
+
+// ... (rest of imports)
+
+// ... inside MarkdownEditor component ...
 
 export const MarkdownEditor: React.FC<MarkdownEditorProps> = ({ content, onSave }) => {
     const lastSavedContent = useRef(content);
@@ -60,12 +155,29 @@ export const MarkdownEditor: React.FC<MarkdownEditorProps> = ({ content, onSave 
             Link.configure({
                 openOnClick: false,
             }),
-            Image.configure({
+            // Use extend to add React Node View and support width
+            Image.extend({
+                addAttributes() {
+                    return {
+                        src: { default: null },
+                        alt: { default: null },
+                        title: { default: null },
+                        width: {
+                            default: null,
+                            parseHTML: element => element.getAttribute('width'),
+                            renderHTML: attributes => {
+                                if (!attributes.width) return {};
+                                return { width: attributes.width };
+                            }
+                        },
+                    };
+                },
+                addNodeView() {
+                    return ReactNodeViewRenderer(ImageNodeView);
+                },
+            }).configure({
                 inline: false,
                 allowBase64: true,
-                HTMLAttributes: {
-                    class: 'max-w-full h-auto rounded-lg shadow-sm my-2',
-                },
             }),
         ],
         // Convert markdown to HTML for initial content

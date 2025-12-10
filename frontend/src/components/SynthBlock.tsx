@@ -135,8 +135,7 @@ export const SynthBlock: React.FC<SynthBlockProps> = ({ node, onRefresh }) => {
     }, [items]);
 
     const handleRemove = async (slideId: string) => {
-        // If it's a suggestion, we can't remove individual slides yet (until accepted)
-        if (node.is_suggestion) return;
+        // Allow removing from suggestions (will convert to draft on backend)
 
         const newItems = items.filter(id => id !== slideId);
         setItems(newItems); // Optimistic update

@@ -4,7 +4,7 @@ import { useAppStore } from '../store';
 import { api } from '../api';
 import type { SourceSlide } from '../api';
 import clsx from 'clsx';
-import ReactMarkdown from 'react-markdown';
+import { marked } from 'marked';
 
 export const SlideInspector: React.FC = () => {
     const activeSlideId = useAppStore(state => state.activeSlideId);
@@ -109,9 +109,10 @@ export const SlideInspector: React.FC = () => {
                             </div>
 
                             {node.content_markdown ? (
-                                <div className="prose prose-sm max-w-none text-slate-700">
-                                    <ReactMarkdown>{node.content_markdown}</ReactMarkdown>
-                                </div>
+                                <div
+                                    className="prose prose-sm max-w-none text-slate-700"
+                                    dangerouslySetInnerHTML={{ __html: marked.parse(node.content_markdown) as string }}
+                                />
                             ) : (
                                 <div className="text-center text-slate-300 text-xs italic py-4">
                                     (Content pending...)

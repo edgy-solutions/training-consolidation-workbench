@@ -733,14 +733,20 @@ def map_slides_to_node(node_id: str, slide_ids: List[str]):
     query = """
     MATCH (t:TargetNode {id: $node_id})
     
-    // Update layouts
+    // Update layouts AND Status (Suggestion -> Draft if modified)
     SET t.target_layout = $layout,
-        t.suggested_layout = $layout
+        t.suggested_layout = $layout,
+        t.status = CASE WHEN t.status = 'suggestion' THEN 'draft' ELSE t.status END
     
     // Clear old links
     WITH t
     OPTIONAL MATCH (t)-[r:DERIVED_FROM]->(:Slide)
     DELETE r
+
+    // Clear SUGGESTED_SOURCE links (since we are rewriting the sources)
+    WITH t
+    OPTIONAL MATCH (t)-[r2:SUGGESTED_SOURCE]->(:Slide)
+    DELETE r2
     
     // Create new links
     WITH t
