@@ -9,6 +9,7 @@ interface AppState {
     activeNodeId: string | null; // The node currently being edited/viewed in Right Pane
     activeSlideId: string | null; // The source slide currently being inspected
     newlyAddedNodeId: string | null; // Track the most recently added node for auto-focus
+    nodeContentJson: Record<string, any>; // Tiptap JSON per node for spatial preview
 
     // Actions
     setDiscipline: (d: string) => void;
@@ -21,6 +22,7 @@ interface AppState {
     addNode: (parentId: string, title: string) => Promise<void>;
     mapSlideToNode: (nodeId: string, slideIds: string | string[]) => Promise<void>;
     updateNodeContent: (nodeId: string, markdown: string) => void;
+    updateNodeContentJson: (nodeId: string, json: any) => void;
     // Heatmap State
     heatmapMode: boolean;
     searchQuery: string;
@@ -44,6 +46,7 @@ export const useAppStore = create<AppState>()(
             activeNodeId: null,
             activeSlideId: null,
             newlyAddedNodeId: null,
+            nodeContentJson: {},
 
             // Heatmap State
             heatmapMode: false,
@@ -63,6 +66,12 @@ export const useAppStore = create<AppState>()(
             setSearchQuery: (query) => set({ searchQuery: query }),
             setHeatmapData: (data) => set({ heatmapData: data }),
             setStagingMode: (mode) => set({ stagingMode: mode }),
+
+            updateNodeContentJson: (nodeId, json) => {
+                set((state) => ({
+                    nodeContentJson: { ...state.nodeContentJson, [nodeId]: json }
+                }));
+            },
 
             fetchStructure: async () => {
                 const { projectId } = get();

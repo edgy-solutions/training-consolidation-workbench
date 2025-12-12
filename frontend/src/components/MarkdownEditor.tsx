@@ -8,12 +8,14 @@ import { Bold, Italic, List, ListOrdered, Heading2, Link as LinkIcon, Code, X } 
 import clsx from 'clsx';
 import { marked } from 'marked';
 import TurndownService from 'turndown';
+import { useLayout } from './LayoutContext';
 
 // ... (other code)
 
 interface MarkdownEditorProps {
     content: string;
     onSave: (markdown: string) => void;
+    onJsonChange?: (json: any) => void; // Optional: export Tiptap JSON for spatial preview
 }
 
 // Configure marked v17 to properly render images using the new API
@@ -52,7 +54,7 @@ turndownService.addRule('images', {
     }
 });
 
-// Custom Resizable Image Node View
+// Custom Resizable Image Node View with Layout Role Selector
 const ImageNodeView = (props: any) => {
     const { node, updateAttributes, deleteNode, selected } = props;
     const [resizing, setResizing] = useState(false);
@@ -60,6 +62,10 @@ const ImageNodeView = (props: any) => {
     const imgRef = useRef<HTMLImageElement>(null);
     const startXRef = useRef(0);
     const startWidthRef = useRef(0);
+
+    // Get layout context for role options
+    const { getLayoutRoles, currentLayout } = useLayout();
+    const layoutRoles = getLayoutRoles();
 
     useEffect(() => {
         setWidth(node.attrs.width || '100%');
@@ -88,29 +94,52 @@ const ImageNodeView = (props: any) => {
             document.removeEventListener('mouseup', handleMouseUp);
             setResizing(false);
 
-            // Commit the width change
+            // Commit the width change - explicitly preserve layoutRole
             const currentX = upEvent.clientX;
             const diffX = currentX - startXRef.current;
             const finalWidth = Math.max(50, startWidthRef.current + diffX);
-            updateAttributes({ width: `${finalWidth}px` });
+            const currentLayoutRole = node.attrs.layoutRole || 'auto';
+            updateAttributes({ width: `${finalWidth}px`, layoutRole: currentLayoutRole });
         };
 
         document.addEventListener('mousemove', handleMouseMove);
         document.addEventListener('mouseup', handleMouseUp);
     };
+    // Destructure to exclude layoutRole from being spread to DOM
+    const { layoutRole: _layoutRole, ...domAttrs } = node.attrs;
 
     return (
         <NodeViewWrapper className="relative inline-block group leading-none my-2 max-w-full">
             <div className="relative inline-block">
                 <img
                     ref={imgRef}
-                    {...node.attrs}
-                    style={{ ...node.attrs.style, width: width }}
+                    src={domAttrs.src}
+                    alt={domAttrs.alt || ''}
+                    title={domAttrs.title || undefined}
+                    style={{ ...domAttrs.style, width: width }}
                     className={clsx(
                         "max-w-full h-auto rounded-lg shadow-sm transition-shadow",
                         selected ? "ring-2 ring-brand-teal" : ""
                     )}
                 />
+
+                {/* Layout Role Selector - appears when selected */}
+                {selected && (
+                    <div className="absolute top-2 left-2 z-20">
+                        <select
+                            value={node.attrs.layoutRole || 'auto'}
+                            onChange={(e) => updateAttributes({ layoutRole: e.target.value })}
+                            className="text-xs px-2 py-1 bg-white/95 border border-slate-300 rounded shadow-md focus:outline-none focus:ring-1 focus:ring-brand-teal"
+                            title={`Layout role for ${currentLayout} layout`}
+                        >
+                            {layoutRoles.map(role => (
+                                <option key={role.value} value={role.value}>
+                                    {role.label}
+                                </option>
+                            ))}
+                        </select>
+                    </div>
+                )}
 
                 {/* Resize Handle */}
                 <div
@@ -137,7 +166,7 @@ const ImageNodeView = (props: any) => {
 
 // ... inside MarkdownEditor component ...
 
-export const MarkdownEditor: React.FC<MarkdownEditorProps> = ({ content, onSave }) => {
+export const MarkdownEditor: React.FC<MarkdownEditorProps> = ({ content, onSave, onJsonChange }) => {
     const lastSavedContent = useRef(content);
     const [viewMode, setViewMode] = useState<'wysiwyg' | 'markdown'>('wysiwyg');
     const [markdownText, setMarkdownText] = useState(content);
@@ -168,6 +197,14 @@ export const MarkdownEditor: React.FC<MarkdownEditorProps> = ({ content, onSave 
                             renderHTML: attributes => {
                                 if (!attributes.width) return {};
                                 return { width: attributes.width };
+                            }
+                        },
+                        layoutRole: {
+                            default: 'auto',
+                            parseHTML: element => element.getAttribute('data-layout-role') || 'auto',
+                            renderHTML: attributes => {
+                                if (!attributes.layoutRole || attributes.layoutRole === 'auto') return {};
+                                return { 'data-layout-role': attributes.layoutRole };
                             }
                         },
                     };
@@ -245,11 +282,17 @@ export const MarkdownEditor: React.FC<MarkdownEditorProps> = ({ content, onSave 
             },
         },
         onUpdate: ({ editor }) => {
+            // Export Tiptap JSON for spatial preview (preserves layoutRole)
+            // This must be called on EVERY update, not just markdown changes
+            if (onJsonChange) {
+                onJsonChange(editor.getJSON());
+            }
+
             // Convert HTML back to markdown
             const html = editor.getHTML();
             const markdown = turndownService.turndown(html);
 
-            // Only save if content actually changed
+            // Only save to backend if content actually changed
             if (markdown !== lastSavedContent.current) {
                 lastSavedContent.current = markdown;
                 setMarkdownText(markdown);
