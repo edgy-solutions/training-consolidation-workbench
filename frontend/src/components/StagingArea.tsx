@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useMemo, useRef, useCallback } from 'react';
 import { ArrowRight, Layers, Zap } from 'lucide-react';
 import { api } from '../api';
 import type { CourseSection } from '../api';
@@ -15,6 +15,67 @@ interface StagingGroup {
     }[];
 }
 
+// Color palette for similarity groups
+const SIMILARITY_COLORS = [
+    'bg-blue-100 border-blue-300',
+    'bg-amber-100 border-amber-300',
+    'bg-green-100 border-green-300',
+    'bg-purple-100 border-purple-300',
+    'bg-pink-100 border-pink-300',
+    'bg-cyan-100 border-cyan-300',
+    'bg-orange-100 border-orange-300',
+    'bg-teal-100 border-teal-300',
+];
+
+// Simple word-based title similarity using Jaccard index
+function getTitleSimilarity(title1: string, title2: string): number {
+    const words1 = new Set(title1.toLowerCase().split(/\s+/).filter(w => w.length > 2));
+    const words2 = new Set(title2.toLowerCase().split(/\s+/).filter(w => w.length > 2));
+    if (words1.size === 0 || words2.size === 0) return 0;
+
+    const intersection = [...words1].filter(w => words2.has(w)).length;
+    const union = new Set([...words1, ...words2]).size;
+    return intersection / union;
+}
+
+// Calculate concept overlap using Jaccard index
+function getConceptOverlap(concepts1: string[], concepts2: string[]): number {
+    const set1 = new Set(concepts1.map(c => c.toLowerCase()));
+    const set2 = new Set(concepts2.map(c => c.toLowerCase()));
+    if (set1.size === 0 || set2.size === 0) return 0;
+
+    const intersection = [...set1].filter(c => set2.has(c)).length;
+    const union = new Set([...set1, ...set2]).size;
+    return intersection / union;
+}
+
+// Combined similarity score (weighted average)
+function getSimilarityScore(section1: CourseSection, section2: CourseSection): number {
+    const titleSim = getTitleSimilarity(section1.title, section2.title);
+    const conceptSim = getConceptOverlap(section1.concepts || [], section2.concepts || []);
+    // Weight: 30% title, 70% concepts
+    return titleSim * 0.3 + conceptSim * 0.7;
+}
+
+// Find similar sections across all groups
+function findSimilarSections(
+    sectionId: string,
+    allSections: Array<{ section: CourseSection; groupIdx: number; courseId: string }>,
+    threshold: number = 0.25
+): Array<{ sectionId: string; score: number }> {
+    const targetSection = allSections.find(s => s.section.id === sectionId);
+    if (!targetSection) return [];
+
+    return allSections
+        .filter(s => s.section.id !== sectionId && s.groupIdx !== targetSection.groupIdx)
+        .map(s => ({
+            sectionId: s.section.id,
+            score: getSimilarityScore(targetSection.section, s.section)
+        }))
+        .filter(s => s.score >= threshold)
+        .sort((a, b) => b.score - a.score);
+}
+
 export const StagingArea: React.FC = () => {
     const { selectedSourceIds } = useSelectionStore();
     const { setStagingMode, setProjectId } = useAppStore();
@@ -25,8 +86,146 @@ export const StagingArea: React.FC = () => {
     const [masterCourseId, setMasterCourseId] = useState<string | null>(null);
     const [templates, setTemplates] = useState<Array<{ name: string; display_name: string }>>([]);
     const [selectedTemplate, setSelectedTemplate] = useState<string>("standard");
-
     const [generating, setGenerating] = useState(false);
+
+    // New state for similarity features
+    const [hoveredSectionId, setHoveredSectionId] = useState<string | null>(null);
+    const [highlightedSections, setHighlightedSections] = useState<Set<string>>(new Set());
+    const [matchingConcepts, setMatchingConcepts] = useState<Set<string>>(new Set());
+
+    // Refs for scroll sync
+    const columnRefs = useRef<(HTMLDivElement | null)[]>([]);
+    const sectionRefs = useRef<Map<string, HTMLDivElement>>(new Map());
+
+    // Flatten all sections for similarity lookup
+    const allSections = useMemo(() => {
+        const result: Array<{ section: CourseSection; groupIdx: number; courseId: string }> = [];
+        groups.forEach((group, groupIdx) => {
+            group.courses.forEach(course => {
+                course.sections.forEach(section => {
+                    result.push({ section, groupIdx, courseId: course.id });
+                });
+            });
+        });
+        return result;
+    }, [groups]);
+
+    // Compute similarity color groups - only sections with cross-column matches get colored
+    const sectionColorMap = useMemo(() => {
+        const colorMap = new Map<string, string>();
+        const matchPairs: Array<{ id1: string; id2: string; score: number }> = [];
+
+        // Find all cross-column match pairs
+        allSections.forEach(({ section: sec1, groupIdx: g1 }) => {
+            allSections.forEach(({ section: sec2, groupIdx: g2 }) => {
+                // Only match across different columns (BUs)
+                if (g1 >= g2) return; // Avoid duplicates and same-column matches
+
+                const score = getSimilarityScore(sec1, sec2);
+                if (score >= 0.2) {  // Match threshold with hover highlighting
+                    matchPairs.push({ id1: sec1.id, id2: sec2.id, score });
+                }
+            });
+        });
+
+        // Group matched pairs - sections that match get the same color
+        const colorGroups: Set<string>[] = [];
+
+        matchPairs.forEach(({ id1, id2 }) => {
+            // Find existing groups containing either id
+            const group1Idx = colorGroups.findIndex(g => g.has(id1));
+            const group2Idx = colorGroups.findIndex(g => g.has(id2));
+
+            if (group1Idx === -1 && group2Idx === -1) {
+                // Neither in a group - create new group
+                colorGroups.push(new Set([id1, id2]));
+            } else if (group1Idx !== -1 && group2Idx === -1) {
+                // Only id1 in a group - add id2 to it
+                colorGroups[group1Idx].add(id2);
+            } else if (group1Idx === -1 && group2Idx !== -1) {
+                // Only id2 in a group - add id1 to it
+                colorGroups[group2Idx].add(id1);
+            } else if (group1Idx !== group2Idx) {
+                // Both in different groups - merge
+                colorGroups[group2Idx].forEach(id => colorGroups[group1Idx].add(id));
+                colorGroups.splice(group2Idx, 1);
+            }
+            // If both already in same group, do nothing
+        });
+
+        // Assign colors to groups
+        colorGroups.forEach((group, idx) => {
+            const color = SIMILARITY_COLORS[idx % SIMILARITY_COLORS.length];
+            group.forEach(sectionId => {
+                colorMap.set(sectionId, color);
+            });
+        });
+
+        return colorMap;
+    }, [allSections]);
+
+    // Handle hover - find and highlight similar sections
+    const handleSectionHover = useCallback((sectionId: string | null) => {
+        setHoveredSectionId(sectionId);
+        if (!sectionId) {
+            setHighlightedSections(new Set());
+            setMatchingConcepts(new Set());
+            return;
+        }
+
+        const similar = findSimilarSections(sectionId, allSections, 0.2);
+        setHighlightedSections(new Set(similar.map(s => s.sectionId)));
+
+        // Find concepts that are shared between hovered section and highlighted sections
+        const hoveredSection = allSections.find(s => s.section.id === sectionId);
+        if (hoveredSection && similar.length > 0) {
+            const hoveredConcepts = new Set((hoveredSection.section.concepts || []).map(c => c.toLowerCase()));
+            const sharedConceptsSet = new Set<string>();
+
+            similar.forEach(({ sectionId: matchId }) => {
+                const matchSection = allSections.find(s => s.section.id === matchId);
+                if (matchSection) {
+                    (matchSection.section.concepts || []).forEach(c => {
+                        if (hoveredConcepts.has(c.toLowerCase())) {
+                            sharedConceptsSet.add(c.toLowerCase());
+                        }
+                    });
+                }
+            });
+            setMatchingConcepts(sharedConceptsSet);
+        } else {
+            setMatchingConcepts(new Set());
+        }
+    }, [allSections]);
+
+    // Handle click - scroll other columns to matching sections
+    const handleSectionClick = useCallback((sectionId: string) => {
+        const similar = findSimilarSections(sectionId, allSections, 0.2);
+        if (similar.length === 0) return;
+
+        // Find best match per group (different from clicked section's group)
+        const clickedSection = allSections.find(s => s.section.id === sectionId);
+        if (!clickedSection) return;
+
+        // Scroll to first similar section in each other group
+        const scrolledGroups = new Set<number>();
+        similar.forEach(({ sectionId: matchId }) => {
+            const match = allSections.find(s => s.section.id === matchId);
+            if (!match || match.groupIdx === clickedSection.groupIdx) return;
+            if (scrolledGroups.has(match.groupIdx)) return;
+
+            scrolledGroups.add(match.groupIdx);
+
+            // Scroll to element
+            const element = sectionRefs.current.get(matchId);
+            if (element) {
+                element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                // Add pulse animation
+                element.classList.add('animate-pulse-once');
+                setTimeout(() => element.classList.remove('animate-pulse-once'), 1000);
+            }
+        });
+    }, [allSections]);
 
     // Fetch sections for all selected courses
     useEffect(() => {
@@ -195,7 +394,7 @@ export const StagingArea: React.FC = () => {
                         <Layers className="text-blue-600" size={24} />
                         <div>
                             <h2 className="font-bold text-slate-800">Staging & Comparison</h2>
-                            <p className="text-xs text-slate-500">Review selected courses before generating outline</p>
+                            <p className="text-xs text-slate-500">Review selected courses before generating outline. Similar sections are color-coded.</p>
                         </div>
                     </div>
 
@@ -302,7 +501,11 @@ export const StagingArea: React.FC = () => {
             {/* Main Grid */}
             <div className={clsx('grid h-full divide-x divide-gray-200 overflow-hidden', gridClass)}>
                 {groups.map((group, idx) => (
-                    <div key={idx} className="flex flex-col overflow-hidden">
+                    <div
+                        key={idx}
+                        className="flex flex-col overflow-hidden"
+                        ref={el => { columnRefs.current[idx] = el; }}
+                    >
                         {/* Column Header */}
                         <div className="bg-slate-100 border-b border-slate-200 p-3 flex-shrink-0">
                             <h3 className="font-bold text-sm text-slate-700">{group.buName}</h3>
@@ -372,12 +575,30 @@ export const StagingArea: React.FC = () => {
                                                 course.sections.map(section => {
                                                     // Calculate indentation based on level (0 = no indent, 1+ = indent)
                                                     const indentLevel = section.level || 0;
+                                                    const similarityColor = sectionColorMap.get(section.id);
+                                                    const isHovered = hoveredSectionId === section.id;
+                                                    const isHighlighted = highlightedSections.has(section.id);
+                                                    const hasMatches = highlightedSections.size > 0;
 
                                                     return (
                                                         <div
                                                             key={section.id}
-                                                            className="pb-2 border-b border-slate-100 last:border-0"
+                                                            ref={el => { if (el) sectionRefs.current.set(section.id, el); }}
+                                                            className={clsx(
+                                                                "pb-2 border-b border-slate-100 last:border-0 rounded-md px-2 py-1 transition-all cursor-pointer",
+                                                                similarityColor,
+                                                                // Hovered section: fill background only if it has matches
+                                                                isHovered && hasMatches && "ring-2 ring-blue-500 bg-blue-50",
+                                                                // Hovered section with no matches: just show outline
+                                                                isHovered && !hasMatches && "ring-1 ring-slate-400",
+                                                                // Highlighted matching sections in other columns
+                                                                isHighlighted && "ring-2 ring-purple-500 bg-purple-50"
+                                                            )}
                                                             style={{ marginLeft: `${indentLevel * 16}px` }}
+                                                            onMouseEnter={() => handleSectionHover(section.id)}
+                                                            onMouseLeave={() => handleSectionHover(null)}
+                                                            onClick={() => handleSectionClick(section.id)}
+                                                            title="Click to scroll to similar sections"
                                                         >
                                                             <div className="flex items-start gap-2">
                                                                 <ArrowRight
@@ -402,17 +623,22 @@ export const StagingArea: React.FC = () => {
                                                                             {section.concepts.map((concept, i) => {
                                                                                 const isShared = sharedConcepts.has(concept);
                                                                                 const isDimmed = strategy === 'intersection' && !isShared;
+                                                                                const isMatchingConcept = matchingConcepts.has(concept.toLowerCase()) &&
+                                                                                    (isHovered || isHighlighted);
 
                                                                                 return (
                                                                                     <span
                                                                                         key={i}
                                                                                         className={clsx(
-                                                                                            'text-[10px] px-1.5 py-0.5 rounded border',
-                                                                                            isDimmed
-                                                                                                ? 'bg-slate-50 text-slate-300 border-slate-200'
-                                                                                                : isShared && strategy === 'intersection'
-                                                                                                    ? 'bg-blue-100 text-blue-700 border-blue-300 font-medium'
-                                                                                                    : 'bg-slate-100 text-slate-600 border-slate-200'
+                                                                                            'text-[10px] px-1.5 py-0.5 rounded border transition-all',
+                                                                                            // Matching concept highlight (when section is hovered/highlighted)
+                                                                                            isMatchingConcept
+                                                                                                ? 'bg-emerald-100 text-emerald-700 border-emerald-400 font-bold ring-1 ring-emerald-300'
+                                                                                                : isDimmed
+                                                                                                    ? 'bg-slate-50 text-slate-300 border-slate-200'
+                                                                                                    : isShared && strategy === 'intersection'
+                                                                                                        ? 'bg-blue-100 text-blue-700 border-blue-300 font-medium'
+                                                                                                        : 'bg-slate-100 text-slate-600 border-slate-200'
                                                                                         )}
                                                                                     >
                                                                                         {concept}
