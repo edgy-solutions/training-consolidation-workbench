@@ -224,3 +224,74 @@ This scans MinIO and rebuilds the graph nodes to match actual files.
   VITE_API_URL=http://localhost:YOUR_PORT
   ```
 - **LLM Configuration**: Ensure `OLLAMA_BASE_URL` or OpenAI keys are set in `.env` for Modules 2 & 3.
+
+## LLM Context Limit Handling
+
+All LLM-intensive operations are protected against context overflow. The system scales automatically based on your `OLLAMA_NUM_CTX` setting.
+
+### Configuration
+
+Set your LLM context size in `.env`:
+```env
+OLLAMA_NUM_CTX=8192   # Default (8K tokens)
+OLLAMA_NUM_CTX=131072 # Production (128K tokens)
+```
+
+> **Note**: Larger context windows reduce chunking/batching but increase memory usage and latency.
+
+### Protected Operations
+
+| Operation | Strategy | File |
+|-----------|----------|------|
+| **Concept Harmonization** | Two-pass batching | `src/semantic/harmonization.py` |
+| **Outline Generation** | Iterative pairwise merging | `src/dspy_modules/outline_harmonizer.py` |
+| **Document Outline Extraction** | Sliding window with overlap | `src/semantic/extraction.py` |
+
+### Strategy Details
+
+#### 1. Concept Harmonization (Two-Pass Batching)
+Groups synonymous concepts (e.g., "E-Stop" → "Emergency Stop").
+
+- **Pass 1**: Processes concepts in batches sized to fit context
+- **Pass 2**: Consolidates canonical names across batches to catch cross-batch synonyms
+
+**Batch size formula**: `(OLLAMA_NUM_CTX - 3000) / 15` concepts
+
+#### 2. Outline Generation (Iterative Pairwise Merging)
+Merges section outlines from multiple courses into a unified structure.
+
+- Groups outlines by Business Unit
+- Merges pairs iteratively (like merge sort) until one result remains
+
+**Max sections per merge**: `(OLLAMA_NUM_CTX - 6000) / 150`
+
+#### 3. Document Outline Extraction (Sliding Window)
+Extracts hierarchical outlines from large documents during ingestion.
+
+- Splits document into overlapping chunks
+- Extracts partial outlines from each chunk
+- Merges by deduplicating on page numbers
+
+**Chunk size**: `(OLLAMA_NUM_CTX - 4000) * 3` characters  
+**Overlap**: 10% of chunk size
+
+### ⚠️ Known Pitfalls
+
+#### Outline Merging: Duplicate Sections from Different Chunks
+When extracting outlines from chunked documents, the LLM may generate slightly different titles for the same section in different chunks. The merge logic uses `start_page` to deduplicate, so **the first occurrence wins**.
+
+**Mitigation**: Increase context size to reduce chunking, or manually review extracted outlines.
+
+#### Harmonization: Over-Aggressive Grouping
+If the LLM groups related (but distinct) concepts together (e.g., "Git" + "Branch" + "Commit" → "Version Control"), the prompt may need tuning.
+
+**Mitigation**: The harmonization prompt explicitly instructs the LLM to only group TRUE synonyms. If issues persist, clear harmonization data and re-run:
+```powershell
+$env:PYTHONPATH = "."; py scripts/clear_harmonization.py
+```
+
+#### Pairwise Merging: Groups Too Large to Merge
+If two BU groups exceed the context limit when combined, they're kept separate and tried again in the next round. This may result in less optimal merging.
+
+**Mitigation**: Increase context size or reduce source material per BU.
+
