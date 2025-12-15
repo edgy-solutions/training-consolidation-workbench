@@ -5,6 +5,7 @@ import { api } from '../api';
 import type { SourceSlide } from '../api';
 import clsx from 'clsx';
 import { marked } from 'marked';
+import { toast } from 'sonner';
 
 export const SlideInspector: React.FC = () => {
     const activeSlideId = useAppStore(state => state.activeSlideId);
@@ -56,12 +57,44 @@ export const SlideInspector: React.FC = () => {
     const handleRender = async () => {
         if (!projectId) return;
         setRendering(true);
+
         try {
-            await api.triggerRender(projectId, renderFormat, selectedTemplate);
-            alert(`Render job (${renderFormat}) using template '${selectedTemplate}' started in background!`);
+            const result = await api.triggerRender(projectId, renderFormat, selectedTemplate);
+            const { run_id, filename } = result;
+
+            // Show loading toast
+            const toastId = toast.loading(`Rendering ${filename}...`, {
+                description: 'This may take a minute'
+            });
+
+            // Subscribe to SSE for job status
+            api.subscribeRenderEvents(run_id, {
+                onStatus: (data) => {
+                    // Optionally update toast with status
+                    console.log('[Render] Status update:', data.status);
+                },
+                onComplete: (data) => {
+                    toast.success('File ready!', {
+                        id: toastId,
+                        description: data.filename,
+                        action: {
+                            label: 'Download',
+                            onClick: () => window.open(data.download_url, '_blank')
+                        },
+                        duration: 30000 // Keep visible for 30s so user can download
+                    });
+                },
+                onError: (data) => {
+                    toast.error('Render failed', {
+                        id: toastId,
+                        description: data.error || data.status || 'Unknown error'
+                    });
+                }
+            });
+
         } catch (e) {
             console.error(e);
-            alert("Failed to trigger render.");
+            toast.error('Failed to start render job');
         } finally {
             setRendering(false);
         }

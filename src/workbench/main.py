@@ -9,7 +9,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from typing import List, Dict, Any, Optional
 import os
 import json
+import asyncio
 from datetime import timedelta
+from sse_starlette.sse import EventSourceResponse
 from dagster_graphql import DagsterGraphQLClient, DagsterGraphQLClientError
 
 from src.storage.neo4j import Neo4jClient
@@ -1321,7 +1323,7 @@ def trigger_render(request: RenderRequest, background_tasks: BackgroundTasks):
     # 3. Trigger Dagster Job
     # We use tags to specify the partition for the asset job
     # And pass RenderConfig run configuration
-    dagster_client.submit_job_execution(
+    run_id = dagster_client.submit_job_execution(
         "render_asset_job", 
         run_config={
             "ops": {
@@ -1336,7 +1338,114 @@ def trigger_render(request: RenderRequest, background_tasks: BackgroundTasks):
         tags={"dagster/partition/published_files": filename}
     )
     
-    return {"status": "triggered", "filename": filename, "job": "render_asset_job"}
+    return {"status": "triggered", "filename": filename, "job": "render_asset_job", "run_id": run_id}
+
+
+@app.get("/render/events/{run_id}")
+async def render_events(run_id: str):
+    """
+    SSE endpoint to stream render job status updates.
+    The client subscribes to this after triggering a render.
+    """
+    async def event_generator():
+        while True:
+            try:
+                status = dagster_client.get_run_status(run_id)
+                # DagsterRunStatus is an enum - use .value to get the string
+                status_str = status.value if hasattr(status, 'value') else str(status)
+                print(f"[SSE] Run {run_id} status: {status_str}")
+                
+                # Send status update
+                yield {
+                    "event": "status",
+                    "data": json.dumps({"run_id": run_id, "status": status_str})
+                }
+                
+                # Check for terminal states
+                if status_str in ["SUCCESS", "COMPLETED"]:
+                    # Get the filename from run tags
+                    try:
+                        # Query Dagster for run info to get the filename tag
+                        query = """
+                        query RunInfo($runId: ID!) {
+                            pipelineRunOrError(runId: $runId) {
+                                ... on Run {
+                                    tags {
+                                        key
+                                        value
+                                    }
+                                }
+                            }
+                        }
+                        """
+                        if hasattr(dagster_client, "execute_query"):
+                            result = dagster_client.execute_query(query, {"runId": run_id})
+                        else:
+                            result = dagster_client._execute(query, {"runId": run_id})
+                        
+                        run_data = result.get("pipelineRunOrError", {})
+                        tags = run_data.get("tags", [])
+                        filename = None
+                        for tag in tags:
+                            if tag.get("key") == "dagster/partition/published_files":
+                                filename = tag.get("value")
+                                break
+                        
+                        if filename:
+                            download_url = minio_client.get_presigned_url("published", filename)
+                            yield {
+                                "event": "complete",
+                                "data": json.dumps({
+                                    "run_id": run_id,
+                                    "status": "SUCCESS",
+                                    "filename": filename,
+                                    "download_url": download_url
+                                })
+                            }
+                        else:
+                            yield {
+                                "event": "complete",
+                                "data": json.dumps({"run_id": run_id, "status": "SUCCESS", "error": "Filename not found"})
+                            }
+                    except Exception as e:
+                        print(f"Error getting run tags: {e}")
+                        yield {
+                            "event": "complete",
+                            "data": json.dumps({"run_id": run_id, "status": "SUCCESS", "error": str(e)})
+                        }
+                    break
+                    
+                elif status_str in ["FAILURE", "CANCELED", "FAILED"]:
+                    yield {
+                        "event": "error",
+                        "data": json.dumps({"run_id": run_id, "status": status_str})
+                    }
+                    break
+                    
+            except Exception as e:
+                print(f"Error polling Dagster: {e}")
+                yield {
+                    "event": "error",
+                    "data": json.dumps({"run_id": run_id, "error": str(e)})
+                }
+                break
+            
+            # Poll every 2 seconds
+            await asyncio.sleep(2)
+    
+    return EventSourceResponse(event_generator())
+
+
+@app.get("/render/download/{filename}")
+def get_download_url(filename: str):
+    """
+    Returns a presigned URL for downloading the rendered file.
+    """
+    try:
+        url = minio_client.get_presigned_url("published", filename)
+        return {"download_url": url, "filename": filename}
+    except Exception as e:
+        raise HTTPException(status_code=404, detail=f"File not found: {str(e)}")
 
 if __name__ == "__main__":
     import uvicorn

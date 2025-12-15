@@ -23,6 +23,7 @@ export interface TargetDraftNode {
     status: string;
     target_layout?: string; // Layout archetype (hero, documentary, split, etc.)
     suggested_layout?: string;
+    content_markdown?: string; // Synthesized markdown content
 
     // Suggestion fields
     is_suggestion?: boolean;
@@ -49,6 +50,19 @@ export interface CourseSection {
     title: string;
     level?: number;
     concepts: string[];
+}
+
+export interface TriggerRenderResponse {
+    status: string;
+    filename: string;
+    job: string;
+    run_id: string;
+}
+
+export interface RenderEventCallbacks {
+    onStatus?: (data: { run_id: string; status: string }) => void;
+    onComplete?: (data: { run_id: string; status: string; filename: string; download_url: string }) => void;
+    onError?: (data: { run_id: string; status?: string; error?: string }) => void;
 }
 
 // Add interceptor to attach Bearer token
@@ -158,8 +172,8 @@ export const api = {
         });
         return res.data;
     },
-    triggerRender: async (projectId: string, format: string = "pptx", templateName: string = "standard") => {
-        const res = await axios.post(`${API_URL}/render/trigger`, { project_id: projectId, format, template_name: templateName });
+    triggerRender: async (projectId: string, format: string = "pptx", templateName: string = "standard"): Promise<TriggerRenderResponse> => {
+        const res = await axios.post<TriggerRenderResponse>(`${API_URL}/render/trigger`, { project_id: projectId, format, template_name: templateName });
         return res.data;
     },
     listTemplates: async () => {
@@ -190,6 +204,47 @@ export const api = {
     },
     getEmbeddedImagesForSlides: async (slideIds: string[]): Promise<{ images: { filename: string; url: string; size: number }[] }> => {
         const res = await axios.post(`${API_URL}/source/embedded-images-for-slides`, slideIds);
+        return res.data;
+    },
+
+    /**
+     * Subscribe to Server-Sent Events for render job status updates.
+     * Returns an EventSource that can be closed when done.
+     */
+    subscribeRenderEvents: (runId: string, callbacks: RenderEventCallbacks): EventSource => {
+        const eventSource = new EventSource(`${API_URL}/render/events/${runId}`);
+
+        eventSource.addEventListener('status', (event) => {
+            const data = JSON.parse((event as MessageEvent).data);
+            callbacks.onStatus?.(data);
+        });
+
+        eventSource.addEventListener('complete', (event) => {
+            const data = JSON.parse((event as MessageEvent).data);
+            callbacks.onComplete?.(data);
+            eventSource.close();
+        });
+
+        eventSource.addEventListener('error', (event) => {
+            // Check if this is an SSE error event with data or a connection error
+            const messageEvent = event as MessageEvent;
+            if (messageEvent.data) {
+                const data = JSON.parse(messageEvent.data);
+                callbacks.onError?.(data);
+            } else {
+                callbacks.onError?.({ run_id: runId, error: 'Connection lost' });
+            }
+            eventSource.close();
+        });
+
+        return eventSource;
+    },
+
+    /**
+     * Get a presigned download URL for a rendered file.
+     */
+    getDownloadUrl: async (filename: string): Promise<{ download_url: string; filename: string }> => {
+        const res = await axios.get<{ download_url: string; filename: string }>(`${API_URL}/render/download/${filename}`);
         return res.data;
     },
 

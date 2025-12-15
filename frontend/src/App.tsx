@@ -1,6 +1,7 @@
 import { DndContext, DragOverlay, useSensor, useSensors, MouseSensor, TouchSensor, pointerWithin } from '@dnd-kit/core';
 import type { DragEndEvent } from '@dnd-kit/core';
 import { Panel, PanelGroup, PanelResizeHandle } from 'react-resizable-panels';
+import { Toaster } from 'sonner';
 import { TopBar } from './components/TopBar';
 import { SourceBrowser } from './components/SourceBrowser';
 import { ConsolidationCanvas } from './components/ConsolidationCanvas';
@@ -92,6 +93,7 @@ function App() {
 
   return (
     <div className="h-screen flex flex-col">
+      <Toaster richColors position="bottom-right" />
       <AuthProvider>
         <RequireAuth>
           <ProjectLoader />
