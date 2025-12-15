@@ -13,6 +13,7 @@ class SourceSlide(BaseModel):
     s3_url: str         # Presigned URL
     text_preview: str
     concepts: List[ConceptNode]
+    elements: Optional[List[Dict[str, Any]]] = None
 
 
 class TargetDraftNode(BaseModel):

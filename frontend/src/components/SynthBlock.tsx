@@ -8,6 +8,9 @@ import type { TargetDraftNode } from '../api';
 import { useAppStore } from '../store';
 import { MarkdownEditor } from './MarkdownEditor';
 import { AssetDrawer } from './AssetDrawer';
+import { LayoutProvider } from './LayoutContext';
+import type { LayoutArchetype } from './LayoutContext';
+
 
 // Reuse the SortableThumbnail from previous implementation (will need to export/move it or redefine)
 // For now, I'll redefine a simpler version or import if I extract it. 
@@ -85,6 +88,7 @@ export const SynthBlock: React.FC<SynthBlockProps> = ({ node, onRefresh }) => {
     const [instruction, setInstruction] = useState("");
     const [synthesizing, setSynthesizing] = useState(false);
     const [expanded, setExpanded] = useState(true);
+
 
     // Ref for the title input to enable auto-focus
     const titleInputRef = useRef<HTMLInputElement>(null);
@@ -424,23 +428,31 @@ export const SynthBlock: React.FC<SynthBlockProps> = ({ node, onRefresh }) => {
                                             </div>
                                             <button
                                                 onClick={() => {
-                                                    // Set active Node ID to show in Inspector
+                                                    // Set active Node ID to show in Inspector with spatial preview
                                                     useAppStore.getState().setActiveSlideId(null);
                                                     useAppStore.getState().setActiveNodeId(node.id);
                                                 }}
                                                 className="text-xs text-brand-teal hover:text-brand-teal-dark flex items-center gap-1 font-medium transition-colors"
                                             >
                                                 <Sparkles size={12} />
-                                                View Preview →
+                                                View Spatial Preview →
                                             </button>
                                         </div>
-                                        <MarkdownEditor
-                                            content={node.content_markdown}
-                                            onSave={(markdown) => {
-                                                // Use the store's debounced action
-                                                useAppStore.getState().updateNodeContent(node.id, markdown);
-                                            }}
-                                        />
+
+                                        <LayoutProvider initialLayout={(node.target_layout as LayoutArchetype) || 'documentary'}>
+                                            <MarkdownEditor
+                                                content={node.content_markdown}
+                                                onSave={(markdown) => {
+                                                    // Use the store's debounced action
+                                                    useAppStore.getState().updateNodeContent(node.id, markdown);
+                                                }}
+                                                onJsonChange={(json) => {
+                                                    // Store Tiptap JSON for spatial preview (preserves layoutRole)
+                                                    useAppStore.getState().updateNodeContentJson(node.id, json);
+                                                }}
+                                            />
+                                        </LayoutProvider>
+
                                         <div className="text-[10px] text-slate-500 mt-2 flex items-center gap-1">
                                             <Sparkles size={10} className="text-brand-teal" />
                                             Auto-saved as you type

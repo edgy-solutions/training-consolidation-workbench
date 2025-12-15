@@ -13,6 +13,7 @@ export interface SourceSlide {
     s3_url: string;
     text_preview: string;
     concepts: ConceptNode[];
+    elements?: { type: string; text: string; metadata?: any }[]; // Structured unstructured elements
 }
 
 export interface TargetDraftNode {
@@ -34,6 +35,7 @@ export interface TargetDraftNode {
     rationale?: string;
     order?: number;
     level?: number; // Hierarchy level: 0 = top-level, 1+ = subsections
+    content_markdown?: string;
 }
 
 export interface CourseNode {

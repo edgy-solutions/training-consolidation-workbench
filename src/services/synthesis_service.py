@@ -40,34 +40,49 @@ class SynthesisService:
 
             slide_ids = result[0]['slide_ids']
             
-            # 2. Get slide text from Weaviate
+            # 2. Get slide content (structured) from Neo4j (previously Weaviate)
+            # We now prefer the structured 'elements' from Neo4j over flat text
             slides_content = []
             print(f"DEBUG: Fetching content for slide IDs: {slide_ids}")
-            for slide_id in slide_ids:
-                try:
-                    # Weaviate query to get text for specific slide_id
-                    # Note: This assumes 1-to-1 mapping or simple retrieval
-                    # We might need to filter by slide_id in Weaviate
-                    
-                    # Using a simple filter query
-                    response = self.weaviate_client.client.query.get(
-                        "SlideText", ["text", "slide_id"]
-                    ).with_where({
-                        "path": ["slide_id"],
-                        "operator": "Equal",
-                        "valueString": slide_id
-                    }).do()
-                    
-                    if "data" in response and "Get" in response["data"] and response["data"]["Get"]["SlideText"]:
-                        text = response["data"]["Get"]["SlideText"][0]["text"]
-                        print(f"DEBUG: Slide {slide_id} text length: {len(text)}")
-                        print(f"DEBUG: Slide {slide_id} preview: {text[:100]}...")
-                        slides_content.append({"id": slide_id, "text": text})
-                    else:
-                        print(f"Warning: No text found in Weaviate for slide {slide_id}")
-                        
-                except Exception as e:
-                    print(f"Error fetching slide {slide_id} from Weaviate: {e}")
+            
+            # Fetch elements json from Neo4j
+            content_query = """
+            UNWIND $slide_ids as sid
+            MATCH (s:Slide {id: sid})
+            RETURN s.id as id, s.elements as elements, s.text as text
+            """
+            content_results = self.neo4j_client.execute_query(content_query, {"slide_ids": slide_ids})
+            
+            import json
+            for row in content_results:
+                s_id = row['id']
+                elements_json = row.get('elements')
+                text_fallback = row.get('text', '')
+                
+                formatted_text = ""
+                
+                if elements_json:
+                    try:
+                        elements = json.loads(elements_json)
+                        # Format elements into a rich string
+                        # e.g. [Title] Introduction
+                        #      [NarrativeText] The system consists of...
+                        for el in elements:
+                            etype = el.get('type', 'Text')
+                            etext = el.get('text', '')
+                            if etext.strip():
+                                formatted_text += f"[{etype}] {etext}\n"
+                    except:
+                        print(f"Warning: Failed to parse elements for slide {s_id}, using fallback.")
+                        formatted_text = text_fallback
+                else:
+                    # Fallback for legacy slides without elements
+                    formatted_text = text_fallback
+
+                if formatted_text:
+                    slides_content.append({"id": s_id, "text": formatted_text})
+                else:
+                    print(f"Warning: No text found for slide {s_id}")
 
             if not slides_content:
                 print(f"No content found for any slides for node {target_node_id}")

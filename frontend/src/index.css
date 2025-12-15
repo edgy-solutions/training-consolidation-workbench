@@ -5,3 +5,27 @@ body {
   margin: 0;
   min-height: 100vh;
 }
+
+/* Custom scrollbar */
+.custom-scrollbar::-webkit-scrollbar {
+  width: 8px;
+}
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: #f1f5f9;
+}
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 4px;
+}
+.custom-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
+}
+
+/* Pulse animation for click-to-scroll */
+@keyframes pulse-once {
+  0%, 100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(147, 51, 234, 0); }
+  50% { transform: scale(1.02); box-shadow: 0 0 0 4px rgba(147, 51, 234, 0.3); }
+}
+.animate-pulse-once {
+  animation: pulse-once 0.5s ease-in-out 2;
+}

@@ -120,20 +120,23 @@ def get_course_sections(course_id: str):
     // 1. Pre-computed summary property
     // 2. Direct COVERS relationship (rolled up)
     // 3. Linked slides (HAS_SLIDE)
+    // Normalize via CanonicalConcept to collapse duplicates/synonyms
     
     OPTIONAL MATCH (s)-[:COVERS]->(con:Concept)
-    WITH s, collect(con.name) as covered_concepts
+    OPTIONAL MATCH (con)-[:ALIGNS_TO]->(cc1:CanonicalConcept)
+    WITH s, collect(DISTINCT coalesce(cc1.name, con.name)) as covered_concepts
     
     OPTIONAL MATCH (s)-[:HAS_SLIDE]->(sl:Slide)-[t:TEACHES]->(slide_con:Concept)
     WHERE coalesce(t.salience, 0) >= 0.5
-    WITH s, covered_concepts, collect(distinct slide_con.name) as slide_concepts
+    OPTIONAL MATCH (slide_con)-[:ALIGNS_TO]->(cc2:CanonicalConcept)
+    WITH s, covered_concepts, collect(DISTINCT coalesce(cc2.name, slide_con.name)) as slide_concepts
     
     RETURN s.id as id, 
            s.title as title, 
            s.level as level,
            // Priority: Property > COVERS > HAS_SLIDE > Empty
            coalesce(s.concept_summary, covered_concepts[0..10], slide_concepts[0..10], []) as concepts
-    ORDER BY s.id
+    ORDER BY coalesce(s.start_page, 0), s.id
     """
     sections = neo4j_client.execute_query(query, {"course_id": course_id})
     
@@ -142,7 +145,8 @@ def get_course_sections(course_id: str):
     course_concepts_query = """
     MATCH (c:Course {id: $course_id})-[:HAS_SLIDE]->(sl:Slide)-[t:TEACHES]->(con:Concept)
     WHERE coalesce(t.salience, 0) >= 0.5
-    RETURN collect(distinct con.name)[0..10] as course_concepts
+    OPTIONAL MATCH (con)-[:ALIGNS_TO]->(cc:CanonicalConcept)
+    RETURN collect(DISTINCT coalesce(cc.name, con.name))[0..10] as course_concepts
     """
     course_result = neo4j_client.execute_query(course_concepts_query, {"course_id": course_id})
     course_concepts = course_result[0]["course_concepts"] if course_result else []
@@ -168,10 +172,14 @@ def get_slide_details(slide_id: str):
     Returns metadata + S3 Presigned URL for the slide image.
     """
     # 1. Fetch Metadata and Concepts from Neo4j
+    # Normalize concepts via CanonicalConcept to collapse duplicates/synonyms
     query = """
     MATCH (s:Slide {id: $id})
     OPTIONAL MATCH (s)-[t:TEACHES]->(c:Concept)
-    RETURN s.id as id, s.number as number, s.text as text, collect({name: c.name, salience: t.salience}) as concepts
+    OPTIONAL MATCH (c)-[:ALIGNS_TO]->(cc:CanonicalConcept)
+    WITH s, coalesce(cc.name, c.name) as display_name, max(t.salience) as salience
+    WITH s, collect(DISTINCT {name: display_name, salience: salience}) as concepts
+    RETURN s.id as id, s.number as number, s.text as text, s.elements as elements, concepts
     """
     results = neo4j_client.execute_query(query, {"id": slide_id})
     
@@ -209,11 +217,20 @@ def get_slide_details(slide_id: str):
                 salience=c.get("salience")
             ))
             
+    # 4. Parse Elements
+    elements = []
+    if row.get("elements"):
+        try:
+            elements = json.loads(row["elements"])
+        except:
+            elements = []
+            
     return SourceSlide(
         id=row["id"],
         s3_url=s3_url,
         text_preview=row["text"] if row["text"] else "",
-        concepts=concepts
+        concepts=concepts,
+        elements=elements
     )
 
 @app.get("/source/embedded-images/{course_id}")
@@ -532,11 +549,13 @@ def search_source_tree(request: SearchRequest):
 
     # Return structure
     # We want to reconstruct the tree: BU -> Course -> Slide
-    # Need to fetch concepts for each slide first
+    # Need to fetch concepts for each slide first, normalized via CanonicalConcept
     query_parts.append("""
     WITH c, s
     OPTIONAL MATCH (s)-[t:TEACHES]->(con:Concept)
-    WITH c, s, collect({name: con.name, domain: con.domain, salience: t.salience}) as concepts
+    OPTIONAL MATCH (con)-[:ALIGNS_TO]->(cc:CanonicalConcept)
+    WITH c, s, coalesce(cc.name, con.name) as display_name, con.domain as domain, max(t.salience) as salience
+    WITH c, s, collect(DISTINCT {name: display_name, domain: domain, salience: salience}) as concepts
     RETURN c.business_unit as bu, 
            c.id as course_id, 
            c.title as course_title, 
@@ -1211,30 +1230,33 @@ def reject_suggested_node(node_id: str):
             "action": "deleted"
         }
 
+
 @app.get("/render/templates")
 def list_templates():
     """
-    Lists available PPTX templates from MinIO storage (cib-sources/templates).
+    Lists available Template Configs from MinIO (cib-sources/templates).
+    Returns list of names (e.g. 'master_engineering') for .yaml files.
     """
     try:
         # Assuming buckets are defined in assets or env
         BUCKET_NAME = "cib-sources" 
         prefix = "templates/"
         
-        objects = minio_client.list_objects(BUCKET_NAME, prefix=prefix, recursive=False)
+        objects = minio_client.list_objects(BUCKET_NAME, prefix=prefix, recursive=True)
         
         templates = []
         for obj in objects:
-            if obj.object_name.endswith(".pptx"):
-                # Clean name: remove prefix
-                name = obj.object_name.replace(prefix, "")
+            print(f"DEBUG: Found object {obj.object_name}")
+            if obj.object_name.endswith(".yaml") or obj.object_name.endswith(".yml"):
+                # Clean name: remove prefix and extension
+                name = obj.object_name.replace(prefix, "").rsplit('.', 1)[0]
                 templates.append(name)
                 
         # Always include standard
         if "standard" not in templates:
             templates.insert(0, "standard")
             
-        return {"templates": templates}
+        return {"templates": sorted(templates)}
     except Exception as e:
         print(f"Error listing templates: {e}")
         return {"templates": ["standard"]}

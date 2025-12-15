@@ -1,12 +1,20 @@
 """
 DSPy module for harmonizing multiple course outlines into a single consolidated curriculum
 following a configurable Standard Engineering Course Template.
+
+Supports iterative pairwise merging for large inputs to avoid context overflow.
 """
 import dspy
 import yaml
 import os
+import json
 from typing import List, Dict, Any, Optional
 from pydantic import BaseModel, Field
+
+# Token estimation constants
+TOKENS_PER_SECTION = 150  # Average tokens per section (title + concepts + JSON)
+RESERVED_PROMPT_TOKENS = 4000  # System prompt, instructions, template
+RESERVED_RESPONSE_TOKENS = 2000  # Output buffer
 
 # --- 0. Load Template Configuration ---
 
@@ -134,7 +142,7 @@ def create_signature_class(template_modules: List[Dict]):
 # --- 4. The Module ---
 
 class OutlineHarmonizer(dspy.Module):
-    """Module that harmonizes outlines into a Standard Template"""
+    """Module that harmonizes outlines into a Standard Template with iterative merging"""
     
     def __init__(self, template_name: str = "standard"):
         super().__init__()
@@ -142,6 +150,138 @@ class OutlineHarmonizer(dspy.Module):
         print(f"[DEBUG] Loaded {len(self.template_modules)} template modules for '{template_name}'")
         signature_class = create_signature_class(self.template_modules)
         self.generate = dspy.ChainOfThought(signature_class)
+        
+        # Calculate max sections per merge based on context
+        self.max_sections_per_merge = self._calculate_max_sections()
+    
+    def _calculate_max_sections(self) -> int:
+        """Calculate maximum sections that fit in context window."""
+        context_size = int(os.getenv("OLLAMA_NUM_CTX", "8192"))
+        usable_tokens = context_size - RESERVED_PROMPT_TOKENS - RESERVED_RESPONSE_TOKENS
+        max_sections = max(10, usable_tokens // TOKENS_PER_SECTION)  # Minimum 10 sections
+        print(f"[OutlineHarmonizer] Context: {context_size}, Max sections per merge: {max_sections}")
+        return max_sections
+    
+    def _estimate_section_count(self, outlines: List[Dict]) -> int:
+        """Estimate total section count including subsections."""
+        count = 0
+        for outline in outlines:
+            count += 1
+            subsections = outline.get('subsections', [])
+            if subsections:
+                count += len(subsections)
+        return count
+    
+    def _group_by_bu(self, outlines: List[Dict]) -> Dict[str, List[Dict]]:
+        """Group outlines by business unit."""
+        grouped = {}
+        for outline in outlines:
+            bu = outline.get('bu', 'Unknown')
+            if bu not in grouped:
+                grouped[bu] = []
+            grouped[bu].append(outline)
+        return grouped
+    
+    def _merge_two_groups(self, group1: List[Dict], group2: List[Dict]) -> List[Dict]:
+        """Merge two groups of outlines using LLM."""
+        combined = group1 + group2
+        
+        # Call LLM to merge
+        source_json_str = json.dumps(combined, indent=2)
+        prediction = self.generate(source_outlines=source_json_str)
+        
+        # Parse output and convert back to outline format
+        try:
+            json_str = prediction.consolidated_plan.strip()
+            if json_str.startswith('```'):
+                lines = json_str.split('\n')
+                lines = lines[1:]
+                if lines and lines[-1].strip() == '```':
+                    lines = lines[:-1]
+                json_str = '\n'.join(lines)
+            
+            plan_data = json.loads(json_str)
+            
+            # Flatten the plan back into outline format for further merging
+            merged_outlines = []
+            for module_config in self.template_modules:
+                key = module_config['key']
+                if key in plan_data:
+                    data = plan_data[key]
+                    if isinstance(data, list):
+                        for item in data:
+                            if isinstance(item, dict):
+                                merged_outlines.append({
+                                    'bu': 'Merged',
+                                    'section_title': item.get('title', key),
+                                    'concepts': item.get('key_concepts', []),
+                                    'subsections': item.get('subsections', [])
+                                })
+                    elif isinstance(data, dict):
+                        merged_outlines.append({
+                            'bu': 'Merged',
+                            'section_title': data.get('title', key),
+                            'concepts': data.get('key_concepts', []),
+                            'subsections': data.get('subsections', [])
+                        })
+            
+            return merged_outlines
+            
+        except (json.JSONDecodeError, ValueError) as e:
+            print(f"[WARN] Failed to parse merge result: {e}")
+            # Fallback: just concatenate
+            return combined
+    
+    def _iterative_merge(self, outlines: List[Dict]) -> List[Dict]:
+        """
+        Iteratively merge outlines in pairs to stay within context limits.
+        Like merge sort - merge pairs until only one result remains.
+        """
+        # Group by BU first
+        by_bu = self._group_by_bu(outlines)
+        groups = list(by_bu.values())
+        
+        print(f"[IterativeMerge] Starting with {len(groups)} BU groups")
+        
+        round_num = 1
+        while len(groups) > 1:
+            print(f"[IterativeMerge] Round {round_num}: {len(groups)} groups")
+            new_groups = []
+            
+            # Pair up groups
+            i = 0
+            while i < len(groups):
+                if i + 1 < len(groups):
+                    # Merge pair
+                    combined_count = self._estimate_section_count(groups[i]) + self._estimate_section_count(groups[i+1])
+                    
+                    if combined_count <= self.max_sections_per_merge:
+                        print(f"  Merging groups {i} and {i+1} ({combined_count} sections)")
+                        merged = self._merge_two_groups(groups[i], groups[i+1])
+                        new_groups.append(merged)
+                    else:
+                        # Too big to merge together, keep separate for now
+                        print(f"  Groups {i} and {i+1} too large ({combined_count} > {self.max_sections_per_merge}), keeping separate")
+                        new_groups.append(groups[i])
+                        new_groups.append(groups[i+1])
+                    i += 2
+                else:
+                    # Odd one out, carry forward
+                    new_groups.append(groups[i])
+                    i += 1
+            
+            # Check for progress
+            if len(new_groups) >= len(groups):
+                print(f"[IterativeMerge] No progress made, breaking")
+                break
+            
+            groups = new_groups
+            round_num += 1
+        
+        # Return the final merged group
+        if groups:
+            return groups[0]
+        return outlines
     
     def forward(self, source_outlines: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """
@@ -151,7 +291,13 @@ class OutlineHarmonizer(dspy.Module):
         Returns:
             List of dicts (The flattened tree structure for the UI)
         """
-        import json
+        # Check if iterative merging is needed
+        section_count = self._estimate_section_count(source_outlines)
+        print(f"[OutlineHarmonizer] Input: {section_count} sections (max per merge: {self.max_sections_per_merge})")
+        
+        if section_count > self.max_sections_per_merge:
+            print(f"[OutlineHarmonizer] Using iterative merge strategy")
+            source_outlines = self._iterative_merge(source_outlines)
         
         # 1. Prepare Input
         source_json_str = json.dumps(source_outlines, indent=2)

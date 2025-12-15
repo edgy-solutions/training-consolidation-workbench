@@ -1,0 +1,61 @@
+template_path: "templates/Training Template.pptx"
+defaults:
+  master_index: 0
+  layout_index: 0
+
+mappings:
+  hero:
+    master_index: 0
+    layout_index: 0
+    placeholders:
+      title: 0
+      subtitle: 13
+
+  documentary:
+    master_index: 1
+    layout_index: 2
+    placeholders:
+      title: 0
+      body: 13
+
+  split:
+    master_index: 1
+    layout_index: 4
+    placeholders:
+      title: 0
+      left_body: 13
+      right_body: 23
+
+  content_caption:
+    master_index: 1
+    layout_index: 3
+    placeholders:
+      title: 0
+      body: 13
+      image: 17
+
+  grid:
+    master_index: 1
+    layout_index: 5
+    placeholders:
+      title: 0
+      col1_img: 22
+      col1_body: 13
+      col2_img: 23
+      col2_body: 28
+      col3_img: 24
+      col3_body: 29
+
+  table:
+    master_index: 1
+    layout_index: 2
+    placeholders:
+      title: 0
+      body: 13
+
+  blank:
+    master_index: 2
+    layout_index: 0
+    placeholders:
+      title: 0
+      body: 13

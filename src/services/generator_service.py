@@ -44,6 +44,36 @@ class GeneratorService:
         self.weaviate_client = WeaviateClient()
         self.harmonizer = OutlineHarmonizer()
     
+    def _normalize_concepts(self, concepts: List[str]) -> List[str]:
+        """
+        Normalize a list of concept names via CanonicalConcept lookup.
+        Returns deduplicated list of canonical names (or original if no canonical exists).
+        """
+        if not concepts:
+            return []
+        
+        query = """
+        UNWIND $concepts as concept_name
+        MATCH (c:Concept {name: concept_name})
+        OPTIONAL MATCH (c)-[:ALIGNS_TO]->(cc:CanonicalConcept)
+        RETURN concept_name, coalesce(cc.name, c.name) as display_name
+        """
+        results = self.neo4j_client.execute_query(query, {"concepts": concepts})
+        
+        # Build lookup map
+        name_map = {r['concept_name']: r['display_name'] for r in results}
+        
+        # Normalize and deduplicate while preserving order
+        seen = set()
+        normalized = []
+        for concept in concepts:
+            display = name_map.get(concept, concept)  # Fallback to original if not in graph
+            if display not in seen:
+                seen.add(display)
+                normalized.append(display)
+        
+        return normalized
+    
     def generate_skeleton(self, selected_source_ids: List[str], title: str = "New Curriculum", master_course_id: Optional[str] = None, template_name: str = "standard", user_id: Optional[str] = None) -> Dict[str, Any]:
         """
         Generate a curriculum skeleton from selected source sections/courses.
@@ -471,7 +501,7 @@ class GeneratorService:
                     "target_id": target_id,
                     "title": section['title'],
                     "rationale": section.get('rationale', ''),
-                    "key_concepts": section.get('key_concepts', []),
+                    "key_concepts": self._normalize_concepts(section.get('key_concepts', [])),
                     "order": i,
                     "level": level,
                     "is_unassigned": section.get('is_unassigned', False),

@@ -1,10 +1,12 @@
 import React, { useEffect, useState, useRef } from 'react';
-import { FileText, Image as ImageIcon, Maximize2, XCircle, Sparkles, Download } from 'lucide-react';
+import { FileText, Image as ImageIcon, Maximize2, XCircle, Sparkles, Download, Layout } from 'lucide-react';
 import { useAppStore } from '../store';
 import { api } from '../api';
 import type { SourceSlide } from '../api';
 import clsx from 'clsx';
 import { marked } from 'marked';
+import { SlidePreview } from './SlidePreview';
+import type { LayoutArchetype } from './LayoutContext';
 import { toast } from 'sonner';
 
 export const SlideInspector: React.FC = () => {
@@ -15,6 +17,7 @@ export const SlideInspector: React.FC = () => {
     const heatmapMode = useAppStore(state => state.heatmapMode);
     const searchQuery = useAppStore(state => state.searchQuery);
     const heatmapData = useAppStore(state => state.heatmapData);
+    const nodeContentJson = useAppStore(state => state.nodeContentJson);
 
     const [slide, setSlide] = useState<SourceSlide | null>(null);
     const [loading, setLoading] = useState(false);
@@ -22,6 +25,7 @@ export const SlideInspector: React.FC = () => {
     const [renderFormat, setRenderFormat] = useState<"pptx" | "typ">("pptx");
     const [templates, setTemplates] = useState<string[]>(["standard"]);
     const [selectedTemplate, setSelectedTemplate] = useState<string>("standard");
+    const [inspectorViewMode, setInspectorViewMode] = useState<'course' | 'spatial'>('spatial');
 
     // Fetch templates on mount
     useEffect(() => {
@@ -116,44 +120,110 @@ export const SlideInspector: React.FC = () => {
                         <Sparkles size={16} className="text-teal-600" />
                         Synthesis Inspector
                     </h2>
-                    <p className="text-xs text-slate-500 mt-1 font-medium">Full Course Preview</p>
+                    <div className="flex items-center justify-between mt-2">
+                        <p className="text-xs text-slate-500 font-medium">
+                            {inspectorViewMode === 'course' ? 'Full Course Preview' : 'Spatial Slide Preview'}
+                        </p>
+                        <div className="flex gap-1 bg-slate-200 rounded-md p-0.5">
+                            <button
+                                onClick={() => setInspectorViewMode('course')}
+                                className={clsx(
+                                    "px-2 py-1 text-xs font-medium rounded transition-colors",
+                                    inspectorViewMode === 'course'
+                                        ? "bg-white text-teal-700 shadow-sm"
+                                        : "text-slate-500 hover:text-slate-700"
+                                )}
+                            >
+                                Course
+                            </button>
+                            <button
+                                onClick={() => setInspectorViewMode('spatial')}
+                                className={clsx(
+                                    "px-2 py-1 text-xs font-medium rounded transition-colors flex items-center gap-1",
+                                    inspectorViewMode === 'spatial'
+                                        ? "bg-white text-teal-700 shadow-sm"
+                                        : "text-slate-500 hover:text-slate-700"
+                                )}
+                            >
+                                <Layout size={12} />
+                                Spatial
+                            </button>
+                        </div>
+                    </div>
                 </div>
 
-                {/* Markdown Content List */}
-                <div className="flex-1 overflow-y-auto bg-slate-50 p-4 space-y-6 custom-scrollbar">
-                    {synthesizedNodes.length === 0 && (
-                        <div className="text-center text-slate-400 text-xs mt-10 italic">
-                            No synthesized content to display.
-                        </div>
-                    )}
-
-                    {synthesizedNodes.map((node, index) => (
-                        <div
-                            key={node.id}
-                            ref={el => { nodeRefs.current[node.id] = el; }}
-                            className={clsx(
-                                "bg-white border rounded-lg shadow-sm p-6 transition-all duration-500",
-                                node.id === activeNodeId ? "ring-2 ring-teal-600 shadow-md" : "border-slate-200 opacity-80 hover:opacity-100"
-                            )}
-                        >
-                            <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-3 border-b border-slate-100 pb-2 flex justify-between">
-                                <span>Section {index + 1}: {node.title}</span>
-                                {node.id === activeNodeId && <span className="text-teal-600">Active</span>}
+                {/* Spatial Preview Mode - ALL slides as mini previews */}
+                {inspectorViewMode === 'spatial' && (
+                    <div className="flex-1 overflow-y-auto p-4 bg-slate-100 space-y-4 custom-scrollbar">
+                        {synthesizedNodes.length === 0 && (
+                            <div className="text-center text-slate-400 text-xs mt-10 italic">
+                                No synthesized content to display.
                             </div>
+                        )}
 
-                            {node.content_markdown ? (
-                                <div
-                                    className="prose prose-sm max-w-none text-slate-700"
-                                    dangerouslySetInnerHTML={{ __html: marked.parse(node.content_markdown) as string }}
-                                />
-                            ) : (
-                                <div className="text-center text-slate-300 text-xs italic py-4">
-                                    (Content pending...)
+                        {synthesizedNodes.map((node, index) => (
+                            <div
+                                key={node.id}
+                                ref={el => { nodeRefs.current[node.id] = el; }}
+                                className={clsx(
+                                    "bg-white rounded-lg shadow-sm p-3 transition-all duration-300",
+                                    node.id === activeNodeId ? "ring-2 ring-teal-600 shadow-md" : "border border-slate-200 opacity-80 hover:opacity-100"
+                                )}
+                            >
+                                <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-2 flex justify-between items-center">
+                                    <span>Section {index + 1}: {node.title}</span>
+                                    <span className="text-[9px] font-normal bg-slate-100 px-1.5 py-0.5 rounded">{node.target_layout || 'documentary'}</span>
                                 </div>
-                            )}
-                        </div>
-                    ))}
-                </div>
+                                <div className="aspect-[16/9] bg-slate-50 rounded overflow-hidden border border-slate-100">
+                                    <SlidePreview
+                                        tiptapContent={nodeContentJson[node.id] || null}
+                                        markdown={node.content_markdown}
+                                        layoutArchetype={(node.target_layout as LayoutArchetype) || 'documentary'}
+                                        title={node.title}
+                                    />
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+                )}
+
+                {/* Course Preview Mode - Markdown Content List */}
+                {inspectorViewMode === 'course' && (
+                    <div className="flex-1 overflow-y-auto bg-slate-50 p-4 space-y-6 custom-scrollbar">
+                        {synthesizedNodes.length === 0 && (
+                            <div className="text-center text-slate-400 text-xs mt-10 italic">
+                                No synthesized content to display.
+                            </div>
+                        )}
+
+                        {synthesizedNodes.map((node, index) => (
+                            <div
+                                key={node.id}
+                                ref={el => { nodeRefs.current[node.id] = el; }}
+                                className={clsx(
+                                    "bg-white border rounded-lg shadow-sm p-6 transition-all duration-500",
+                                    node.id === activeNodeId ? "ring-2 ring-teal-600 shadow-md" : "border-slate-200 opacity-80 hover:opacity-100"
+                                )}
+                            >
+                                <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-3 border-b border-slate-100 pb-2 flex justify-between">
+                                    <span>Section {index + 1}: {node.title}</span>
+                                    {node.id === activeNodeId && <span className="text-teal-600">Active</span>}
+                                </div>
+
+                                {node.content_markdown ? (
+                                    <div
+                                        className="prose prose-sm max-w-none text-slate-700"
+                                        dangerouslySetInnerHTML={{ __html: marked.parse(node.content_markdown) as string }}
+                                    />
+                                ) : (
+                                    <div className="text-center text-slate-300 text-xs italic py-4">
+                                        (Content pending...)
+                                    </div>
+                                )}
+                            </div>
+                        ))}
+                    </div>
+                )}
 
                 {/* Footer / Render Actions */}
                 <div className="p-4 border-t border-slate-100 bg-white shrink-0 flex justify-between items-center shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.05)]">
@@ -292,11 +362,30 @@ export const SlideInspector: React.FC = () => {
                     </div>
                 </div>
 
-                {/* Extracted Text */}
                 <div>
                     <h3 className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-2">Extracted Text</h3>
-                    <div className="bg-slate-50 p-3 rounded border border-slate-100 text-xs text-slate-600 font-mono whitespace-pre-wrap leading-relaxed max-h-64 overflow-y-auto custom-scrollbar">
-                        {slide.text_preview || <span className="italic opacity-50">No text content extracted.</span>}
+                    <div className="bg-slate-50 p-3 rounded border border-slate-100 text-xs text-slate-600 font-mono whitespace-pre-wrap leading-relaxed space-y-3">
+                        {slide.elements && slide.elements.length > 0 ? (
+                            slide.elements.map((el, i) => (
+                                <div key={i} className="group hover:bg-slate-100 p-1 -m-1 rounded transition-colors">
+                                    <div className="flex items-center gap-2 mb-1 opacity-50 text-[10px] font-sans font-bold uppercase tracking-wide">
+                                        <span className={clsx(
+                                            "inline-block w-2 h-2 rounded-full",
+                                            el.type === "Title" ? "bg-teal-400" :
+                                                el.type === "NarrativeText" ? "bg-blue-400" :
+                                                    el.type === "ListItem" ? "bg-orange-400" :
+                                                        "bg-slate-400"
+                                        )}></span>
+                                        {el.type}
+                                    </div>
+                                    <div className="pl-3 border-l-2 border-slate-200 group-hover:border-teal-200 transition-colors">
+                                        {el.text}
+                                    </div>
+                                </div>
+                            ))
+                        ) : (
+                            slide.text_preview || <span className="italic opacity-50">No text content extracted.</span>
+                        )}
                     </div>
                 </div>
             </div>

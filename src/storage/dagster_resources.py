@@ -37,7 +37,7 @@ class Neo4jResource(ConfigurableResource):
         )
 
 class WeaviateResource(ConfigurableResource):
-    url: str = os.getenv("WEAVIATE_URL", "http://localhost:8080")
+    url: str = os.getenv("WEAVIATE_URL", "http://localhost:8081")
 
     def get_client(self) -> WeaviateClient:
         return WeaviateClient(

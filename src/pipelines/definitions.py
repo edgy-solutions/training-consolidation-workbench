@@ -10,6 +10,7 @@ from src.ingestion import assets as ingestion_assets
 from src.semantic import assets as semantic_assets
 from src.publishing import assets as publishing_assets
 from src.ingestion.sensors import course_upload_sensor
+from src.semantic.sensors import unharmonized_concepts_sensor
 from src.storage.dagster_resources import MinioResource, Neo4jResource, WeaviateResource
 
 all_assets = load_assets_from_modules([ingestion_assets, semantic_assets, publishing_assets])
@@ -42,7 +43,7 @@ def synthesize_node_job():
 defs = Definitions(
     assets=all_assets,
     jobs=[process_course_job, harmonize_concepts_job, synthesize_node_job, render_asset_job],
-    sensors=[course_upload_sensor],
+    sensors=[course_upload_sensor, unharmonized_concepts_sensor],
     resources={
         "minio": MinioResource(),
         "neo4j": Neo4jResource(),
