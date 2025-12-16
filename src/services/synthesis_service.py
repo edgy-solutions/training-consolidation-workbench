@@ -26,11 +26,14 @@ class SynthesisService:
         print(f"Starting synthesis for node {target_node_id}...")
         
         try:
-            # 1. Get source refs
+            # 1. Get source refs and section context (rationale, title, layout)
             query = """
             MATCH (t:TargetNode {id: $id})
             OPTIONAL MATCH (t)-[:DERIVED_FROM]->(s:Slide)
-            RETURN collect(s.id) as slide_ids
+            RETURN collect(s.id) as slide_ids, 
+                   t.rationale as rationale, 
+                   t.title as title,
+                   t.target_layout as target_layout
             """
             result = self.neo4j_client.execute_query(query, {"id": target_node_id})
             if not result or not result[0]['slide_ids']:
@@ -39,6 +42,9 @@ class SynthesisService:
                 return
 
             slide_ids = result[0]['slide_ids']
+            section_rationale = result[0].get('rationale', '')
+            section_title = result[0].get('title', '')
+            target_layout = result[0].get('target_layout', 'documentary')  # Default to documentary
             
             # 2. Get slide content (structured) from Neo4j (previously Weaviate)
             # We now prefer the structured 'elements' from Neo4j over flat text
@@ -99,7 +105,14 @@ class SynthesisService:
             for attempt in range(max_retries):
                 try:
                     print(f"DEBUG: Synthesis attempt {attempt + 1}/{max_retries}")
-                    result = self.synthesizer(slides_content, instruction)
+                    # Pass section context (rationale, title, layout) along with slides and instruction
+                    result = self.synthesizer(
+                        slides_content, 
+                        instruction,
+                        section_title=section_title,
+                        section_rationale=section_rationale,
+                        target_layout=target_layout
+                    )
                     if result:
                         break
                 except Exception as e:

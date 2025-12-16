@@ -35,7 +35,6 @@ export interface TargetDraftNode {
     rationale?: string;
     order?: number;
     level?: number; // Hierarchy level: 0 = top-level, 1+ = subsections
-    content_markdown?: string;
 }
 
 export interface CourseNode {
@@ -248,6 +247,16 @@ export const api = {
     getDownloadUrl: async (filename: string): Promise<{ download_url: string; filename: string }> => {
         const res = await axios.get<{ download_url: string; filename: string }>(`${API_URL}/render/download/${filename}`);
         return res.data;
+    },
+
+    /**
+     * Resolve stable minio:// URLs or expired presigned URLs to fresh presigned URLs.
+     * Use this when loading content with embedded images to refresh expired URLs.
+     */
+    resolveImageUrls: async (urls: string[]): Promise<Record<string, string>> => {
+        if (urls.length === 0) return {};
+        const res = await axios.post<{ urls: Record<string, string> }>(`${API_URL}/source/resolve-image-urls`, urls);
+        return res.data.urls;
     },
 
 };

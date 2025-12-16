@@ -350,6 +350,80 @@ def get_embedded_images_for_slides(slide_ids: List[str]):
     
     return {"images": all_images}
 
+
+@app.post("/source/resolve-image-urls")
+def resolve_image_urls(urls: List[str]):
+    """
+    Resolve stable minio:// URLs or object paths to fresh presigned URLs.
+    
+    Accepts URLs in formats:
+    - minio://bucket/path/to/object
+    - bucket/path/to/object (assumes training-content bucket if no bucket prefix)
+    - Full presigned URLs (returns as-is if still valid, or regenerates)
+    
+    Returns a map of original URL -> fresh presigned URL.
+    """
+    result = {}
+    
+    for url in urls:
+        try:
+            bucket = BUCKET_NAME  # default bucket
+            object_name = None
+            
+            if url.startswith("minio://"):
+                # Parse minio:// URL
+                path = url[8:]  # Remove "minio://"
+                parts = path.split("/", 1)
+                if len(parts) == 2:
+                    bucket = parts[0]
+                    object_name = parts[1]
+                else:
+                    object_name = parts[0]
+            elif url.startswith("http://") or url.startswith("https://"):
+                # It's already a full URL - extract the object path
+                # URL format: http://host:port/bucket/object/path?query
+                from urllib.parse import urlparse, unquote
+                parsed = urlparse(url)
+                path_parts = parsed.path.lstrip("/").split("/", 1)
+                if len(path_parts) >= 2:
+                    bucket = path_parts[0]
+                    object_name = unquote(path_parts[1])
+                else:
+                    # Can't parse, skip
+                    result[url] = url
+                    continue
+            else:
+                # Assume it's a path like "bucket/path" or just "path"
+                parts = url.split("/", 1)
+                if len(parts) == 2 and parts[0] in ["training-content", "published"]:
+                    bucket = parts[0]
+                    object_name = parts[1]
+                else:
+                    object_name = url
+            
+            if object_name:
+                fresh_url = minio_client.get_presigned_url(bucket, object_name)
+                result[url] = fresh_url
+            else:
+                result[url] = url
+                
+        except Exception as e:
+            print(f"Error resolving URL {url}: {e}")
+            result[url] = url  # Return original if error
+    
+    return {"urls": result}
+
+
+@app.get("/source/resolve-image-url")
+def resolve_single_image_url(url: str):
+    """
+    Resolve a single stable URL to a fresh presigned URL.
+    Convenience endpoint for single URL resolution.
+    """
+    result = resolve_image_urls([url])
+    resolved = result.get("urls", {}).get(url, url)
+    return {"original": url, "presigned": resolved}
+
 @app.get("/search/concepts", response_model=List[str])
 def search_concepts(q: str):
     """

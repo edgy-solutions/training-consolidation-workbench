@@ -234,7 +234,7 @@ export const SynthBlock: React.FC<SynthBlockProps> = ({ node, onRefresh }) => {
                     ) : (
                         <span className="font-bold text-slate-800 text-sm">{node.title}</span>
                     )}
-                    {node.rationale && !isPlaceholder && (
+                    {node.rationale && !isPlaceholder && !isSuggestion && (
                         <div className="text-[10px] text-slate-500 mt-0.5 italic truncate">
                             {node.rationale}
                         </div>

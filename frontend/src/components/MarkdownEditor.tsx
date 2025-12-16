@@ -9,6 +9,7 @@ import clsx from 'clsx';
 import { marked } from 'marked';
 import TurndownService from 'turndown';
 import { useLayout } from './LayoutContext';
+import { api } from '../api';
 
 // ... (other code)
 
@@ -18,8 +19,12 @@ interface MarkdownEditorProps {
     onJsonChange?: (json: any) => void; // Optional: export Tiptap JSON for spatial preview
 }
 
-// Configure marked v17 to properly render images using the new API
+// Configure marked v17 to properly render images and allow raw HTML
 marked.use({
+    // Allow raw HTML to pass through (for resized images saved as <img> tags)
+    async: false,
+    breaks: false,
+    gfm: true,
     renderer: {
         image({ href, title, text }: { href: string; title: string | null; text: string }) {
             const titleAttr = title ? ` title="${title}"` : '';
@@ -28,19 +33,52 @@ marked.use({
     }
 });
 
+// Enable HTML passthrough - raw <img> tags in markdown will render properly
+// @ts-ignore - marked types may not include this but it works
+marked.setOptions({
+    // In marked v17, HTML is allowed by default, but we ensure it
+});
+
 // Initialize turndown for HTML to Markdown conversion
 const turndownService = new TurndownService({
     headingStyle: 'atx',
     codeBlockStyle: 'fenced',
 });
 
-// Ensure turndown properly converts images back to markdown
+/**
+ * Convert a presigned MinIO URL to a stable minio:// reference.
+ * This prevents URLs from expiring in saved content.
+ * 
+ * Input:  http://localhost:9000/training-content/abc123/images/fig1.jpg?X-Amz-...
+ * Output: minio://training-content/abc123/images/fig1.jpg
+ */
+const toStableUrl = (url: string): string => {
+    try {
+        // Check if it's already a stable URL
+        if (url.startsWith('minio://')) return url;
+
+        // Check if it's a presigned MinIO URL
+        if (url.includes('X-Amz-') || url.includes('/training-content/') || url.includes('/published/')) {
+            const parsed = new URL(url);
+            // Remove query params (the signature) and convert to minio:// format
+            const path = parsed.pathname.replace(/^\//, ''); // Remove leading slash
+            return `minio://${path}`;
+        }
+
+        return url;
+    } catch {
+        return url;
+    }
+};
+
+// Ensure turndown properly converts images back to markdown with stable URLs
 turndownService.addRule('images', {
     filter: 'img',
-    replacement: function (content, node) {
+    replacement: function (_content, node) {
         const img = node as HTMLImageElement;
         const alt = (img.alt || '').replace(/"/g, '&quot;'); // Escape quotes in ALT
-        const src = img.src || '';
+        const rawSrc = img.src || '';
+        const src = toStableUrl(rawSrc); // Convert to stable URL
         const title = (img.title || '').replace(/"/g, '&quot;'); // Escape quotes in TITLE
         const width = img.getAttribute('width');
 
@@ -170,6 +208,62 @@ export const MarkdownEditor: React.FC<MarkdownEditorProps> = ({ content, onSave,
     const lastSavedContent = useRef(content);
     const [viewMode, setViewMode] = useState<'wysiwyg' | 'markdown'>('wysiwyg');
     const [markdownText, setMarkdownText] = useState(content);
+    const [resolvedContent, setResolvedContent] = useState<string | null>(null);
+
+    /**
+     * Resolve minio:// URLs in markdown to fresh presigned URLs.
+     * This is called when content is loaded to make images displayable.
+     */
+    const resolveMinioUrls = async (markdown: string): Promise<string> => {
+        // Find all minio:// URLs in the content
+        const minioUrlPattern = /minio:\/\/[^\s"')\]]+/g;
+        const matches = markdown.match(minioUrlPattern);
+
+        if (!matches || matches.length === 0) {
+            return markdown;
+        }
+
+        // Deduplicate
+        const uniqueUrls = [...new Set(matches)];
+
+        try {
+            // Resolve all URLs in one batch request
+            const urlMap = await api.resolveImageUrls(uniqueUrls);
+
+            // Replace all occurrences
+            let resolved = markdown;
+            for (const [stable, presigned] of Object.entries(urlMap)) {
+                // Escape special regex chars in the stable URL
+                const escaped = stable.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+                resolved = resolved.replace(new RegExp(escaped, 'g'), presigned);
+            }
+
+            return resolved;
+        } catch (e) {
+            console.error('Failed to resolve minio URLs:', e);
+            return markdown;
+        }
+    };
+
+    // Resolve URLs when content prop changes
+    useEffect(() => {
+        let cancelled = false;
+
+        const resolve = async () => {
+            if (content) {
+                const resolved = await resolveMinioUrls(content);
+                if (!cancelled) {
+                    setResolvedContent(resolved);
+                }
+            } else {
+                setResolvedContent(content);
+            }
+        };
+
+        resolve();
+
+        return () => { cancelled = true; };
+    }, [content]);
 
     const editor = useEditor({
         extensions: [
@@ -217,8 +311,8 @@ export const MarkdownEditor: React.FC<MarkdownEditorProps> = ({ content, onSave,
                 allowBase64: true,
             }),
         ],
-        // Convert markdown to HTML for initial content
-        content: marked.parse(content || '') as string,
+        // Start empty - content will be set via useEffect once URLs are resolved
+        content: '',
         editorProps: {
             attributes: {
                 class: 'prose prose-sm max-w-none focus:outline-none min-h-[200px] p-3 overflow-x-hidden break-words',
@@ -301,15 +395,23 @@ export const MarkdownEditor: React.FC<MarkdownEditorProps> = ({ content, onSave,
         },
     });
 
-    // Update editor content when prop changes externally
+    // Track the last content we loaded into the editor (the prop value, not resolved)
+    const lastLoadedContentRef = useRef<string | null>(null);
+
+    // Update editor content when resolved content is ready or content prop changes
     useEffect(() => {
-        if (editor && content !== lastSavedContent.current) {
-            const html = marked.parse(content || '') as string;
-            editor.commands.setContent(html);
-            lastSavedContent.current = content;
-            setMarkdownText(content);
+        if (!editor) return;
+
+        // If we have resolved content and it's different from what we last loaded
+        if (resolvedContent !== null && content !== lastLoadedContentRef.current) {
+            const newHtml = marked.parse(resolvedContent || '') as string;
+            editor.commands.setContent(newHtml);
+            lastLoadedContentRef.current = content; // Track that we loaded this content
+            lastSavedContent.current = content; // Track original content for save comparisons
+            setMarkdownText(content); // Keep original (with minio://) for raw view
+            console.log('[MarkdownEditor] Content updated from props');
         }
-    }, [content, editor]);
+    }, [resolvedContent, editor, content]);
 
     if (!editor) {
         return <div className="p-4 text-slate-400 text-sm">Loading editor...</div>;
