@@ -235,7 +235,7 @@ export const SynthBlock: React.FC<SynthBlockProps> = ({ node, onRefresh }) => {
                         <span className="font-bold text-slate-800 text-sm">{node.title}</span>
                     )}
                     {node.rationale && !isPlaceholder && !isSuggestion && (
-                        <div className="text-[10px] text-slate-500 mt-0.5 italic truncate">
+                        <div className="text-[10px] text-slate-500 mt-0.5 italic line-clamp-2" title={node.rationale}>
                             {node.rationale}
                         </div>
                     )}
@@ -347,9 +347,9 @@ export const SynthBlock: React.FC<SynthBlockProps> = ({ node, onRefresh }) => {
                                 <h4 className="text-sm font-medium text-purple-900 mb-1">AI Suggested Section</h4>
 
                                 {node.rationale && (
-                                    <div className="mb-4 px-4 py-2 bg-purple-50 rounded border border-purple-100 text-xs text-purple-800 italic relative">
+                                    <div className="mb-4 px-4 py-2 bg-purple-50 rounded border border-purple-100 text-xs text-purple-800 italic relative max-h-20 overflow-hidden" title={node.rationale}>
                                         <span className="absolute top-0 left-1 text-purple-300 text-lg">"</span>
-                                        {node.rationale}
+                                        <div className="line-clamp-3">{node.rationale}</div>
                                         <span className="absolute bottom-0 right-1 text-purple-300 text-lg">"</span>
                                     </div>
                                 )}
