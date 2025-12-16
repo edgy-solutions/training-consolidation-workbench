@@ -27,7 +27,8 @@ dependencies = [
     "uvicorn",
     "dagster-graphql",
     "PyJWT[crypto]",
-    "python-multipart"
+    "python-multipart",
+    "sse-starlette"
 ]
 
 [build-system]
