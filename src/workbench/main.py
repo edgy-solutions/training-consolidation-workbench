@@ -22,7 +22,8 @@ from src.workbench.models import (
     GenerateSkeletonRequest, GenerateSkeletonResponse, SkeletonRequest, ProjectTreeResponse,
     RenderRequest
 )
-from src.ingestion.assets import BUCKET_NAME
+
+BUCKET_NAME = os.getenv("BUCKET_NAME", "training-content")
 
 app = FastAPI(title="Training Consolidation Workbench API")
 
@@ -202,9 +203,21 @@ def get_slide_details(slide_id: str):
         course_id = parts[0]
         page_num = parts[1]
         
-    # object_name = f"images/{course_id}/page_{page_num}.png"
-    # Using generated/pages structure to match MinIO
-    object_name = f"{course_id}/generated/pages/page_{page_num}.png"
+    # Find the page image dynamically since it's under a base_name folder
+    prefix = f"{course_id}/generated/"
+    objects = minio_client.list_objects(BUCKET_NAME, prefix=prefix, recursive=True)
+    
+    object_name = None
+    target_page_name = f"page_{page_num}.png"
+    for obj in objects:
+        if obj.object_name.endswith(f"/pages/{target_page_name}"):
+            object_name = obj.object_name
+            break
+            
+    if not object_name:
+        # Fallback to old path just in case
+        object_name = f"{course_id}/generated/pages/{target_page_name}"
+        
     s3_url = minio_client.get_presigned_url(BUCKET_NAME, object_name)
     
     # 3. Format Concepts
@@ -240,42 +253,46 @@ def get_embedded_images(course_id: str):
     These are diagrams, charts, photos, etc. extracted during ingestion.
     Includes coordinates and canvas size for proper scaling.
     """
-    # List objects in the course's generated/images folder
-    prefix = f"{course_id}/generated/images/"
+    # List objects in the course's generated folder
+    prefix = f"{course_id}/generated/"
     
     try:
+        objects = minio_client.list_objects(BUCKET_NAME, prefix=prefix, recursive=True)
+        objects_list = list(objects)
+        
         # First, try to load text.json to get image coordinates
         image_metadata = {}
-        text_json_path = f"{course_id}/generated/text.json"
-        try:
-            response = minio_client.get_object(BUCKET_NAME, text_json_path)
-            text_data = json.loads(response.read().decode('utf-8'))
-            response.close()
-            response.release_conn()
-            
-            # Extract coordinates for Image elements
-            for element in text_data:
-                if element.get("type") == "Image":
-                    metadata = element.get("metadata", {})
-                    image_path = metadata.get("image_path")
-                    if image_path:
-                        filename = os.path.basename(image_path)
-                        coords = metadata.get("coordinates", {})
-                        image_metadata[filename] = {
-                            "coordinates": coords,
-                            "page_number": metadata.get("page_number"),
-                            # Canvas size might be in coordinates.layout_width/height or system.layout_width/height
-                            "layout_width": coords.get("layout_width") or coords.get("system", {}).get("layout_width"),
-                            "layout_height": coords.get("layout_height") or coords.get("system", {}).get("layout_height"),
-                        }
-        except Exception as e:
-            print(f"Could not load text.json for {course_id}: {e}")
+        text_json_path = next((obj.object_name for obj in objects_list if obj.object_name.endswith("/text.json")), None)
         
-        objects = minio_client.list_objects(BUCKET_NAME, prefix=prefix, recursive=True)
+        if text_json_path:
+            try:
+                response = minio_client.get_object(BUCKET_NAME, text_json_path)
+                text_data = json.loads(response.read().decode('utf-8'))
+                response.close()
+                response.release_conn()
+                
+                # Extract coordinates for Image elements
+                for element in text_data:
+                    if element.get("type") == "Image":
+                        metadata = element.get("metadata", {})
+                        image_path = metadata.get("image_path")
+                        if image_path:
+                            filename = os.path.basename(image_path)
+                            coords = metadata.get("coordinates", {})
+                            image_metadata[filename] = {
+                                "coordinates": coords,
+                                "page_number": metadata.get("page_number"),
+                                # Canvas size might be in coordinates.layout_width/height or system.layout_width/height
+                                "layout_width": coords.get("layout_width") or coords.get("system", {}).get("layout_width"),
+                                "layout_height": coords.get("layout_height") or coords.get("system", {}).get("layout_height"),
+                            }
+            except Exception as e:
+                print(f"Could not load text.json for {course_id}: {e}")
+        
         images = []
         
-        for obj in objects:
-            if obj.is_dir:
+        for obj in objects_list:
+            if obj.is_dir or "/images/" not in obj.object_name:
                 continue
             
             # Get presigned URL for each image
