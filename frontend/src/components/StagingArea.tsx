@@ -122,26 +122,30 @@ function compareMatches(
     return a.entry.section.id < b.entry.section.id ? -1 : a.entry.section.id > b.entry.section.id ? 1 : 0;
 }
 
-// Candidates in other columns above the threshold, best first
+// Candidates in other courses (same column or not) above the threshold, best first
 function rankedMatches(target: SectionEntry, allSections: SectionEntry[], threshold: number) {
     return allSections
-        .filter(s => s.section.id !== target.section.id && s.groupIdx !== target.groupIdx)
+        .filter(s => s.courseId !== target.courseId)
         .map(s => ({ entry: s, score: getSimilarityScore(target.section, s.section) }))
         .filter(m => m.score >= threshold)
         .sort((a, b) => compareMatches(target, a, b));
 }
 
-// Find similar sections across all groups
+// Same business unit = same column; those matches are drawn dashed
+type MatchKind = 'same-bu' | 'cross-bu';
+const matchKind = (a: SectionEntry, b: SectionEntry): MatchKind => (a.groupIdx === b.groupIdx ? 'same-bu' : 'cross-bu');
+
+// Find similar sections across all courses
 function findSimilarSections(
     sectionId: string,
     allSections: SectionEntry[],
     threshold: number = 0.25
-): Array<{ sectionId: string; score: number }> {
+): Array<{ sectionId: string; score: number; kind: MatchKind }> {
     const targetSection = allSections.find(s => s.section.id === sectionId);
     if (!targetSection) return [];
 
     return rankedMatches(targetSection, allSections, threshold)
-        .map(m => ({ sectionId: m.entry.section.id, score: m.score }));
+        .map(m => ({ sectionId: m.entry.section.id, score: m.score, kind: matchKind(targetSection, m.entry) }));
 }
 
 export const StagingArea: React.FC = () => {
@@ -158,7 +162,7 @@ export const StagingArea: React.FC = () => {
 
     // New state for similarity features
     const [hoveredSectionId, setHoveredSectionId] = useState<string | null>(null);
-    const [highlightedSections, setHighlightedSections] = useState<Set<string>>(new Set());
+    const [highlightedSections, setHighlightedSections] = useState<Map<string, MatchKind>>(new Map());
     // Section ids whose subtree is folded (local, not persisted)
     const [collapsedSections, setCollapsedSections] = useState<Set<string>>(new Set());
     const [matchingConcepts, setMatchingConcepts] = useState<Set<string>>(new Set());
@@ -194,26 +198,26 @@ export const StagingArea: React.FC = () => {
         return result;
     }, [groups]);
 
-    // Compute similarity color groups - only sections with cross-column matches get colored
+    // Compute similarity color groups - only sections with matches in another course get colored
     const sectionColorMap = useMemo(() => {
-        const colorMap = new Map<string, string>();
-        const matchPairs: Array<{ id1: string; id2: string; score: number }> = [];
+        const colorMap = new Map<string, { color: string; kind: MatchKind }>();
+        const matchPairs: Array<{ id1: string; id2: string; score: number; kind: MatchKind }> = [];
 
-        // Only mutual best matches share a colour: A's best in B's column is B and B's best in A's column is A,
+        // Only mutual best matches share a colour: A's best in B's course is B and B's best in A's course is A,
         // so same-titled siblings cannot both join one partner
-        const bestIn = new Map<string, SectionEntry>(); // `${sectionId}|${groupIdx}` -> best candidate there
+        const bestIn = new Map<string, SectionEntry>(); // `${sectionId}|${courseId}` -> best candidate there
         allSections.forEach(target => {
-            const best = new Map<number, { entry: SectionEntry; score: number }>();
+            const best = new Map<string, { entry: SectionEntry; score: number }>();
             rankedMatches(target, allSections, 0.2).forEach(m => {
-                if (!best.has(m.entry.groupIdx)) best.set(m.entry.groupIdx, m);
+                if (!best.has(m.entry.courseId)) best.set(m.entry.courseId, m);
             });
-            best.forEach((m, g) => bestIn.set(`${target.section.id}|${g}`, m.entry));
+            best.forEach((m, c) => bestIn.set(`${target.section.id}|${c}`, m.entry));
         });
         allSections.forEach(a => {
             allSections.forEach(b => {
-                if (a.groupIdx >= b.groupIdx) return; // each column pair once
-                if (bestIn.get(`${a.section.id}|${b.groupIdx}`) === b && bestIn.get(`${b.section.id}|${a.groupIdx}`) === a) {
-                    matchPairs.push({ id1: a.section.id, id2: b.section.id, score: getSimilarityScore(a.section, b.section) });
+                if (a.courseId >= b.courseId) return; // each course pair once
+                if (bestIn.get(`${a.section.id}|${b.courseId}`) === b && bestIn.get(`${b.section.id}|${a.courseId}`) === a) {
+                    matchPairs.push({ id1: a.section.id, id2: b.section.id, score: getSimilarityScore(a.section, b.section), kind: matchKind(a, b) });
                 }
             });
         });
@@ -247,7 +251,10 @@ export const StagingArea: React.FC = () => {
         colorGroups.forEach((group, idx) => {
             const color = SIMILARITY_COLORS[idx % SIMILARITY_COLORS.length];
             group.forEach(sectionId => {
-                colorMap.set(sectionId, color);
+                // cross-bu wins when a section has partners of both kinds
+                const kind: MatchKind = matchPairs.some(m => m.kind === 'cross-bu' && (m.id1 === sectionId || m.id2 === sectionId))
+                    ? 'cross-bu' : 'same-bu';
+                colorMap.set(sectionId, { color, kind });
             });
         });
 
@@ -258,13 +265,13 @@ export const StagingArea: React.FC = () => {
     const handleSectionHover = useCallback((sectionId: string | null) => {
         setHoveredSectionId(sectionId);
         if (!sectionId) {
-            setHighlightedSections(new Set());
+            setHighlightedSections(new Map());
             setMatchingConcepts(new Set());
             return;
         }
 
         const similar = findSimilarSections(sectionId, allSections, 0.2);
-        setHighlightedSections(new Set(similar.map(s => s.sectionId)));
+        setHighlightedSections(new Map(similar.map(s => [s.sectionId, s.kind])));
 
         // Find concepts that are shared between hovered section and highlighted sections
         const hoveredSection = allSections.find(s => s.section.id === sectionId);
@@ -293,18 +300,18 @@ export const StagingArea: React.FC = () => {
         const similar = findSimilarSections(sectionId, allSections, 0.2);
         if (similar.length === 0) return;
 
-        // Find best match per group (different from clicked section's group)
+        // Find best match per course (always another course)
         const clickedSection = allSections.find(s => s.section.id === sectionId);
         if (!clickedSection) return;
 
-        // Scroll to first similar section in each other group
-        const scrolledGroups = new Set<number>();
+        // Scroll to first similar section in each other course
+        const scrolledCourses = new Set<string>();
         similar.forEach(({ sectionId: matchId }) => {
             const match = allSections.find(s => s.section.id === matchId);
-            if (!match || match.groupIdx === clickedSection.groupIdx) return;
-            if (scrolledGroups.has(match.groupIdx)) return;
+            if (!match || match.courseId === clickedSection.courseId) return;
+            if (scrolledCourses.has(match.courseId)) return;
 
-            scrolledGroups.add(match.groupIdx);
+            scrolledCourses.add(match.courseId);
 
             // Scroll to element
             const element = sectionRefs.current.get(matchId);
@@ -676,9 +683,11 @@ export const StagingArea: React.FC = () => {
                                                 <p className="text-xs text-slate-400 italic">No sections found</p>
                                             ) : (
                                                 visibleSections(course.sections, collapsedSections).map(({ section, indentLevel, hasChildren }) => {
-                                                    const similarityColor = sectionColorMap.get(section.id);
+                                                    const similarity = sectionColorMap.get(section.id);
+                                                    const hlKind = highlightedSections.get(section.id);
+                                                    const matchAttr = similarity?.kind ?? hlKind;
                                                     const isHovered = hoveredSectionId === section.id;
-                                                    const isHighlighted = highlightedSections.has(section.id);
+                                                    const isHighlighted = hlKind !== undefined;
                                                     const hasMatches = highlightedSections.size > 0;
 
                                                     return (
@@ -687,19 +696,23 @@ export const StagingArea: React.FC = () => {
                                                             ref={el => { if (el) sectionRefs.current.set(section.id, el); }}
                                                             className={clsx(
                                                                 "pb-2 border-b border-slate-100 last:border-0 rounded-md px-2 py-1 transition-all cursor-pointer",
-                                                                similarityColor,
+                                                                similarity?.color,
+                                                                // Same-business-unit matches: dashed outline instead of solid
+                                                                similarity?.kind === 'same-bu' && "border-2 border-dashed",
                                                                 // Hovered section: fill background only if it has matches
                                                                 isHovered && hasMatches && "ring-2 ring-blue-500 bg-blue-50",
                                                                 // Hovered section with no matches: just show outline
                                                                 isHovered && !hasMatches && "ring-1 ring-slate-400",
                                                                 // Highlighted matching sections in other columns
-                                                                isHighlighted && "ring-2 ring-purple-500 bg-purple-50"
+                                                                isHighlighted && hlKind === 'cross-bu' && "ring-2 ring-purple-500 bg-purple-50",
+                                                                isHighlighted && hlKind === 'same-bu' && "border-2 border-dashed border-purple-500 bg-purple-50"
                                                             )}
                                                             style={{ marginLeft: `${Math.min(indentLevel, MAX_INDENT_STEPS) * 16}px` }}
                                                             onMouseEnter={() => handleSectionHover(section.id)}
                                                             onMouseLeave={() => handleSectionHover(null)}
                                                             onClick={() => handleSectionClick(section.id)}
-                                                            title="Click to scroll to similar sections"
+                                                            data-match={matchAttr}
+                                                            title={matchAttr === 'same-bu' ? "Similar section in the same business unit. Click to scroll to similar sections" : "Click to scroll to similar sections"}
                                                         >
                                                             <div className="flex items-start gap-2">
                                                                 {hasChildren && (
