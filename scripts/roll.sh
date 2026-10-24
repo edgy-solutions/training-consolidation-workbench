@@ -4,7 +4,8 @@
 #   usage: KUBE_CONTEXT=<context> scripts/roll.sh <values file> [extra helm args ...]
 #   env:   NS (default training), RELEASE (default training-workbench),
 #          EXPECTED_MIN (default 20), the lock's expected_end from now,
-#          GATE_URL (optional, scheme://host): /healthz and / must answer 200 there.
+#          GATE_URL (optional, scheme://host): /healthz and / must answer 200 there,
+#          GATE_INSECURE=1 accepts a self-signed cert on it (sandbox hosts, until cert-manager).
 #
 # THE LOCK. Before any helm upgrade the roller creates ConfigMap sandbox/roll-lock
 # {lane, started, expected_end}. Every roll script refuses to start while it exists and is
@@ -63,8 +64,16 @@ fi
 
 # 4. Gates through the ingress, when the caller names the URL.
 if [ -n "${GATE_URL:-}" ]; then
+  insecure=()
+  [ "${GATE_INSECURE:-}" = 1 ] && insecure=(-k)
   for path in /healthz /; do
-    code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 15 "${GATE_URL%/}$path")
+    # helm --wait returns when the new pod is Ready; the ingress can still route to the
+    # terminating old one for a few seconds (a 502), so give it up to a minute.
+    for _ in 1 2 3 4 5 6 7 8 9 10 11 12; do
+      code=$(curl -s ${insecure[@]+"${insecure[@]}"} -o /dev/null -w '%{http_code}' --max-time 15 "${GATE_URL%/}$path")
+      [ "$code" = 200 ] && break
+      sleep 5
+    done
     echo "gate ${path}: $code"
     if [ "$code" != 200 ]; then
       echo "GATE FAILED: ${path} answered $code; lock left in place" >&2
