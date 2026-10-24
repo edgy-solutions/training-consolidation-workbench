@@ -313,6 +313,9 @@ export const SlideInspector: React.FC = () => {
         );
     }
 
+    // Blank text elements are dropped; Image elements stay as a placeholder
+    const shownElements = (slide.elements ?? []).filter(el => el.type === 'Image' || el.text?.trim());
+
     return (
         <div className="h-full flex flex-col bg-white">
             {/* Header */}
@@ -412,8 +415,14 @@ export const SlideInspector: React.FC = () => {
                 <div>
                     <h3 className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-2">Extracted Text</h3>
                     <div className="bg-slate-50 p-3 rounded border border-slate-100 text-xs text-slate-600 font-mono whitespace-pre-wrap leading-relaxed space-y-3">
-                        {slide.elements && slide.elements.length > 0 ? (
-                            slide.elements.map((el, i) => (
+                        {shownElements.length > 0 ? (
+                            shownElements.map((el, i) => el.type === 'Image' ? (
+                                <div key={i} className="flex items-center gap-2 text-[10px] font-sans text-slate-400">
+                                    <ImageIcon size={12} />
+                                    <span className="font-bold uppercase tracking-wide">Image</span>
+                                    {(el.metadata?.filename || el.metadata?.alt_text || el.metadata?.alt) && <span className="truncate">{el.metadata.filename || el.metadata.alt_text || el.metadata.alt}</span>}
+                                </div>
+                            ) : (
                                 <div key={i} className="group hover:bg-slate-100 p-1 -m-1 rounded transition-colors">
                                     <div className="flex items-center gap-2 mb-1 opacity-50 text-[10px] font-sans font-bold uppercase tracking-wide">
                                         <span className={clsx(
