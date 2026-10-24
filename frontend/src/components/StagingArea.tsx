@@ -30,22 +30,36 @@ const SIMILARITY_COLORS = [
 // Indent stops growing after this many steps; deeper rows show a depth number instead
 const MAX_INDENT_STEPS = 3;
 
-// Rows to show, in the API's order. A section's subtree is the run of following sections
-// with a greater level; a collapsed section hides that run.
-function visibleSections(sections: CourseSection[], minLevel: number, collapsed: Set<string>) {
-    const rows: Array<{ section: CourseSection; indentLevel: number; hasChildren: boolean }> = [];
-    let hideBelow: number | null = null;
-    sections.forEach((section, i) => {
-        const indentLevel = (section.level ?? minLevel) - minLevel;
-        if (hideBelow !== null) {
-            if (indentLevel > hideBelow) return;
-            hideBelow = null;
+// Rows to show, depth-first. The tree comes from parent_id (the HAS_SECTION edge), so it does
+// not depend on the API's order; children keep their relative order, and a section whose
+// parent is missing is a root. An API without parent_id falls back to nesting by level.
+// A collapsed section hides its subtree.
+function visibleSections(sections: CourseSection[], collapsed: Set<string>) {
+    const ids = new Set(sections.map(s => s.id));
+    const hasParentIds = sections.some(s => s.parent_id !== undefined);
+    const byParent = new Map<string | null, CourseSection[]>();
+    const stack: CourseSection[] = [];
+    for (const s of sections) {
+        let parent: string | null = null;
+        if (hasParentIds) {
+            parent = s.parent_id && ids.has(s.parent_id) ? s.parent_id : null;
+        } else {
+            while (stack.length && (stack[stack.length - 1].level ?? 0) >= (s.level ?? 0)) stack.pop();
+            parent = stack.length ? stack[stack.length - 1].id : null;
+            stack.push(s);
         }
-        const next = sections[i + 1];
-        const hasChildren = !!next && (next.level ?? minLevel) - minLevel > indentLevel;
-        if (hasChildren && collapsed.has(section.id)) hideBelow = indentLevel;
-        rows.push({ section, indentLevel, hasChildren });
-    });
+        byParent.set(parent, [...(byParent.get(parent) ?? []), s]);
+    }
+    const rows: Array<{ section: CourseSection; indentLevel: number; hasChildren: boolean }> = [];
+    const seen = new Set<string>();
+    const walk = (s: CourseSection, indentLevel: number) => {
+        if (seen.has(s.id)) return;
+        seen.add(s.id);
+        const kids = byParent.get(s.id) ?? [];
+        rows.push({ section: s, indentLevel, hasChildren: kids.length > 0 });
+        if (!collapsed.has(s.id)) kids.forEach(k => walk(k, indentLevel + 1));
+    };
+    (byParent.get(null) ?? []).forEach(s => walk(s, 0));
     return rows;
 }
 
@@ -542,8 +556,6 @@ export const StagingArea: React.FC = () => {
                         <div className="flex-1 overflow-y-auto custom-scrollbar p-4 space-y-4">
                             {group.courses.map(course => {
                                 const isMaster = masterCourseId === course.id;
-                                // Levels start at 1 on every deck; the shallowest section in a course is top-level
-                                const minLevel = Math.min(...course.sections.map(s => s.level ?? 1));
                                 const courseHasSharedConcepts = course.sections.some(s =>
                                     s.concepts?.some(c => sharedConcepts.has(c))
                                 );
@@ -598,7 +610,7 @@ export const StagingArea: React.FC = () => {
                                             {course.sections.length === 0 ? (
                                                 <p className="text-xs text-slate-400 italic">No sections found</p>
                                             ) : (
-                                                visibleSections(course.sections, minLevel, collapsedSections).map(({ section, indentLevel, hasChildren }) => {
+                                                visibleSections(course.sections, collapsedSections).map(({ section, indentLevel, hasChildren }) => {
                                                     const similarityColor = sectionColorMap.get(section.id);
                                                     const isHovered = hoveredSectionId === section.id;
                                                     const isHighlighted = highlightedSections.has(section.id);

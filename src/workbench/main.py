@@ -173,6 +173,7 @@ def get_course_sections(course_id: str):
     RETURN s.id as id, 
            s.title as title, 
            s.level as level,
+           [(p:Section)-[:HAS_SECTION]->(s) | p.id][0] as parent_id,
            // Priority: Property > COVERS > HAS_SLIDE > Empty
            coalesce(s.concept_summary, covered_concepts[0..10], slide_concepts[0..10], []) as concepts
     ORDER BY coalesce(s.start_page, 0), s.id
@@ -200,6 +201,7 @@ def get_course_sections(course_id: str):
             "id": row["id"],
             "title": row["title"],
             "level": row.get("level", 0),
+            "parent_id": row.get("parent_id"),
             "concepts": concepts
         })
         

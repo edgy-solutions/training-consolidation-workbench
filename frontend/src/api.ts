@@ -51,6 +51,7 @@ export interface CourseSection {
     id: string;
     title: string;
     level?: number;
+    parent_id?: string | null; // HAS_SECTION parent; null for a top-level section
     concepts: string[];
 }
 
