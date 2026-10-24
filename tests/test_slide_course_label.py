@@ -54,3 +54,12 @@ def test_nameless_course_falls_back_to_filename_stem():
     tree = _course_tree([{"id": "1", "title": None, "filename": "x.pptx"},
                          {"id": "2", "title": " ", "filename": ""}])
     assert [c["name"] for c in tree[0]["children"]] == ["x", "Untitled course"]
+
+
+def test_uncategorized_is_a_filter_option_and_matches(client):
+    origins = client.get("/source/filters").json()["origins"]
+    assert "Uncategorized" in origins
+    r = client.post("/source/search", json={"filters": {"origin": "Uncategorized"}}).json()
+    names = [c["name"] for bu in r for c in bu["children"]]
+    assert "empty-no-metadata" in names
+    assert all(bu["name"] == "Uncategorized" for bu in r)

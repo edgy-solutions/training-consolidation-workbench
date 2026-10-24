@@ -79,10 +79,18 @@ def _port_source_tree(reader, discipline: Optional[str]):
     return _course_tree(reader.list_courses(discipline))
 
 
+UNCATEGORIZED = "Uncategorized"
+
+
 def _port_source_filters(reader):
     f = reader.facets()
+    origins = list(f.get("business_unit", []))
+    # Courses without a business unit sit under "Uncategorized" in the tree, so offer it as a filter too
+    blank_bu = any(not _bu_key(c.get("business_unit")) for c in reader.list_courses(None))
+    if blank_bu and _bu_key(UNCATEGORIZED) not in {_bu_key(o) for o in origins}:
+        origins.append(UNCATEGORIZED)
     return {
-        "origins": f.get("business_unit", []),
+        "origins": origins,
         "domains": f.get("discipline", []),
         "intents": f.get("pedagogical_intent", []),
         "types": f.get("asset_type", []),
@@ -258,7 +266,11 @@ def _port_search_source_tree(reader, alignment, request):
     filters = request.filters or {}
     courses = reader.list_courses(None)
     if filters.get("origin"):
-        courses = [c for c in courses if c.get("business_unit") == filters["origin"]]
+        # "Uncategorized" is how the tree names a null or blank business unit
+        want = _bu_key(filters["origin"])
+        courses = [c for c in courses
+                   if (_bu_key(c.get("business_unit")) or _bu_key(UNCATEGORIZED)) == want
+                   or c.get("business_unit") == filters["origin"]]
     if filters.get("domain"):
         courses = [c for c in courses if c.get("discipline") == filters["domain"]]
 

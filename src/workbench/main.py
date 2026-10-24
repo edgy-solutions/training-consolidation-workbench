@@ -590,6 +590,10 @@ def get_source_filters():
     # Origins (Business Units)
     res = neo4j_client.execute_query("MATCH (c:Course) RETURN distinct c.business_unit as val ORDER BY val")
     filters["origins"] = [r["val"] for r in res if r["val"]]
+    blank = neo4j_client.execute_query(
+        "MATCH (c:Course) WHERE c.business_unit IS NULL OR trim(c.business_unit) = '' RETURN count(c) as n")
+    if blank and blank[0]["n"] and "Uncategorized" not in filters["origins"]:
+        filters["origins"].append("Uncategorized")
     
     # Domains (Mapped to Engineering Discipline)
     res = neo4j_client.execute_query("MATCH (c:Course) RETURN distinct c.discipline as val ORDER BY val")
@@ -717,7 +721,9 @@ def search_source_tree(request: SearchRequest):
     # Filter: Origin (Business Unit)
     if request.filters.get("origin"):
         # Assuming origin is the Business Unit name stored on Course
-        where_clauses.append("c.business_unit = $origin")
+        # "Uncategorized" is how the tree names a null or blank business unit
+        where_clauses.append("(c.business_unit = $origin OR ($origin = 'Uncategorized' AND "
+                             "(c.business_unit IS NULL OR trim(c.business_unit) = '')))")
         params["origin"] = request.filters["origin"]
         
     # Filter: Domain (Mapped to Course.discipline)
