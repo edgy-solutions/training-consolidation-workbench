@@ -34,3 +34,12 @@ def test_slide_details_name_their_course(client):
             tested += 1
             assert (d["number"], d["course_id"], d["course_title"]) == (r["number"], c["id"], c["name"])
     assert tested >= 4
+
+
+def test_tree_tells_same_titled_courses_apart(client):
+    courses = [k for bu in client.get("/source/tree").json() for k in bu["children"]]
+    assert all("filename" in c and "version" in c for c in courses)
+    pumps = {c["filename"]: c for c in courses if c["name"] == "Pump Maintenance Basics"}
+    assert {"dup-title-a.pptx", "dup-title-b.pptx"} <= set(pumps)
+    a, b = pumps["dup-title-a.pptx"], pumps["dup-title-b.pptx"]
+    assert a["id"] != b["id"] and (a["version"], b["version"]) == ("1.0", "2.0")

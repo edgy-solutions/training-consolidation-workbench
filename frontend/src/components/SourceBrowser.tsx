@@ -1,6 +1,6 @@
 import React, { useEffect, useLayoutEffect, useRef, useState, useMemo } from 'react';
 import { Search, Folder, ChevronDown, FileText, Image, ChevronRight, CheckCircle2, Filter, X } from 'lucide-react';
-import { api, assetSrc, slideLabel } from '../api';
+import { api, assetSrc, slideLabel, courseSubtitle, courseTooltip } from '../api';
 import type { CourseNode, SourceSlide } from '../api';
 import { useDraggable } from '@dnd-kit/core';
 import { useVirtualizer } from '@tanstack/react-virtual';
@@ -443,6 +443,7 @@ const CourseItem: React.FC<{ course: CourseNode, heatmapData?: Record<string, { 
     return (
         <div>
             <div
+                title={courseTooltip(course.name, course.id)}
                 className={clsx(
                     "flex items-center gap-2 p-2 rounded cursor-pointer text-xs transition-colors select-none",
                     // Override or merge classes
@@ -459,7 +460,10 @@ const CourseItem: React.FC<{ course: CourseNode, heatmapData?: Record<string, { 
                 />
                 <div className="flex items-center gap-2 flex-1" onClick={toggle}>
                     <FileText size={14} className="opacity-70" />
-                    <span className="truncate flex-1">{course.name}</span>
+                    <div className="flex-1 min-w-0">
+                        <div className="truncate">{course.name}</div>
+                        {courseSubtitle(course) && <div className="text-[10px] text-slate-400 truncate font-normal">{courseSubtitle(course)}</div>}
+                    </div>
                     {loading && <span className="animate-spin">⟳</span>}
                     {preloadedSlides && <span className="text-[9px] bg-brand-teal/10 px-1 rounded text-brand-teal">{preloadedSlides.length}</span>}
                 </div>

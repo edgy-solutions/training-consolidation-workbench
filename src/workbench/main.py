@@ -94,7 +94,8 @@ def get_source_tree(engineering_discipline: Optional[str] = None):
         query = """
         MATCH (c:Course)
         WHERE toLower(c.discipline) CONTAINS toLower($discipline)
-        RETURN c.business_unit as bu, c.id as id, c.title as title, c.discipline as engineering_discipline
+        RETURN c.business_unit as bu, c.id as id, c.title as title, c.discipline as engineering_discipline,
+               c.filename as filename, c.version as version
         ORDER BY bu, title
         """
         # Use simple parameter for CONTAINS check
@@ -102,7 +103,8 @@ def get_source_tree(engineering_discipline: Optional[str] = None):
     else:
         query = """
         MATCH (c:Course)
-        RETURN c.business_unit as bu, c.id as id, c.title as title, c.discipline as engineering_discipline
+        RETURN c.business_unit as bu, c.id as id, c.title as title, c.discipline as engineering_discipline,
+               c.filename as filename, c.version as version
         ORDER BY bu, title
         """
         params = {}
@@ -121,6 +123,8 @@ def get_source_tree(engineering_discipline: Optional[str] = None):
             "name": row["title"],
             "type": "Course",
             "engineering_discipline": row.get("engineering_discipline"),
+            "filename": row.get("filename"),
+            "version": row.get("version"),
             # We could fetch slides here or fetch on demand
             "has_children": True 
         })

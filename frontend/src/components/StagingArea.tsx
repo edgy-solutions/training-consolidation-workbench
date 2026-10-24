@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useMemo, useRef, useCallback } from 'react';
 import { ArrowRight, ChevronDown, ChevronRight, Layers, Zap } from 'lucide-react';
-import { api } from '../api';
+import { api, courseSubtitle, courseTooltip } from '../api';
 import type { CourseSection } from '../api';
 import { useSelectionStore } from '../stores/selectionStore';
 import { useAppStore, projectTitle } from '../store';
@@ -11,6 +11,8 @@ interface StagingGroup {
     courses: {
         id: string;
         title: string;
+        filename?: string | null;
+        version?: string | null;
         sections: CourseSection[];
     }[];
 }
@@ -324,18 +326,22 @@ export const StagingArea: React.FC = () => {
                 const tree = await api.getSourceTree();
 
                 // Fetch sections for each selected course
-                const coursesData: { id: string; title: string; bu: string; sections: CourseSection[] }[] = [];
+                const coursesData: { id: string; title: string; filename?: string | null; version?: string | null; bu: string; sections: CourseSection[] }[] = [];
 
                 for (const courseId of Array.from(selectedSourceIds)) {
                     // Find the course in the tree to get its BU
                     let courseBU = 'Unknown';
                     let courseTitle = '';
+                    let courseFile: string | null | undefined;
+                    let courseVersion: string | null | undefined;
 
                     for (const bu of tree) {
                         const course = bu.children?.find(c => c.id === courseId);
                         if (course) {
                             courseBU = bu.name;
                             courseTitle = course.name;
+                            courseFile = course.filename;
+                            courseVersion = course.version;
                             break;
                         }
                     }
@@ -345,6 +351,8 @@ export const StagingArea: React.FC = () => {
                     coursesData.push({
                         id: courseId,
                         title: courseTitle,
+                        filename: courseFile,
+                        version: courseVersion,
                         bu: courseBU,
                         sections
                     });
@@ -357,6 +365,8 @@ export const StagingArea: React.FC = () => {
                         existing.courses.push({
                             id: course.id,
                             title: course.title,
+                            filename: course.filename,
+                            version: course.version,
                             sections: course.sections
                         });
                     } else {
@@ -365,6 +375,8 @@ export const StagingArea: React.FC = () => {
                             courses: [{
                                 id: course.id,
                                 title: course.title,
+                                filename: course.filename,
+                                version: course.version,
                                 sections: course.sections
                             }]
                         });
@@ -637,8 +649,11 @@ export const StagingArea: React.FC = () => {
                                                 isMaster ? "text-amber-900" : courseIsRelevant ? "text-slate-800" : "text-slate-500"
                                             )}>
                                                 {isMaster && <span className="text-lg">🏆</span>}
-                                                {course.title}
+                                                <span title={courseTooltip(course.title, course.id)}>{course.title}</span>
                                             </h4>
+                                            {courseSubtitle(course) && (
+                                                <p className="text-[10px] text-slate-400 truncate" title={courseTooltip(course.title, course.id)}>{courseSubtitle(course)}</p>
+                                            )}
                                             <div className="flex items-center justify-between mt-1">
                                                 <p className="text-xs text-slate-500">
                                                     {course.sections.length} section{course.sections.length !== 1 ? 's' : ''}

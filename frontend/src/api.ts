@@ -8,6 +8,13 @@ export const assetSrc = (url?: string) => (url?.startsWith('/') ? `${API_URL}${u
 // The deck's own number when the API sent it; else the id's `_pN` suffix; else the id itself.
 export const slideLabel = (id: string, number?: number) => `Slide ${number ?? id.match(/_p(\d+)$/)?.[1] ?? id}`;
 
+// Same-titled courses differ by file and version: "deck.pptx · v2.0", or null when neither is known
+export const courseSubtitle = (c: { filename?: string | null; version?: string | null }) =>
+    [c.filename, c.version ? `v${c.version}` : null].filter(Boolean).join(' · ') || null;
+
+// Row tooltip: the full title, then the short id (first 12 hex after "sha256:")
+export const courseTooltip = (title: string, id: string) => `${title}\n${id.replace(/^sha256:/, '').slice(0, 12)}`;
+
 export interface ConceptNode {
     name: string;
     domain: string;
@@ -51,6 +58,8 @@ export interface CourseNode {
     name: string;
     type: 'BusinessUnit' | 'Course';
     engineering_discipline?: string;
+    filename?: string | null;
+    version?: string | null;
     children?: CourseNode[];
     has_children?: boolean;
 }

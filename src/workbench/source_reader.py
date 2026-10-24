@@ -14,7 +14,7 @@ DEFAULT_FIXTURE_DIR = REPO_ROOT / "tests" / "fixtures" / "training"
 
 class SourceReader(Protocol):
     def list_courses(self, discipline: Optional[str]) -> List[dict]:
-        """{id, title, business_unit, discipline}; case-insensitive substring filter on
+        """{id, title, business_unit, discipline, filename, version} (last two null when absent); case-insensitive substring filter on
         discipline; sorted by (business_unit, title)."""
 
     def facets(self) -> Dict[str, List[str]]:

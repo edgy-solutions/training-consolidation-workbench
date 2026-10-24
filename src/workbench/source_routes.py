@@ -44,6 +44,8 @@ def _course_tree(courses: List[dict], extra=None) -> List[Dict[str, Any]]:
             "name": c["title"],
             "type": "Course",
             "engineering_discipline": c.get("discipline"),
+            "filename": c.get("filename"),
+            "version": c.get("version"),
         }
         entry.update(extra(c) if extra else {"has_children": True})
         tree[bu]["children"].append(entry)

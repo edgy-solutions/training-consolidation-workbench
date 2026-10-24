@@ -85,7 +85,8 @@ class FixtureReader:
     def list_courses(self, discipline=None):
         c = self.course
         rows = [{"id": c["id"], "title": c.get("title"), "business_unit": c.get("business_unit"),
-                 "discipline": c.get("discipline")}]
+                 "discipline": c.get("discipline"),
+                 "filename": c.get("filename"), "version": c.get("version")}]
         if discipline:
             rows = [r for r in rows if r["discipline"] and discipline.lower() in r["discipline"].lower()]
         return sorted(rows, key=lambda r: (r["business_unit"] or "", r["title"] or ""))
