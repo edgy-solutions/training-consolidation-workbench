@@ -15,8 +15,8 @@ SALIENCE_CUT = 0.5
 
 
 def get_alignment_store(reader) -> AlignmentStore:
-    from src.workbench.fixture_reader import FixtureReader
-    if isinstance(reader, FixtureReader):
+    from src.workbench.fixture_reader import is_fixture_reader
+    if is_fixture_reader(reader):
         return InMemoryAlignmentStore({})
     from src.workbench.main import neo4j_client
     return Neo4jAlignmentStore(neo4j_client)

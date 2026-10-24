@@ -15,46 +15,58 @@ REF_PREFIX = "fixture://images/"
 ASSET_URL = "/source/fixture-asset/"
 
 
+def _terms(query):
+    return set(re.findall(r"\w+", query.lower()))
+
+
+def _overlap(terms, text) -> int:
+    return len(terms & set(re.findall(r"\w+", (text or "").lower())))
+
+
 class FixtureReader:
     def __init__(self, fixture_dir):
         d = Path(fixture_dir)
         g = json.loads((d / "golden.json").read_text(encoding="utf-8"))
         neo = g["neo4j"]
         nd = neo["nondeterministic"]
-        edges = nd["edges"]
+        edges = nd.get("edges") or {}
         self.course = dict(neo["course"]["props"])
         self.course_id = self.course["id"]
+        self.deck_sha256 = (g.get("fixture") or {}).get("deck_sha256")
         # slide node entries are flat dicts in the golden (no "props" nesting)
         self._slides = {}
         for n in neo["slides"]["nodes"]:
             p = n.get("props", n)
             self._slides[p["id"]] = dict(p)
-        self._sections = {n["id"]: n for n in nd["sections"]["nodes"]}
-        self._parent = {e["to"]: e["from"] for e in edges["HAS_SECTION"]}
+        self._sections = {n["id"]: n for n in ((nd.get("sections") or {}).get("nodes") or [])}
+        self._parent = {e["to"]: e["from"] for e in edges.get("HAS_SECTION") or []}
         self._section_slides: Dict[str, List[str]] = {}
-        for e in edges["section_slide"]:
+        for e in (edges.get("section_slide") or []):
             self._section_slides.setdefault(e["from"], []).append(e["to"])
         self._covers: Dict[str, List[dict]] = {}
-        for e in edges["COVERS"]:
+        for e in (edges.get("COVERS") or []):
             self._covers.setdefault(e["from"], []).append({"concept": e["to"], "score": e["score"]})
         self._teaches: Dict[str, List[dict]] = {}
-        for e in edges["TEACHES"]:
+        for e in (edges.get("TEACHES") or []):
             self._teaches.setdefault(e["from"], []).append({"concept": e["to"], "salience": e["salience"]})
-        self._concepts = [c["name"] for c in nd["concepts"]["nodes"]]
+        self._concepts = [c["name"] for c in ((nd.get("concepts") or {}).get("nodes") or [])]
         # images: golden media keys under /images/ -> bytes from the pptx zip
-        keys = [k for k in g["minio"]["keys_required"] if "/images/" in k]
+        keys = [k for k in ((g.get("minio") or {}).get("keys_required") or []) if "/images/" in k]
         names = [os.path.basename(k) for k in keys]
         self._image_bytes: Dict[str, bytes] = {}
-        with zipfile.ZipFile(d / g["fixture"]["deck"]) as z:
-            media = sorted(n for n in z.namelist() if n.startswith("ppt/media/"))
-            by_base = {os.path.basename(m): m for m in media}
-            unmatched = [m for m in media if os.path.basename(m) not in names]
-            for name in names:
-                if name in by_base:
-                    self._image_bytes[name] = z.read(by_base[name])
-                elif unmatched:
-                    # golden name absent from the pptx: map in order
-                    self._image_bytes[name] = z.read(unmatched.pop(0))
+        deck = d / g["fixture"]["deck"]
+        media_dir = {".pptx": "ppt/media/", ".docx": "word/media/"}.get(deck.suffix.lower())
+        if media_dir and deck.exists():
+            with zipfile.ZipFile(deck) as z:
+                media = sorted(n for n in z.namelist() if n.startswith(media_dir))
+                by_base = {os.path.basename(m): m for m in media}
+                unmatched = [m for m in media if os.path.basename(m) not in names]
+                for name in names:
+                    if name in by_base:
+                        self._image_bytes[name] = z.read(by_base[name])
+                    elif unmatched:
+                        # golden name absent from the deck: map in order
+                        self._image_bytes[name] = z.read(unmatched.pop(0))
         self._image_names = names
 
     def _slide_shape(self, s: dict) -> dict:
@@ -175,11 +187,141 @@ class FixtureReader:
         between query words and slide text, score desc, ties by slide id."""
         if course_ids is not None and self.course_id not in course_ids:
             return []
-        terms = set(re.findall(r"\w+", query.lower()))
+        return [i for _, i in self._scored(query)][:limit]
+
+    def _scored(self, query):
+        terms = _terms(query)
         scored = []
         for s in self._slides.values():
-            words = set(re.findall(r"\w+", (s.get("text") or "").lower()))
-            score = len(terms & words)
+            score = _overlap(terms, s.get("text"))
             if score:
                 scored.append((-score, s["id"]))
+        return sorted(scored)
+
+
+def _prefix(course_id: str) -> str:
+    return course_id.split(":", 1)[-1][:12]
+
+
+class MultiFixtureReader:
+    """Fans the SourceReader methods out over several FixtureReaders and merges."""
+
+    def __init__(self, readers: List[FixtureReader]):
+        self.readers = list(readers)
+        self._by_course = {r.course_id: r for r in self.readers}
+        self._by_prefix = {_prefix(r.course_id): r for r in self.readers}
+
+    def _owner_of_slide(self, slide_id):
+        for r in self.readers:
+            if slide_id in r._slides:
+                return r
+        return None
+
+    def list_courses(self, discipline=None):
+        rows = [row for r in self.readers for row in r.list_courses(discipline)]
+        return sorted(rows, key=lambda r: (r["business_unit"] or "", r["title"] or "", r["id"]))
+
+    def facets(self):
+        parts = [r.facets() for r in self.readers]
+        keys = {k for p in parts for k in p}
+        return {k: sorted({v for p in parts for v in p.get(k, []) if v}) for k in keys}
+
+    def course_slides(self, course_id):
+        r = self._by_course.get(course_id)
+        return r.course_slides(course_id) if r else []
+
+    def course_sections(self, course_id):
+        r = self._by_course.get(course_id)
+        return r.course_sections(course_id) if r else []
+
+    def slide(self, slide_id):
+        r = self._owner_of_slide(slide_id)
+        return r.slide(slide_id) if r else None
+
+    def slides(self, slide_ids):
+        out = []
+        for i in slide_ids:
+            r = self._owner_of_slide(i)
+            if r:
+                out.append(r.slide(i))
+        return out
+
+    def page_preview_url(self, slide_id):
+        r = self._owner_of_slide(slide_id)
+        return r.page_preview_url(slide_id) if r else None
+
+    def embedded_images(self, course_id):
+        r = self._by_course.get(course_id)
+        if not r:
+            return []
+        k = _prefix(course_id)
+        out = []
+        for im in r.embedded_images(course_id):
+            im = dict(im)
+            im["ref"] = f"{REF_PREFIX}{k}--{im['name']}"
+            out.append(im)
+        return out
+
+    def _split(self, name):
+        k, sep, rest = name.partition("--")
+        r = self._by_prefix.get(k) if sep else None
+        return (r, rest) if r else (None, None)
+
+    def resolve_ref(self, ref):
+        if not ref.startswith(REF_PREFIX):
+            return None
+        r, rest = self._split(ref[len(REF_PREFIX):])
+        if not r:
+            return None
+        inner = r.resolve_ref(REF_PREFIX + rest)
+        return ASSET_URL + ref[len(REF_PREFIX):] if inner else None
+
+    def asset(self, name):
+        r, rest = self._split(name)
+        return r.asset(rest) if r else None
+
+    def concept_names(self):
+        seen = {}
+        for r in self.readers:
+            for n in r.concept_names():
+                seen.setdefault(n, None)
+        return list(seen)
+
+    def slides_teaching(self, names):
+        return [row for r in self.readers for row in r.slides_teaching(names)]
+
+    def search(self, query, course_ids, limit):
+        scored = []
+        for r in self.readers:
+            if course_ids is not None and r.course_id not in course_ids:
+                continue
+            scored.extend(r._scored(query))
         return [i for _, i in sorted(scored)][:limit]
+
+
+def is_fixture_reader(reader) -> bool:
+    return isinstance(reader, (FixtureReader, MultiFixtureReader))
+
+
+def load_fixture_reader(fixture_dir):
+    root = Path(fixture_dir)
+    dirs = []
+    if (root / "golden.json").is_file():
+        dirs.append(root)
+    if root.is_dir():
+        dirs.extend(sorted((p for p in root.iterdir() if p.is_dir() and (p / "golden.json").is_file()),
+                           key=lambda p: p.name))
+    if not dirs:
+        raise FileNotFoundError(f"No golden.json found in {root} or its subdirectories")
+    readers = []
+    seen = {}
+    for d in dirs:
+        r = FixtureReader(d)
+        first = seen.get(r.course_id)
+        if first is None:
+            seen[r.course_id] = r
+            readers.append(r)
+        elif first.deck_sha256 != r.deck_sha256:
+            raise ValueError(f"Course id {r.course_id} appears with different deck content in {d}")
+        # same id and same deck bytes: one Course, first folder wins
+    return readers[0] if len(readers) == 1 else MultiFixtureReader(readers)

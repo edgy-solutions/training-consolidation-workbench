@@ -773,9 +773,9 @@ def search_source_tree(request: SearchRequest):
 def get_fixture_asset(name: str):
     """Serves fixture image bytes (pptx media). Only available when SOURCE_READER=fixture."""
     from fastapi.responses import Response
-    from src.workbench.fixture_reader import FixtureReader
+    from src.workbench.fixture_reader import is_fixture_reader
     reader = get_source_reader()
-    if not isinstance(reader, FixtureReader):
+    if not is_fixture_reader(reader):
         raise HTTPException(status_code=404, detail="Not found")
     asset = reader.asset(name)
     if asset is None:

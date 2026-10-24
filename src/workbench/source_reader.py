@@ -67,7 +67,7 @@ def get_source_reader() -> Optional[SourceReader]:
         fixture_dir = os.getenv("SOURCE_FIXTURE_DIR") or str(DEFAULT_FIXTURE_DIR)
         key = (mode, fixture_dir)
         if key not in _cache:
-            from src.workbench.fixture_reader import FixtureReader
-            _cache[key] = FixtureReader(fixture_dir)
+            from src.workbench.fixture_reader import load_fixture_reader
+            _cache[key] = load_fixture_reader(fixture_dir)
         return _cache[key]
     raise ValueError(f"Unknown SOURCE_READER value: {mode!r}")
