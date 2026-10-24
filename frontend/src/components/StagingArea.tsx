@@ -70,9 +70,12 @@ function visibleSections(sections: CourseSection[], collapsed: Set<string>) {
 }
 
 // Simple word-based title similarity using Jaccard index
+// Words of 2 characters or fewer don't count, so "Q&A" or "Lab" can match only on concepts
+const titleWords = (title: string) => new Set(title.toLowerCase().split(/\s+/).filter(w => w.length > 2));
+
 function getTitleSimilarity(title1: string, title2: string): number {
-    const words1 = new Set(title1.toLowerCase().split(/\s+/).filter(w => w.length > 2));
-    const words2 = new Set(title2.toLowerCase().split(/\s+/).filter(w => w.length > 2));
+    const words1 = titleWords(title1);
+    const words2 = titleWords(title2);
     if (words1.size === 0 || words2.size === 0) return 0;
 
     const intersection = [...words1].filter(w => words2.has(w)).length;
@@ -707,7 +710,11 @@ export const StagingArea: React.FC = () => {
                                                             onMouseLeave={() => handleSectionHover(null)}
                                                             onClick={() => handleSectionClick(section.id)}
                                                             data-match={matchAttr}
-                                                            title={matchAttr === 'same-bu' ? "Similar section in the same business unit. Click to scroll to similar sections" : "Click to scroll to similar sections"}
+                                                            title={[
+                                                                matchAttr === 'same-bu' && "Similar section in the same business unit.",
+                                                                "Click to scroll to similar sections",
+                                                                titleWords(section.title || '').size === 0 && "(Title too short to compare: matched on concepts only.)",
+                                                            ].filter(Boolean).join(' ')}
                                                         >
                                                             <div className="flex items-start gap-2">
                                                                 {hasChildren && (
