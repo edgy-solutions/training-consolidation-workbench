@@ -1,6 +1,7 @@
 import React, { useEffect, useState, useMemo, useRef, useCallback } from 'react';
 import { ArrowRight, ChevronDown, ChevronRight, Layers, Zap } from 'lucide-react';
 import { api, courseSubtitle, courseTooltip } from '../api';
+import { conceptKey, displayCasing } from '../conceptCase';
 import type { CourseSection } from '../api';
 import { useSelectionStore } from '../stores/selectionStore';
 import { useAppStore, projectTitle } from '../store';
@@ -81,8 +82,8 @@ function getTitleSimilarity(title1: string, title2: string): number {
 
 // Calculate concept overlap using Jaccard index
 function getConceptOverlap(concepts1: string[], concepts2: string[]): number {
-    const set1 = new Set(concepts1.map(c => c.toLowerCase()));
-    const set2 = new Set(concepts2.map(c => c.toLowerCase()));
+    const set1 = new Set(concepts1.map(conceptKey));
+    const set2 = new Set(concepts2.map(conceptKey));
     if (set1.size === 0 || set2.size === 0) return 0;
 
     const intersection = [...set1].filter(c => set2.has(c)).length;
@@ -154,7 +155,7 @@ export const StagingArea: React.FC = () => {
     const [groups, setGroups] = useState<StagingGroup[]>([]);
     const [loading, setLoading] = useState(true);
     const [strategy, setStrategy] = useState<'union' | 'intersection' | 'master_outline'>('union');
-    const [sharedConcepts, setSharedConcepts] = useState<Set<string>>(new Set());
+    const [sharedConcepts, setSharedConcepts] = useState<Map<string, string>>(new Map());
     const [masterCourseId, setMasterCourseId] = useState<string | null>(null);
     const [templates, setTemplates] = useState<Array<{ name: string; display_name: string }>>([]);
     const [selectedTemplate, setSelectedTemplate] = useState<string>("standard");
@@ -276,15 +277,15 @@ export const StagingArea: React.FC = () => {
         // Find concepts that are shared between hovered section and highlighted sections
         const hoveredSection = allSections.find(s => s.section.id === sectionId);
         if (hoveredSection && similar.length > 0) {
-            const hoveredConcepts = new Set((hoveredSection.section.concepts || []).map(c => c.toLowerCase()));
+            const hoveredConcepts = new Set((hoveredSection.section.concepts || []).map(conceptKey));
             const sharedConceptsSet = new Set<string>();
 
             similar.forEach(({ sectionId: matchId }) => {
                 const matchSection = allSections.find(s => s.section.id === matchId);
                 if (matchSection) {
                     (matchSection.section.concepts || []).forEach(c => {
-                        if (hoveredConcepts.has(c.toLowerCase())) {
-                            sharedConceptsSet.add(c.toLowerCase());
+                        if (hoveredConcepts.has(conceptKey(c))) {
+                            sharedConceptsSet.add(conceptKey(c));
                         }
                     });
                 }
@@ -393,33 +394,27 @@ export const StagingArea: React.FC = () => {
 
                 setGroups(grouped);
 
-                // Calculate shared concepts (present in at least 2 BUs)
-                if (grouped.length >= 2) {
-                    const conceptsByBU = grouped.map(g => {
-                        const concepts = new Set<string>();
-                        g.courses.forEach(c => {
-                            c.sections.filter(s => !isEmptySection(s)).forEach(s => {
-                                s.concepts?.forEach(concept => concepts.add(concept));
-                            });
-                        });
-                        return concepts;
+                // Shared concepts: carried by at least 2 staged courses (empty sections left out),
+                // compared case-insensitively and shown in their most common casing
+                const courseKeys = grouped.flatMap(g => g.courses).map(c => {
+                    const keys = new Set<string>();
+                    c.sections.filter(s => !isEmptySection(s)).forEach(s => {
+                        s.concepts?.forEach(concept => keys.add(conceptKey(concept)));
                     });
-
-                    const shared = new Set<string>();
-                    conceptsByBU.forEach((buConcepts, i) => {
-                        buConcepts.forEach(concept => {
-                            // Check if this concept appears in at least one other BU
-                            const appearsInOtherBU = conceptsByBU.some((otherBUConcepts, j) =>
-                                i !== j && otherBUConcepts.has(concept)
-                            );
-                            if (appearsInOtherBU) {
-                                shared.add(concept);
-                            }
-                        });
+                    return keys;
+                });
+                const spelled = new Map<string, string[]>();
+                grouped.flatMap(g => g.courses).forEach(c => c.sections.filter(s => !isEmptySection(s)).forEach(s => {
+                    s.concepts?.forEach(concept => {
+                        const k = conceptKey(concept);
+                        spelled.set(k, [...(spelled.get(k) ?? []), concept]);
                     });
-
-                    setSharedConcepts(shared);
-                }
+                }));
+                const shared = new Map<string, string>(); // key -> display casing
+                spelled.forEach((names, k) => {
+                    if (courseKeys.filter(keys => keys.has(k)).length >= 2) shared.set(k, displayCasing(names));
+                });
+                setSharedConcepts(shared);
 
             } catch (error) {
                 console.error('Failed to fetch staging data:', error);
@@ -588,7 +583,7 @@ export const StagingArea: React.FC = () => {
                         </button>
                     </div>
                     {strategy === 'intersection' && sharedConcepts.size > 0 && (
-                        <span className="text-xs text-slate-500">
+                        <span className="text-xs text-slate-500" title={[...sharedConcepts.values()].slice(0, 40).join(', ')}>
                             {sharedConcepts.size} shared concepts
                         </span>
                     )}
@@ -626,7 +621,7 @@ export const StagingArea: React.FC = () => {
                             {group.courses.map(course => {
                                 const isMaster = masterCourseId === course.id;
                                 const courseHasSharedConcepts = course.sections.some(s =>
-                                    s.concepts?.some(c => sharedConcepts.has(c))
+                                    s.concepts?.some(c => sharedConcepts.has(conceptKey(c)))
                                 );
                                 const courseIsRelevant = strategy === 'union' || courseHasSharedConcepts;
 
@@ -771,9 +766,9 @@ export const StagingArea: React.FC = () => {
                                                                     {section.concepts && section.concepts.length > 0 && (
                                                                         <div className="flex flex-wrap gap-1 mt-1">
                                                                             {section.concepts.map((concept, i) => {
-                                                                                const isShared = sharedConcepts.has(concept);
+                                                                                const isShared = sharedConcepts.has(conceptKey(concept));
                                                                                 const isDimmed = strategy === 'intersection' && !isShared;
-                                                                                const isMatchingConcept = matchingConcepts.has(concept.toLowerCase()) &&
+                                                                                const isMatchingConcept = matchingConcepts.has(conceptKey(concept)) &&
                                                                                     (isHovered || isHighlighted);
 
                                                                                 return (
@@ -791,7 +786,7 @@ export const StagingArea: React.FC = () => {
                                                                                                         : 'bg-slate-100 text-slate-600 border-slate-200'
                                                                                         )}
                                                                                     >
-                                                                                        {concept}
+                                                                                        {sharedConcepts.get(conceptKey(concept)) ?? concept}
                                                                                     </span>
                                                                                 );
                                                                             })}
