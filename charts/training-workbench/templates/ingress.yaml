@@ -25,12 +25,14 @@ spec:
     - host: {{ required (printf "%s.ingress.host is required when %s.ingress.enabled" $component $component) $v.ingress.host | quote }}
       http:
         paths:
-          - path: /
+          {{- range ($v.ingress.paths | default (list "/")) }}
+          - path: {{ . | quote }}
             pathType: Prefix
             backend:
               service:
                 name: {{ include "tw.fullname" $ }}-{{ $component }}
                 port:
                   name: http
+          {{- end }}
 {{- end }}
 {{- end }}

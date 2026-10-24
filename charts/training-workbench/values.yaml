@@ -31,6 +31,10 @@ api:
     className: ""
     annotations: {}
     host: ""
+    # Prefix paths routed to this component. To share the UI's host, list the API's route
+    # prefixes here (/source, /draft, /render, /templates, /search, /synthesis, /curriculum,
+    # /project, /healthz); the UI keeps / and the ingress picks the longest prefix.
+    paths: ["/"]
     tls: []
   resources:
     requests:
@@ -46,7 +50,8 @@ ui:
     name: ui
     digest: ""
     tag: ""
-  # Browser-facing URL of the API. Empty: https://<api.ingress.host> when the API ingress is on.
+  # Browser-facing URL of the API. Empty: <scheme>://<api.ingress.host> when the API ingress is on,
+  # https if api.ingress.tls is set and http otherwise.
   apiUrl: ""
   # true runs without Keycloak (sandbox and fixture mode); the backend's project routes then answer 401.
   noAuth: false
@@ -61,6 +66,7 @@ ui:
     className: ""
     annotations: {}
     host: ""
+    paths: ["/"]
     tls: []
   resources:
     requests:

@@ -48,18 +48,26 @@ jobs:
 
   images:
     needs: [test, chart]
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.runner }}
     permissions:
       contents: read
       packages: write
     strategy:
       fail-fast: false
+      # Native runners per arch: the cluster is arm64, and the API's unstructured[all-docs]
+      # stack is far too slow under QEMU. Each leg pushes by digest; merge tags the index.
       matrix:
+        component: [api, ui]
+        arch: [amd64, arm64]
         include:
           - component: api
             context: .
           - component: ui
             context: frontend
+          - arch: amd64
+            runner: ubuntu-latest
+          - arch: arm64
+            runner: ubuntu-24.04-arm
     steps:
       - uses: actions/checkout@v4
 
@@ -67,13 +75,7 @@ jobs:
         id: meta
         run: |
           repo=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
-          image="ghcr.io/${repo}/${{ matrix.component }}"
-          tags="${image}:${{ github.sha }}"
-          if [[ "${{ github.ref }}" == "refs/heads/master" ]]; then
-            tags="${tags},${image}:latest"
-          fi
-          echo "image=${image}" >> "$GITHUB_OUTPUT"
-          echo "tags=${tags}" >> "$GITHUB_OUTPUT"
+          echo "image=ghcr.io/${repo}/${{ matrix.component }}" >> "$GITHUB_OUTPUT"
 
       - uses: docker/setup-buildx-action@v3
 
@@ -85,28 +87,79 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # amd64 only for now: the API's unstructured[all-docs] stack is very slow under QEMU.
-      - name: Build and push
+      - name: Build and push by digest
         id: build
         uses: docker/build-push-action@v6
         with:
           context: ${{ matrix.context }}
-          platforms: linux/amd64
-          push: ${{ github.event_name != 'pull_request' }}
-          tags: ${{ steps.meta.outputs.tags }}
+          platforms: linux/${{ matrix.arch }}
+          outputs: type=image,name=${{ steps.meta.outputs.image }},push-by-digest=true,name-canonical=true,push=${{ github.event_name != 'pull_request' }}
           labels: |
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
             org.opencontainers.image.revision=${{ github.sha }}
-          cache-from: type=gha,scope=${{ matrix.component }}
-          cache-to: type=gha,mode=max,scope=${{ matrix.component }}
+          cache-from: type=gha,scope=${{ matrix.component }}-${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.component }}-${{ matrix.arch }}
+
+      - name: Export the digest
+        if: github.event_name != 'pull_request'
+        run: |
+          mkdir -p /tmp/digests
+          touch "/tmp/digests/${{ steps.build.outputs.digest }}"
+
+      - uses: actions/upload-artifact@v4
+        if: github.event_name != 'pull_request'
+        with:
+          name: digests-${{ matrix.component }}-${{ matrix.arch }}
+          path: /tmp/digests/*
+          retention-days: 1
+
+  merge:
+    needs: [images]
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        component: [api, ui]
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: digests-${{ matrix.component }}-*
+          merge-multiple: true
+          path: /tmp/digests
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Tag the multi-arch index
+        id: index
+        working-directory: /tmp/digests
+        run: |
+          repo=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
+          image="ghcr.io/${repo}/${{ matrix.component }}"
+          tags="-t ${image}:${{ github.sha }}"
+          if [[ "${{ github.ref }}" == "refs/heads/master" ]]; then
+            tags="${tags} -t ${image}:latest"
+          fi
+          docker buildx imagetools create ${tags} $(printf "${image}@sha256:%s " *)
+          digest=$(docker buildx imagetools inspect "${image}:${{ github.sha }}" --format '{{json .Manifest}}' | jq -r .digest)
+          echo "image=${image}" >> "$GITHUB_OUTPUT"
+          echo "digest=${digest}" >> "$GITHUB_OUTPUT"
 
       - name: Record the digest for the chart
-        if: github.event_name != 'pull_request'
         run: |
           {
             echo "### ${{ matrix.component }}"
             echo '```'
-            echo "${{ steps.meta.outputs.image }}@${{ steps.build.outputs.digest }}"
-            echo "${{ matrix.component }}.image.digest=${{ steps.build.outputs.digest }}"
+            echo "${{ steps.index.outputs.image }}@${{ steps.index.outputs.digest }}"
+            echo "${{ matrix.component }}.image.digest=${{ steps.index.outputs.digest }}"
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
