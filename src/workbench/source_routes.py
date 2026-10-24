@@ -4,6 +4,7 @@ Each _port_<route> returns exactly the shape the legacy (direct-store) body in
 main.py returns. Legacy bodies stay in main.py and remain the default.
 """
 import json
+from collections import Counter
 from typing import Any, Dict, List, Optional
 
 from fastapi import HTTPException
@@ -33,12 +34,22 @@ def _max_salience(prev, cur):
     return prev if cur is None else max(prev, cur)
 
 
+def _bu_key(name: Optional[str]) -> str:
+    return " ".join((name or "").split()).casefold()
+
+
 def _course_tree(courses: List[dict], extra=None) -> List[Dict[str, Any]]:
+    """Groups by business unit, folding case and whitespace so "Pumps" and "pumps " are one
+    group; the group shows its most frequent spelling."""
     tree: Dict[str, Any] = {}
+    spellings: Dict[str, Counter] = {}
     for c in courses:
-        bu = c.get("business_unit") or "Uncategorized"
-        if bu not in tree:
-            tree[bu] = {"name": bu, "type": "BusinessUnit", "children": []}
+        bu = " ".join((c.get("business_unit") or "").split()) or "Uncategorized"
+        key = _bu_key(bu)
+        if key not in tree:
+            tree[key] = {"name": bu, "type": "BusinessUnit", "children": []}
+            spellings[key] = Counter()
+        spellings[key][bu] += 1
         entry = {
             "id": c["id"],
             "name": c["title"],
@@ -48,7 +59,9 @@ def _course_tree(courses: List[dict], extra=None) -> List[Dict[str, Any]]:
             "version": c.get("version"),
         }
         entry.update(extra(c) if extra else {"has_children": True})
-        tree[bu]["children"].append(entry)
+        tree[key]["children"].append(entry)
+    for key, node in tree.items():
+        node["name"] = spellings[key].most_common(1)[0][0]  # ties: first seen
     return list(tree.values())
 
 

@@ -29,6 +29,7 @@ from src.workbench.source_routes import (
     _port_course_sections, _port_slide_details, _port_embedded_images,
     _port_embedded_images_for_slides, _port_resolve_image_urls, _port_resolve_image_url,
     _port_search_concepts, _port_slides_by_concept, _port_heatmap, _port_search_source_tree,
+    _course_tree,
 )
 
 BUCKET_NAME = os.getenv("BUCKET_NAME", "training-content")
@@ -110,26 +111,14 @@ def get_source_tree(engineering_discipline: Optional[str] = None):
         params = {}
         
     results = neo4j_client.execute_query(query, params)
-    
-    # Group by Business Unit
-    tree = {}
-    for row in results:
-        bu = row.get("bu", "Uncategorized")
-        if bu not in tree:
-            tree[bu] = {"name": bu, "type": "BusinessUnit", "children": []}
-        
-        tree[bu]["children"].append({
-            "id": row["id"],
-            "name": row["title"],
-            "type": "Course",
-            "engineering_discipline": row.get("engineering_discipline"),
-            "filename": row.get("filename"),
-            "version": row.get("version"),
-            # We could fetch slides here or fetch on demand
-            "has_children": True 
-        })
-        
-    return list(tree.values())
+
+    # Same grouping as the port path: BU names folded, null BU under "Uncategorized"
+    return _course_tree([
+        {"id": row["id"], "title": row["title"], "business_unit": row.get("bu"),
+         "discipline": row.get("engineering_discipline"),
+         "filename": row.get("filename"), "version": row.get("version")}
+        for row in results
+    ])
 
 @app.get("/source/course/{course_id}/slides", response_model=List[Dict[str, Any]])
 def get_course_slides(course_id: str):
