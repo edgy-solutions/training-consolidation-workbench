@@ -14,11 +14,14 @@ Items marked `code` are waiting for the deck that proves or disproves them.
 
 **Size**: S is under an hour, M is half a day, L is a day or more.
 
+**Done** in the `#` column: fixed on lane/wb, worked in order from F1 (architect, 2026-10-24).
+The Evidence cell then ends with what the fix measured.
+
 ## Case 0: reaching the decks at all
 
 | # | Where | What goes wrong | Fix | Size | Evidence |
 |---|---|---|---|---|---|
-| F1 | `frontend/src/components/TopBar.tsx:16-21`, `frontend/src/store.ts:49` | The discipline buttons are hardcoded (ME, EE, SWE, SysE), the store defaults to Mechanical, there is no "All", and the choice persists in `workbench-storage`. The tree request always carries `engineering_discipline`, so only Mechanical courses show on load. Any course whose discipline is not one of the four, or that has none, can't be reached at all. | Build the buttons from `/source/filters` `domains`, add "All" as the default, and drop a persisted value that no longer exists. | S | deck: 8 of 20 courses render on load. 6 (Hydraulics, Materials, Instrumentation, Safety, Avionics, and empty-no-metadata) can't be reached from any button. |
+| F1 **Done** | `frontend/src/components/TopBar.tsx:16-21`, `frontend/src/store.ts:49` | The discipline buttons are hardcoded (ME, EE, SWE, SysE), the store defaults to Mechanical, there is no "All", and the choice persists in `workbench-storage`. The tree request always carries `engineering_discipline`, so only Mechanical courses show on load. Any course whose discipline is not one of the four, or that has none, can't be reached at all. | Build the buttons from `/source/filters` `domains`, add "All" as the default, and drop a persisted value that no longer exists. | S | deck: 8 of 20 courses render on load. 6 (Hydraulics, Materials, Instrumentation, Safety, Avionics, and empty-no-metadata) can't be reached from any button. Fixed: "All" is the default and all 20 render on load; Hydraulics alone shows 1; a persisted Mechanical from before (store version 0) and a stale value both reset to All; the nine buttons fit at 1280 px. |
 
 ## Case 1: nested sections
 

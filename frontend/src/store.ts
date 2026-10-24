@@ -43,10 +43,15 @@ interface AppState {
 
 import { persist } from 'zustand/middleware';
 
+// One draft project per discipline, found again by this exact title. '' is "All".
+export function projectTitle(discipline: string): string {
+    return `Unified ${discipline || 'All'} Standard`;
+}
+
 export const useAppStore = create<AppState>()(
     persist(
         (set, get) => ({
-            discipline: 'Mechanical',
+            discipline: '',
             projectId: null,
             structure: [],
             projectStatus: 'loading',
@@ -109,15 +114,15 @@ export const useAppStore = create<AppState>()(
                     // Find most recent project for this discipline
                     // We reverse the list assuming the backend returns them in some order, or we just take the first match
                     // Ideally backend should sort by created_at desc
-                    const matchingProject = existingProjects.find(p => p.title.includes(discipline));
+                    const matchingProject = existingProjects.find(p => p.title === projectTitle(discipline));
 
                     if (matchingProject) {
                         console.log(`[Store] Found existing project: ${matchingProject.title}`);
                         set({ projectId: matchingProject.id });
                         get().fetchStructure();
                     } else {
-                        console.log(`[Store] Creating new project for ${discipline}`);
-                        const p = await api.createDraftProject(`Unified ${discipline} Standard`);
+                        console.log(`[Store] Creating new project for ${discipline || 'all disciplines'}`);
+                        const p = await api.createDraftProject(projectTitle(discipline));
                         set({ projectId: p.id });
 
                         // Create initial default node
@@ -183,6 +188,13 @@ export const useAppStore = create<AppState>()(
                 discipline: state.discipline,
                 projectId: state.projectId
             }), // Only persist these fields
+            // Version 0 persisted the old hardcoded default, Mechanical, whether or not anyone
+            // chose it. Start those stores on "All", with no project, rather than hide courses.
+            version: 1,
+            migrate: (persisted, version) => {
+                const state = persisted as { discipline: string; projectId: string | null };
+                return version < 1 ? { ...state, discipline: '', projectId: null } : state;
+            },
         }
     )
 );

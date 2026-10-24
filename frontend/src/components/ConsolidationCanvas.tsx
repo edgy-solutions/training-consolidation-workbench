@@ -126,7 +126,7 @@ export const ConsolidationCanvas: React.FC<ConsolidationCanvasProps> = ({ projec
                     <h1 className="text-3xl font-bold text-slate-800 tracking-tight">
                         {structure.find(n => n.id === projectId)?.title || PROJECT_PLACEHOLDER[projectStatus]}
                     </h1>
-                    <p className="text-slate-500 text-sm mt-2">Global Standardization Project • {discipline}</p>
+                    <p className="text-slate-500 text-sm mt-2">Global Standardization Project • {discipline || 'All disciplines'}</p>
                 </div>
 
                 {/* Grouped Draft Nodes (SynthBlocks) */}

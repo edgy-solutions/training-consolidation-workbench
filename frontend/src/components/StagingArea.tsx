@@ -3,7 +3,7 @@ import { ArrowRight, Layers, Zap } from 'lucide-react';
 import { api } from '../api';
 import type { CourseSection } from '../api';
 import { useSelectionStore } from '../stores/selectionStore';
-import { useAppStore } from '../store';
+import { useAppStore, projectTitle } from '../store';
 import clsx from 'clsx';
 
 interface StagingGroup {
@@ -348,7 +348,7 @@ export const StagingArea: React.FC = () => {
             // Build the payload
             const { discipline } = useAppStore.getState();
             const payload: any = {
-                title: `Unified ${discipline} Standard`, // Must match createProjectIfNeeded logic
+                title: projectTitle(discipline), // Must match createProjectIfNeeded logic
                 domain: null,
                 selected_source_ids: Array.from(selectedSourceIds)
             };
