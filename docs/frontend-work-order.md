@@ -68,6 +68,24 @@ folder (commit 4e3656c). Expect one tree entry.
 | E4 | `SlideInspector.tsx:41-46` | If the details fetch fails, it only logs to the console. `slide` keeps its previous value, so the inspector shows the last slide's details under the new selection, or "Loading details..." forever if there was none. This is the same class of bug as the outline header fixed in c956c9a. | Clear `slide` when the selection changes, and add an error state. | S | code |
 | E5 | `StagingArea.tsx:32-34` | Title similarity drops words of 2 characters or fewer, and an empty title scores 0. Sections with empty or very short titles ("Q&A", "Lab") can match only on concepts. | Acceptable. Note it in the UI's match tooltip. | - | code |
 
+## Fixed tonight, because it blocked looking at the decks
+
+- **Null salience.** tr's case goldens are pre-step-d, so every TEACHES edge
+  has `salience: null`. Three things broke on that:
+  - Both concept-chip renderers guarded with `!== undefined` and then called
+    `null.toFixed()`. Expanding a course or opening a slide would crash the
+    whole app.
+  - The search route did `max(prev, None)`, which raised as soon as a slide
+    taught a concept twice.
+
+  The chip guards now use `!= null`, `ConceptNode.salience` is typed
+  `number | null`, `source_routes._max_salience` treats None as unknown, and
+  `tests/test_fixture_null_salience.py` covers it.
+- **Grey chips are expected.** A chip with no salience number against these
+  goldens is the step-d ingest gap, not a frontend bug, and is not listed
+  below. Every slide row's chips will sort in arbitrary order until step d
+  lands and the goldens are regenerated, which changes their sha256s.
+
 ## Not covered here
 
 - The old `.github/workflows/build-container.yml` targets `main` and a
@@ -83,4 +101,4 @@ from, and the items it confirms, refutes or adds.
 
 | Deck | Golden sha256 (8) | Confirms | Refutes | New |
 |---|---|---|---|---|
-| hydraulics (root) | see `VENDORED.json` | N1, I1 | | |
+| hydraulics (root) | 88017f94 | N1 (levels 1 and 2, no 0); I1 (0 of 4 slides have `s3_url`); I2/E3 (3 whitespace-only elements render as empty blocks) | L1 at this size: 4 requests, 0.14 s, harmless | The golden has no `Image` elements although slide 4 embeds a picture, so image-only slides will likely arrive as text-less slides, not as `Image` elements. I2's "render Image elements" may then have nothing to render, which makes I1's embedded-image fallback the real fix. |
