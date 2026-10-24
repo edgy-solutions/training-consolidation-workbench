@@ -103,8 +103,10 @@ jobs:
       - name: Export the digest
         if: github.event_name != 'pull_request'
         run: |
+          # Artifact paths may not contain ':', so store the bare hex; merge adds sha256: back.
+          digest="${{ steps.build.outputs.digest }}"
           mkdir -p /tmp/digests
-          touch "/tmp/digests/${{ steps.build.outputs.digest }}"
+          touch "/tmp/digests/${digest#sha256:}"
 
       - uses: actions/upload-artifact@v4
         if: github.event_name != 'pull_request'
