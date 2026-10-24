@@ -1,8 +1,9 @@
-import React, { useEffect, useState, useMemo } from 'react';
+import React, { useEffect, useLayoutEffect, useRef, useState, useMemo } from 'react';
 import { Search, Folder, ChevronDown, FileText, Image, ChevronRight, CheckCircle2, Filter, X } from 'lucide-react';
 import { api, assetSrc } from '../api';
 import type { CourseNode, SourceSlide } from '../api';
 import { useDraggable } from '@dnd-kit/core';
+import { useVirtualizer } from '@tanstack/react-virtual';
 import { useAppStore } from '../store';
 import { useSelectionStore } from '../stores/selectionStore';
 import { SidebarActionPanel } from './SidebarActionPanel';
@@ -287,6 +288,64 @@ const BusinessUnitNode: React.FC<{ node: CourseNode, heatmapData?: Record<string
     );
 };
 
+// Courses longer than this mount only the rows near the viewport.
+const VIRTUALIZE_ABOVE = 40;
+
+const nearestScroller = (el: HTMLElement): HTMLElement | null => {
+    for (let p = el.parentElement; p; p = p.parentElement) {
+        const oy = getComputedStyle(p).overflowY;
+        if (oy === 'auto' || oy === 'scroll') return p;
+    }
+    return null;
+};
+
+// The panel's scroller is an ancestor shared by every expanded course, so the list
+// virtualizes against it (window-style) with scrollMargin = the list's offset inside it.
+const VirtualSlideList: React.FC<{ slides: SourceSlide[], thumbs: Record<string, string>, heatmapData?: Record<string, { score: number, type: string }>, heatmapMode?: boolean, searchQuery?: string }> = ({ slides, thumbs, heatmapData, heatmapMode, searchQuery }) => {
+    const listRef = useRef<HTMLDivElement>(null);
+    const [scroller, setScroller] = useState<HTMLElement | null>(null);
+    const [margin, setMargin] = useState(0);
+
+    useLayoutEffect(() => {
+        const list = listRef.current;
+        const sc = list && nearestScroller(list);
+        if (!list || !sc) return;
+        setScroller(sc);
+        const measure = () => setMargin(
+            list.getBoundingClientRect().top - sc.getBoundingClientRect().top + sc.scrollTop);
+        measure();
+        // Content above the list (other courses expanding) resizes every ancestor up to the scroller.
+        const ro = new ResizeObserver(measure);
+        for (let p: HTMLElement | null = list.parentElement; p && p !== sc; p = p.parentElement) ro.observe(p);
+        ro.observe(sc);
+        return () => ro.disconnect();
+    }, []);
+
+    const virt = useVirtualizer({
+        count: slides.length,
+        getScrollElement: () => scroller,
+        estimateSize: () => 96,
+        overscan: 8,
+        scrollMargin: margin,
+        getItemKey: i => slides[i].id,
+    });
+
+    return (
+        <div ref={listRef} style={{ height: virt.getTotalSize(), position: 'relative' }}>
+            {virt.getVirtualItems().map(v => (
+                <div
+                    key={v.key}
+                    data-index={v.index}
+                    ref={virt.measureElement}
+                    style={{ position: 'absolute', top: 0, left: 0, right: 0, transform: `translateY(${v.start - margin}px)`, paddingBottom: 8 }}
+                >
+                    <SlideRow slide={slides[v.index]} thumb={thumbs[slides[v.index].id]} isHighlighted={false} heatmapData={heatmapData} heatmapMode={heatmapMode} searchQuery={searchQuery} />
+                </div>
+            ))}
+        </div>
+    );
+};
+
 const CourseItem: React.FC<{ course: CourseNode, heatmapData?: Record<string, { score: number, type: string }>, heatmapMode?: boolean, searchQuery?: string }> = ({ course, heatmapData, heatmapMode, searchQuery }) => {
     const { selectedSourceIds, toggleSelection } = useSelectionStore();
     // If course has pre-loaded slides (from search), expand by default
@@ -415,7 +474,9 @@ const CourseItem: React.FC<{ course: CourseNode, heatmapData?: Record<string, { 
                         </div>
                     )}
                     {slides.length === 0 && !loading && !loadError && <div className="text-[10px] text-slate-400 pl-2">No slides found.</div>}
-                    {slides.map(slide => (
+                    {slides.length > VIRTUALIZE_ABOVE ? (
+                        <VirtualSlideList slides={slides} thumbs={thumbs} heatmapData={heatmapData} heatmapMode={heatmapMode} searchQuery={searchQuery} />
+                    ) : slides.map(slide => (
                         <SlideRow key={slide.id} slide={slide} thumb={thumbs[slide.id]} isHighlighted={false} heatmapData={heatmapData} heatmapMode={heatmapMode} searchQuery={searchQuery} />
                     ))}
                 </div>
