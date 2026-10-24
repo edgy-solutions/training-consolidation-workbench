@@ -146,6 +146,9 @@ def get_course_slides(course_id: str):
     ORDER BY s.number
     """
     results = neo4j_client.execute_query(query, {"course_id": course_id})
+    title_rows = neo4j_client.execute_query(
+        "MATCH (c:Course {id: $course_id}) RETURN c.title as title", {"course_id": course_id})
+    course_title = title_rows[0]["title"] if title_rows else None
     # One MinIO listing for the course instead of one per slide.
     pages = {}
     prefix = f"{course_id}/generated/"
@@ -170,6 +173,8 @@ def get_course_slides(course_id: str):
             "concepts": [{"name": c["name"], "domain": "General", "salience": c.get("salience")}
                          for c in row.get("concepts", []) if c and c.get("name")],
             "elements": elements,
+            "course_id": course_id,
+            "course_title": course_title,
         })
     return out
 
@@ -257,7 +262,8 @@ def get_slide_details(slide_id: str):
     OPTIONAL MATCH (c)-[:ALIGNS_TO]->(cc:CanonicalConcept)
     WITH s, coalesce(cc.name, c.name) as display_name, max(t.salience) as salience
     WITH s, collect(DISTINCT {name: display_name, salience: salience}) as concepts
-    RETURN s.id as id, s.number as number, s.text as text, s.elements as elements, concepts
+    RETURN s.id as id, s.number as number, s.text as text, s.elements as elements, concepts,
+           [(co:Course)-[:HAS_SLIDE]->(s) | {id: co.id, title: co.title}][0] as course
     """
     results = neo4j_client.execute_query(query, {"id": slide_id})
     
@@ -320,7 +326,10 @@ def get_slide_details(slide_id: str):
         s3_url=s3_url,
         text_preview=row["text"] if row["text"] else "",
         concepts=concepts,
-        elements=elements
+        elements=elements,
+        number=row.get("number"),
+        course_id=(row.get("course") or {}).get("id"),
+        course_title=(row.get("course") or {}).get("title"),
     )
 
 @app.get("/source/embedded-images/{course_id}")

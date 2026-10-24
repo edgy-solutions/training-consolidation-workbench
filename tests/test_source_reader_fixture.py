@@ -122,12 +122,14 @@ def test_route_filters(client):
 def test_route_slides(client):
     r = client.get(f"/source/course/{q(COURSE_ID)}/slides").json()
     assert [s["number"] for s in r] == [1, 2, 3, 4]
-    assert all(set(s) == {"id", "number", "text", "s3_url", "text_preview", "concepts", "elements"}
+    assert all(set(s) == {"id", "number", "text", "s3_url", "text_preview", "concepts", "elements",
+                          "course_id", "course_title"}
                for s in r)
     # row-ready: identical to what /source/slide/{id} returns for the same slide
     for s in r:
         d = client.get(f"/source/slide/{q(s['id'])}").json()
-        for k in ("id", "s3_url", "text_preview", "concepts", "elements"):
+        for k in ("id", "number", "s3_url", "text_preview", "concepts", "elements",
+                  "course_id", "course_title"):
             assert s[k] == d[k], (s["id"], k)
 
 

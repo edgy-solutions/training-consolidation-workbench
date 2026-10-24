@@ -64,12 +64,16 @@ def _port_source_filters(reader):
     }
 
 
+def _course_title(reader, course_id) -> Optional[str]:
+    return next((c["title"] for c in reader.list_courses(None) if c["id"] == course_id), None)
+
+
 def _port_course_slides(reader, alignment, course_id: str):
-    """One call, row-ready: the SourceSlide fields plus legacy `number`/`text`."""
+    """One call, row-ready: the SourceSlide fields plus legacy `text`."""
     out = []
+    title = _course_title(reader, course_id)
     for s in reader.slides([r["id"] for r in reader.course_slides(course_id)]):
-        d = _slide_model(reader, alignment, s).model_dump()
-        d["number"] = s["number"]
+        d = _slide_model(reader, alignment, s, title).model_dump()
         d["text"] = s["text"]
         out.append(d)
     return out
@@ -111,10 +115,10 @@ def _port_slide_details(reader, alignment, slide_id: str):
     s = reader.slide(slide_id)
     if s is None:
         raise HTTPException(status_code=404, detail="Slide not found")
-    return _slide_model(reader, alignment, s)
+    return _slide_model(reader, alignment, s, _course_title(reader, s.get("course_id")))
 
 
-def _slide_model(reader, alignment, s):
+def _slide_model(reader, alignment, s, course_title=None):
     slide_id = s["id"]
     # Legacy parity: slide detail shows every taught concept (no salience cut),
     # with max(salience) per display name.
@@ -135,6 +139,9 @@ def _slide_model(reader, alignment, s):
         text_preview=s["text"] or "",
         concepts=concepts,
         elements=elements,
+        number=s.get("number"),
+        course_id=s.get("course_id"),
+        course_title=course_title,
     )
 
 

@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useRef } from 'react';
-import { FileText, Image as ImageIcon, Maximize2, X, ChevronLeft, ChevronRight, Sparkles, Download, Layout } from 'lucide-react';
+import { FileText, Copy, Check, Image as ImageIcon, Maximize2, X, ChevronLeft, ChevronRight, Sparkles, Download, Layout } from 'lucide-react';
 import { useAppStore } from '../store';
-import { api, assetSrc } from '../api';
+import { api, assetSrc, slideLabel } from '../api';
 import type { SourceSlide } from '../api';
 import clsx from 'clsx';
 import { marked } from 'marked';
@@ -22,6 +22,14 @@ export const SlideInspector: React.FC = () => {
     const [slide, setSlide] = useState<SourceSlide | null>(null);
     const [loading, setLoading] = useState(false);
     const [rendering, setRendering] = useState(false);
+    const [copied, setCopied] = useState(false);
+    const copyId = () => {
+        if (!slide) return;
+        navigator.clipboard.writeText(slide.id).then(() => {
+            setCopied(true);
+            setTimeout(() => setCopied(false), 1500);
+        }).catch(console.error);
+    };
     const [renderFormat, setRenderFormat] = useState<"pptx" | "typ">("pptx");
     const [templates, setTemplates] = useState<string[]>(["standard"]);
     const [selectedTemplate, setSelectedTemplate] = useState<string>("standard");
@@ -331,12 +339,26 @@ export const SlideInspector: React.FC = () => {
         <div className="h-full flex flex-col bg-white">
             {/* Header */}
             <div className="p-4 border-b border-slate-100 flex justify-between items-start">
-                <div>
+                <div className="min-w-0">
                     <h2 className="font-bold text-slate-800 text-sm flex items-center gap-2">
                         <FileText size={16} className="text-teal-600" />
                         Slide Inspector
                     </h2>
-                    <p className="text-xs text-slate-500 mt-1 font-mono">{slide.id}</p>
+                    <div className="flex items-center gap-1 mt-1 text-xs text-slate-500">
+                        <span className="truncate" title={slide.id}>
+                            {slide.course_title ? `${slide.course_title} · ` : ''}{slideLabel(slide.id, slide.number)}
+                        </span>
+                        <button
+                            type="button"
+                            data-testid="copy-slide-id"
+                            aria-label="Copy slide id"
+                            title="Copy slide id"
+                            onClick={copyId}
+                            className="p-0.5 rounded text-slate-400 hover:text-slate-600 hover:bg-slate-100 flex-shrink-0"
+                        >
+                            {copied ? <Check size={12} className="text-teal-600" /> : <Copy size={12} />}
+                        </button>
+                    </div>
                 </div>
             </div>
 

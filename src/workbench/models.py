@@ -14,6 +14,9 @@ class SourceSlide(BaseModel):
     text_preview: str
     concepts: List[ConceptNode]
     elements: Optional[List[Dict[str, Any]]] = None
+    number: Optional[int] = None         # position in the deck
+    course_id: Optional[str] = None
+    course_title: Optional[str] = None   # same name the course tree shows
 
 
 class TargetDraftNode(BaseModel):
