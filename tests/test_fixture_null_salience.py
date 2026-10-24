@@ -1,6 +1,6 @@
-"""Pre-step-d goldens carry salience null on every TEACHES edge; the routes must still answer."""
+"""Pre-step-d goldens carry salience null on every TEACHES edge, and so score null on every
+COVERS edge; the routes must still answer."""
 import json
-import shutil
 from urllib.parse import quote
 
 import pytest
@@ -8,7 +8,7 @@ import pytest
 from src.workbench.source_reader import reset_source_reader_cache
 from src.workbench.source_routes import _max_salience
 
-from tests.test_fixture_multi_deck import SRC
+from tests.test_fixture_multi_deck import _copy_root_deck
 
 
 def test_max_salience_treats_none_as_unknown():
@@ -20,13 +20,14 @@ def test_max_salience_treats_none_as_unknown():
 
 @pytest.fixture
 def client(tmp_path, monkeypatch):
-    root = tmp_path / "root"
-    shutil.copytree(SRC, root)
+    root = _copy_root_deck(tmp_path / "root")
     g = json.loads((root / "golden.json").read_text(encoding="utf-8"))
     teaches = g["neo4j"]["nondeterministic"]["edges"]["TEACHES"]
     for e in teaches:
         e["salience"] = None
     teaches.append(dict(teaches[0]))  # same slide, same concept twice: exercises the max
+    for e in g["neo4j"]["nondeterministic"]["edges"]["COVERS"]:
+        e["score"] = None
     (root / "golden.json").write_text(json.dumps(g), encoding="utf-8")
     monkeypatch.setenv("SOURCE_READER", "fixture")
     monkeypatch.setenv("SOURCE_FIXTURE_DIR", str(root))
@@ -53,3 +54,10 @@ def test_search_with_null_salience(client):
     assert r.status_code == 200
     slides = [s for bu in r.json() for course in bu["children"] for s in course["slides"]]
     assert any(s["id"] == edge["from"] for s in slides)
+
+
+def test_sections_with_null_covers_score(client):
+    c, edge = client
+    course_id = edge["from"].rsplit("_p", 1)[0]
+    r = c.get(f"/source/course/{quote(course_id, safe='')}/sections")
+    assert r.status_code == 200 and r.json()

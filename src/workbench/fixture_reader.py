@@ -117,7 +117,8 @@ class FixtureReader:
             parent = self._parent.get(sid)
             if parent == self.course_id:
                 parent = None
-            covers = sorted(self._covers.get(sid, []), key=lambda c: -c["score"])
+            # Pre-step-d goldens carry score null (a mean of null saliences): those sort last.
+            covers = sorted(self._covers.get(sid, []), key=lambda c: (c["score"] is None, -(c["score"] or 0)))
             out.append({
                 "id": sid, "parent_id": parent, "title": n.get("title"), "level": n.get("level"),
                 "start_page": n.get("start_page"), "end_page": n.get("end_page"),
