@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useMemo } from 'react';
 import { Search, Folder, ChevronDown, FileText, Image, ChevronRight, CheckCircle2, Filter, X } from 'lucide-react';
-import { api } from '../api';
+import { api, assetSrc } from '../api';
 import type { CourseNode, SourceSlide } from '../api';
 import { useDraggable } from '@dnd-kit/core';
 import { useAppStore } from '../store';
@@ -293,6 +293,7 @@ const CourseItem: React.FC<{ course: CourseNode, heatmapData?: Record<string, { 
     const preloadedSlides = (course as any).slides as SourceSlide[] | undefined;
     const [expanded, setExpanded] = useState(!!preloadedSlides);
     const [slides, setSlides] = useState<SourceSlide[]>(preloadedSlides || []);
+    const [thumbs, setThumbs] = useState<Record<string, string>>({}); // slide id -> first embedded image
     const [loading, setLoading] = useState(false);
 
     const isSelected = selectedSourceIds.has(course.id);
@@ -319,6 +320,7 @@ const CourseItem: React.FC<{ course: CourseNode, heatmapData?: Record<string, { 
         // In search mode, course.slides is populated. In default mode, it's undefined.
         if (preloadedSlides) {
             setSlides(preloadedSlides);
+            loadThumbs(preloadedSlides);
             setExpanded(true);
         } else {
             // Switching to default view.
@@ -334,6 +336,22 @@ const CourseItem: React.FC<{ course: CourseNode, heatmapData?: Record<string, { 
         }
     }, [preloadedSlides, course.id]); // Add course.id to force reset if course identity changes logically but not physically (React key)
 
+    // One request per course: first embedded image of each slide, for slides without a page render
+    const loadThumbs = async (courseSlides: SourceSlide[]) => {
+        if (courseSlides.length === 0) return;
+        try {
+            const res = await api.getEmbeddedImagesForSlides(courseSlides.map(s => s.id));
+            const first: Record<string, string> = {};
+            for (const img of res.images || []) {
+                const id = `${course.id}_p${img.page_number}`;
+                if (img.page_number != null && !first[id]) first[id] = img.url;
+            }
+            setThumbs(first);
+        } catch (e) {
+            console.error(e);
+        }
+    };
+
     const toggle = async () => {
         if (!expanded && slides.length === 0) {
             setLoading(true);
@@ -345,6 +363,7 @@ const CourseItem: React.FC<{ course: CourseNode, heatmapData?: Record<string, { 
                 // We need to fetch details for drag preview.
                 const details = await Promise.all(refs.map(s => api.getSlideDetails(s.id)));
                 setSlides(details);
+                loadThumbs(details);
             } catch (e) {
                 console.error(e);
             } finally {
@@ -388,7 +407,7 @@ const CourseItem: React.FC<{ course: CourseNode, heatmapData?: Record<string, { 
                 <div className="pl-4 py-1 space-y-2">
                     {slides.length === 0 && !loading && <div className="text-[10px] text-slate-400 pl-2">No slides found.</div>}
                     {slides.map(slide => (
-                        <SlideRow key={slide.id} slide={slide} isHighlighted={false} heatmapData={heatmapData} heatmapMode={heatmapMode} searchQuery={searchQuery} />
+                        <SlideRow key={slide.id} slide={slide} thumb={thumbs[slide.id]} isHighlighted={false} heatmapData={heatmapData} heatmapMode={heatmapMode} searchQuery={searchQuery} />
                     ))}
                 </div>
             )}
@@ -396,7 +415,7 @@ const CourseItem: React.FC<{ course: CourseNode, heatmapData?: Record<string, { 
     );
 };
 
-const SlideRow: React.FC<{ slide: SourceSlide, isHighlighted: boolean, heatmapData?: Record<string, { score: number, type: string }>, heatmapMode?: boolean, searchQuery?: string }> = ({ slide, isHighlighted, heatmapData, heatmapMode, searchQuery }) => {
+const SlideRow: React.FC<{ slide: SourceSlide, thumb?: string, isHighlighted: boolean, heatmapData?: Record<string, { score: number, type: string }>, heatmapMode?: boolean, searchQuery?: string }> = ({ slide, thumb, isHighlighted, heatmapData, heatmapMode, searchQuery }) => {
     const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({
         id: `source-${slide.id}`,
         data: { slide }
@@ -464,6 +483,8 @@ const SlideRow: React.FC<{ slide: SourceSlide, isHighlighted: boolean, heatmapDa
             )}>
                 {slide.s3_url ? (
                     <img src={slide.s3_url} className="w-full h-full object-cover" alt="slide" />
+                ) : thumb ? (
+                    <img src={assetSrc(thumb)} className="w-full h-full object-cover" alt="embedded" />
                 ) : (
                     <Image size={12} className="text-slate-300 absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2" />
                 )}
@@ -480,6 +501,9 @@ const SlideRow: React.FC<{ slide: SourceSlide, isHighlighted: boolean, heatmapDa
                     <span className="text-[10px] font-bold text-slate-700 truncate">
                         Slide {slide.id.split('_p')[1] || slide.id}
                     </span>
+                    {thumb && !slide.text_preview?.trim() && !(slide.elements ?? []).some(e => e.text?.trim()) && (
+                        <span className="text-[9px] text-slate-400 border border-slate-200 rounded px-1">image-only</span>
+                    )}
                     {isUsed && <span className="text-[9px] text-brand-teal font-medium">Used</span>}
                 </div>
 

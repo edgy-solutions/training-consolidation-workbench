@@ -1,16 +1,13 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { FileText, Image as ImageIcon, Maximize2, Sparkles, Download, Layout } from 'lucide-react';
 import { useAppStore } from '../store';
-import { api, API_URL } from '../api';
+import { api, assetSrc } from '../api';
 import type { SourceSlide } from '../api';
 import clsx from 'clsx';
 import { marked } from 'marked';
 import { SlidePreview } from './SlidePreview';
 import type { LayoutArchetype } from './LayoutContext';
 import { toast } from 'sonner';
-
-// Fixture assets come back as backend-relative paths
-const assetSrc = (url?: string) => (url?.startsWith('/') ? `${API_URL}${url}` : url);
 
 export const SlideInspector: React.FC = () => {
     const activeSlideId = useAppStore(state => state.activeSlideId);

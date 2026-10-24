@@ -3,6 +3,9 @@ import { runtimeEnv } from './runtimeConfig';
 
 export const API_URL = runtimeEnv('VITE_API_URL') || 'http://localhost:8000';
 
+// Fixture assets come back as backend-relative paths
+export const assetSrc = (url?: string) => (url?.startsWith('/') ? `${API_URL}${url}` : url);
+
 export interface ConceptNode {
     name: string;
     domain: string;
@@ -207,7 +210,7 @@ export const api = {
         });
         return res.data;
     },
-    getEmbeddedImagesForSlides: async (slideIds: string[]): Promise<{ images: { filename: string; url: string; size: number }[] }> => {
+    getEmbeddedImagesForSlides: async (slideIds: string[]): Promise<{ images: { filename: string; url: string; size: number; page_number?: number }[] }> => {
         const res = await axios.post(`${API_URL}/source/embedded-images-for-slides`, slideIds);
         return res.data;
     },
