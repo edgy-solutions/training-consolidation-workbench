@@ -96,23 +96,50 @@ function getSimilarityScore(section1: CourseSection, section2: CourseSection): n
     return titleSim * 0.3 + conceptSim * 0.7;
 }
 
+// A section with where it sits: ancestor titles (root = '') and its place in its course's outline (0..1)
+type SectionEntry = { section: CourseSection; groupIdx: number; courseId: string; path: string; position: number };
+
+// Titles of the ancestors, so same-titled siblings can be told apart by what they sit under
+function pathSimilarity(a: string, b: string): number {
+    if (!a && !b) return 1;
+    if (!a || !b) return 0;
+    return getTitleSimilarity(a, b);
+}
+
+// Order candidates for a target: score, then same parent path, then nearer position, then id
+function compareMatches(
+    target: SectionEntry,
+    a: { entry: SectionEntry; score: number },
+    b: { entry: SectionEntry; score: number }
+): number {
+    if (Math.abs(a.score - b.score) > 1e-9) return b.score - a.score;
+    const pathDiff = pathSimilarity(target.path, b.entry.path) - pathSimilarity(target.path, a.entry.path);
+    if (pathDiff !== 0) return pathDiff;
+    const posDiff = Math.abs(target.position - a.entry.position) - Math.abs(target.position - b.entry.position);
+    if (posDiff !== 0) return posDiff;
+    return a.entry.section.id < b.entry.section.id ? -1 : a.entry.section.id > b.entry.section.id ? 1 : 0;
+}
+
+// Candidates in other columns above the threshold, best first
+function rankedMatches(target: SectionEntry, allSections: SectionEntry[], threshold: number) {
+    return allSections
+        .filter(s => s.section.id !== target.section.id && s.groupIdx !== target.groupIdx)
+        .map(s => ({ entry: s, score: getSimilarityScore(target.section, s.section) }))
+        .filter(m => m.score >= threshold)
+        .sort((a, b) => compareMatches(target, a, b));
+}
+
 // Find similar sections across all groups
 function findSimilarSections(
     sectionId: string,
-    allSections: Array<{ section: CourseSection; groupIdx: number; courseId: string }>,
+    allSections: SectionEntry[],
     threshold: number = 0.25
 ): Array<{ sectionId: string; score: number }> {
     const targetSection = allSections.find(s => s.section.id === sectionId);
     if (!targetSection) return [];
 
-    return allSections
-        .filter(s => s.section.id !== sectionId && s.groupIdx !== targetSection.groupIdx)
-        .map(s => ({
-            sectionId: s.section.id,
-            score: getSimilarityScore(targetSection.section, s.section)
-        }))
-        .filter(s => s.score >= threshold)
-        .sort((a, b) => b.score - a.score);
+    return rankedMatches(targetSection, allSections, threshold)
+        .map(m => ({ sectionId: m.entry.section.id, score: m.score }));
 }
 
 export const StagingArea: React.FC = () => {
@@ -140,11 +167,25 @@ export const StagingArea: React.FC = () => {
 
     // Flatten all sections for similarity lookup
     const allSections = useMemo(() => {
-        const result: Array<{ section: CourseSection; groupIdx: number; courseId: string }> = [];
+        const result: SectionEntry[] = [];
         groups.forEach((group, groupIdx) => {
             group.courses.forEach(course => {
-                course.sections.filter(s => !isEmptySection(s)).forEach(section => {
-                    result.push({ section, groupIdx, courseId: course.id });
+                const byId = new Map(course.sections.map(s => [s.id, s]));
+                const pathOf = (s: CourseSection) => {
+                    const titles: string[] = [];
+                    const seen = new Set([s.id]);
+                    let p = s.parent_id ? byId.get(s.parent_id) : undefined;
+                    while (p && !seen.has(p.id)) {
+                        seen.add(p.id);
+                        titles.unshift(p.title);
+                        p = p.parent_id ? byId.get(p.parent_id) : undefined;
+                    }
+                    return titles.join(' / ');
+                };
+                const span = Math.max(1, course.sections.length - 1);
+                course.sections.forEach((section, i) => {
+                    if (isEmptySection(section)) return;
+                    result.push({ section, groupIdx, courseId: course.id, path: pathOf(section), position: i / span });
                 });
             });
         });
@@ -156,15 +197,21 @@ export const StagingArea: React.FC = () => {
         const colorMap = new Map<string, string>();
         const matchPairs: Array<{ id1: string; id2: string; score: number }> = [];
 
-        // Find all cross-column match pairs
-        allSections.forEach(({ section: sec1, groupIdx: g1 }) => {
-            allSections.forEach(({ section: sec2, groupIdx: g2 }) => {
-                // Only match across different columns (BUs)
-                if (g1 >= g2) return; // Avoid duplicates and same-column matches
-
-                const score = getSimilarityScore(sec1, sec2);
-                if (score >= 0.2) {  // Match threshold with hover highlighting
-                    matchPairs.push({ id1: sec1.id, id2: sec2.id, score });
+        // Only mutual best matches share a colour: A's best in B's column is B and B's best in A's column is A,
+        // so same-titled siblings cannot both join one partner
+        const bestIn = new Map<string, SectionEntry>(); // `${sectionId}|${groupIdx}` -> best candidate there
+        allSections.forEach(target => {
+            const best = new Map<number, { entry: SectionEntry; score: number }>();
+            rankedMatches(target, allSections, 0.2).forEach(m => {
+                if (!best.has(m.entry.groupIdx)) best.set(m.entry.groupIdx, m);
+            });
+            best.forEach((m, g) => bestIn.set(`${target.section.id}|${g}`, m.entry));
+        });
+        allSections.forEach(a => {
+            allSections.forEach(b => {
+                if (a.groupIdx >= b.groupIdx) return; // each column pair once
+                if (bestIn.get(`${a.section.id}|${b.groupIdx}`) === b && bestIn.get(`${b.section.id}|${a.groupIdx}`) === a) {
+                    matchPairs.push({ id1: a.section.id, id2: b.section.id, score: getSimilarityScore(a.section, b.section) });
                 }
             });
         });
