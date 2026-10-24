@@ -1,10 +1,11 @@
 import { useAuth } from 'react-oidc-context';
 import { LogOut } from 'lucide-react';
+import { AUTH_DISABLED } from '../auth/config';
 
 export const LogoutButton = () => {
     const auth = useAuth();
 
-    if (!auth.isAuthenticated) {
+    if (AUTH_DISABLED || !auth.isAuthenticated) {
         return null;
     }
 

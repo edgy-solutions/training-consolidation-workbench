@@ -1,11 +1,17 @@
 import { create } from 'zustand';
 import { api } from './api';
 import type { TargetDraftNode } from './api';
+import { AUTH_DISABLED } from './auth/config';
+
+// 'empty': no project could be loaded and auth is off, so show an empty outline.
+// 'error': no project could be loaded with auth on.
+export type ProjectStatus = 'loading' | 'ready' | 'empty' | 'error';
 
 interface AppState {
     discipline: string;
     projectId: string | null;
     structure: TargetDraftNode[];
+    projectStatus: ProjectStatus;
     activeNodeId: string | null; // The node currently being edited/viewed in Right Pane
     activeSlideId: string | null; // The source slide currently being inspected
     newlyAddedNodeId: string | null; // Track the most recently added node for auto-focus
@@ -43,6 +49,7 @@ export const useAppStore = create<AppState>()(
             discipline: 'Mechanical',
             projectId: null,
             structure: [],
+            projectStatus: 'loading',
             activeNodeId: null,
             activeSlideId: null,
             newlyAddedNodeId: null,
@@ -56,7 +63,7 @@ export const useAppStore = create<AppState>()(
             // Staging State
             stagingMode: false,
 
-            setDiscipline: (d) => set({ discipline: d, projectId: null, structure: [] }),
+            setDiscipline: (d) => set({ discipline: d, projectId: null, structure: [], projectStatus: 'loading' }),
             setProjectId: (id) => set({ projectId: id }),
             setActiveNodeId: (id) => set({ activeNodeId: id }),
             setActiveSlideId: (id) => set({ activeSlideId: id }),
@@ -78,9 +85,10 @@ export const useAppStore = create<AppState>()(
                 if (!projectId) return;
                 try {
                     const nodes = await api.getDraftStructure(projectId);
-                    set({ structure: nodes });
+                    set({ structure: nodes, projectStatus: 'ready' });
                 } catch (e) {
                     console.error("Failed to fetch structure", e);
+                    if (get().projectStatus === 'loading') projectLoadFailed(set);
                 }
             },
 
@@ -118,6 +126,7 @@ export const useAppStore = create<AppState>()(
                     }
                 } catch (e) {
                     console.error("Failed to create/load project", e);
+                    projectLoadFailed(set);
                 }
             },
 
@@ -177,6 +186,10 @@ export const useAppStore = create<AppState>()(
         }
     )
 );
+
+function projectLoadFailed(set: (s: Partial<AppState>) => void) {
+    set({ projectStatus: AUTH_DISABLED ? 'empty' : 'error' });
+}
 
 // Keep track of timeouts outside the store to avoid state churn
 const saveTimeouts: Record<string, ReturnType<typeof setTimeout>> = {};

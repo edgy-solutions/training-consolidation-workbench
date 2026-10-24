@@ -1,12 +1,12 @@
 import React from 'react';
 import { useAuth } from 'react-oidc-context';
 import { LogIn } from 'lucide-react';
+import { AUTH_DISABLED } from './config';
 
 export const RequireAuth = ({ children }: { children: React.ReactNode }) => {
     const auth = useAuth();
-    const disableAuth = import.meta.env.VITE_NO_AUTH === 'true';
 
-    if (disableAuth) {
+    if (AUTH_DISABLED) {
         return <>{children}</>;
     }
 
