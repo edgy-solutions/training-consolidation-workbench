@@ -1,0 +1,14 @@
+{
+  "note": "Byte-identical copies of doc-tools' canonical training-workbench contract and fixture. Never edit here; a change comes from doc-tools/lane/tr by packet, with a new commit and new hashes.",
+  "source_repo": "doc-tools",
+  "source_branch": "lane/tr",
+  "source_commit": "e94c92e",
+  "source_commit_note": "Provenance only (doc-tools PR #154); it may be rebased before merge. The file hashes below are the pin.",
+  "contract_version": 2,
+  "files": {
+    "docs/contracts/training-workbench.md": "12468b6d59b4eae69e2b9d4ee352b704bbcd47f5476cfc3c665fd56dc2c1d867",
+    "tests/fixtures/training/golden.json": "88017f941bacb8505b8421bcd201d748efec285a780892d2acb2ca0949eaaae2",
+    "tests/fixtures/training/hydraulics_fixture.pptx": "895392accf240f84d20c095c97384eee337541266ac21b31f9e09d1781597ebc",
+    "tests/fixtures/training/metadata.json": "5c79951cd40374c3e36d6cdc868baf436303e0b542d2da3034aaba01f0958966"
+  }
+}
