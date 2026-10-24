@@ -128,7 +128,7 @@ def test_route_sections(client):
     r = client.get(f"/source/course/{q(COURSE_ID)}/sections").json()
     assert {s["id"] for s in r} == set(n["id"] for n in NEO["nondeterministic"]["sections"]["nodes"])
     s1 = next(s for s in r if s["id"].endswith("_s1"))
-    assert s1["concepts"][0] == "Pascal's law" and set(s1) == {"id", "title", "level", "parent_id", "concepts"}
+    assert s1["concepts"][0] == "Pascal's law" and set(s1) == {"id", "title", "level", "parent_id", "concepts", "slide_count", "concepts_inherited"}
     s0 = next(s for s in r if s["id"].endswith("_s0"))
     assert s0["concepts"]  # empty summary falls back to course concepts
 

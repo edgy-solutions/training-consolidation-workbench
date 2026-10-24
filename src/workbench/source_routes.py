@@ -90,12 +90,14 @@ def _port_course_sections(reader, alignment, course_id: str):
             raw = [c["concept"] for c in s["covers"]]
             disp = alignment.display_names(_distinct(raw))
             concepts = _distinct(disp[n] for n in raw)[:10]
-        if not concepts:
+        inherited = not concepts
+        if inherited:
             concepts = course_concepts
         level = s.get("level")
         out.append({"id": s["id"], "title": s["title"],
                     "level": level if level is not None else 0, "parent_id": s.get("parent_id"),
-                    "concepts": concepts})
+                    "concepts": concepts, "slide_count": len(s.get("slide_ids") or []),
+                    "concepts_inherited": inherited})
     return out
 
 

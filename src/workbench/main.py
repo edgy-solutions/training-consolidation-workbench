@@ -174,6 +174,7 @@ def get_course_sections(course_id: str):
            s.title as title, 
            s.level as level,
            [(p:Section)-[:HAS_SECTION]->(s) | p.id][0] as parent_id,
+           size([(s)-[:HAS_SLIDE]->(x:Slide) | x]) as slide_count,
            // Priority: Property > COVERS > HAS_SLIDE > Empty
            coalesce(s.concept_summary, covered_concepts[0..10], slide_concepts[0..10], []) as concepts
     ORDER BY coalesce(s.start_page, 0), s.id
@@ -194,7 +195,8 @@ def get_course_sections(course_id: str):
     formatted_results = []
     for row in sections:
         concepts = row["concepts"]
-        if not concepts:
+        inherited = not concepts
+        if inherited:
             concepts = course_concepts
             
         formatted_results.append({
@@ -202,7 +204,9 @@ def get_course_sections(course_id: str):
             "title": row["title"],
             "level": row.get("level", 0),
             "parent_id": row.get("parent_id"),
-            "concepts": concepts
+            "concepts": concepts,
+            "slide_count": row.get("slide_count", 0),
+            "concepts_inherited": inherited
         })
         
     return formatted_results

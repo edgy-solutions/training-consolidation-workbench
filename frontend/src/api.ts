@@ -52,6 +52,8 @@ export interface CourseSection {
     title: string;
     level?: number;
     parent_id?: string | null; // HAS_SECTION parent; null for a top-level section
+    slide_count?: number; // Slides under this section; missing on an older API
+    concepts_inherited?: boolean; // True when concepts are the course fallback, not the section's own
     concepts: string[];
 }
 

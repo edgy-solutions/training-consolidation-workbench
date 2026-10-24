@@ -27,6 +27,9 @@ const SIMILARITY_COLORS = [
     'bg-teal-100 border-teal-300',
 ];
 
+// No slides and no concepts of its own: kept in the list, left out of similarity
+const isEmptySection = (s: CourseSection) => (s.slide_count ?? 1) === 0 && s.concepts_inherited === true;
+
 // Indent stops growing after this many steps; deeper rows show a depth number instead
 const MAX_INDENT_STEPS = 3;
 
@@ -140,7 +143,7 @@ export const StagingArea: React.FC = () => {
         const result: Array<{ section: CourseSection; groupIdx: number; courseId: string }> = [];
         groups.forEach((group, groupIdx) => {
             group.courses.forEach(course => {
-                course.sections.forEach(section => {
+                course.sections.filter(s => !isEmptySection(s)).forEach(section => {
                     result.push({ section, groupIdx, courseId: course.id });
                 });
             });
@@ -329,7 +332,7 @@ export const StagingArea: React.FC = () => {
                     const conceptsByBU = grouped.map(g => {
                         const concepts = new Set<string>();
                         g.courses.forEach(c => {
-                            c.sections.forEach(s => {
+                            c.sections.filter(s => !isEmptySection(s)).forEach(s => {
                                 s.concepts?.forEach(concept => concepts.add(concept));
                             });
                         });
@@ -679,6 +682,15 @@ export const StagingArea: React.FC = () => {
                                                                             : "font-medium text-slate-700"
                                                                     )}>
                                                                         {section.title}
+                                                                    {isEmptySection(section) && (
+                                                                        <span
+                                                                            data-testid="empty-badge"
+                                                                            className="ml-1.5 text-[9px] leading-3 font-semibold text-slate-400 border border-slate-200 rounded px-1 align-middle"
+                                                                            title="No slides and no concepts of its own"
+                                                                        >
+                                                                            empty
+                                                                        </span>
+                                                                    )}
                                                                     </p>
                                                                     {/* Concepts */}
                                                                     {section.concepts && section.concepts.length > 0 && (
