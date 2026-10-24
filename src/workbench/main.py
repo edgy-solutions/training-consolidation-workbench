@@ -44,6 +44,13 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
+@app.get("/healthz")
+def healthz():
+    """Liveness and readiness for the chart's probes; touches no store."""
+    return {"status": "ok"}
+
+
 # Initialize Clients
 # In a real app, use dependency injection or lifespan events
 class _LazyClient:
