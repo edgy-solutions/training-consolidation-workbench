@@ -134,14 +134,44 @@ def get_course_slides(course_id: str):
     """
     reader = get_source_reader()
     if reader is not None:
-        return _port_course_slides(reader, course_id)
+        return _port_course_slides(reader, get_alignment_store(reader), course_id)
+    # One query for every slide (same concept normalisation as /source/slide/{id}).
     query = """
     MATCH (c:Course {id: $course_id})-[:HAS_SLIDE]->(s:Slide)
-    RETURN s.id as id, s.number as number, s.text as text
+    OPTIONAL MATCH (s)-[t:TEACHES]->(con:Concept)
+    OPTIONAL MATCH (con)-[:ALIGNS_TO]->(cc:CanonicalConcept)
+    WITH s, coalesce(cc.name, con.name) as display_name, max(t.salience) as salience
+    WITH s, collect(DISTINCT {name: display_name, salience: salience}) as concepts
+    RETURN s.id as id, s.number as number, s.text as text, s.elements as elements, concepts
     ORDER BY s.number
     """
     results = neo4j_client.execute_query(query, {"course_id": course_id})
-    return results
+    # One MinIO listing for the course instead of one per slide.
+    pages = {}
+    prefix = f"{course_id}/generated/"
+    for obj in minio_client.list_objects(BUCKET_NAME, prefix=prefix, recursive=True):
+        name = obj.object_name
+        if "/pages/page_" in name and name.endswith(".png"):
+            pages[name.rsplit("/pages/page_", 1)[1][:-4]] = name
+    out = []
+    for row in results:
+        page_num = row["id"].rsplit("_p", 1)[-1]
+        object_name = pages.get(page_num) or f"{course_id}/generated/pages/page_{page_num}.png"
+        try:
+            elements = json.loads(row["elements"]) if row.get("elements") else []
+        except Exception:
+            elements = []
+        out.append({
+            "id": row["id"],
+            "number": row["number"],
+            "text": row["text"],
+            "s3_url": minio_client.get_presigned_url(BUCKET_NAME, object_name),
+            "text_preview": row["text"] or "",
+            "concepts": [{"name": c["name"], "domain": "General", "salience": c.get("salience")}
+                         for c in row.get("concepts", []) if c and c.get("name")],
+            "elements": elements,
+        })
+    return out
 
 @app.get("/source/course/{course_id}/sections", response_model=List[Dict[str, Any]])
 def get_course_sections(course_id: str):

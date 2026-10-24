@@ -64,9 +64,15 @@ def _port_source_filters(reader):
     }
 
 
-def _port_course_slides(reader, course_id: str):
-    return [{"id": s["id"], "number": s["number"], "text": s["text"]}
-            for s in reader.course_slides(course_id)]
+def _port_course_slides(reader, alignment, course_id: str):
+    """One call, row-ready: the SourceSlide fields plus legacy `number`/`text`."""
+    out = []
+    for s in reader.slides([r["id"] for r in reader.course_slides(course_id)]):
+        d = _slide_model(reader, alignment, s).model_dump()
+        d["number"] = s["number"]
+        d["text"] = s["text"]
+        out.append(d)
+    return out
 
 
 def _course_concepts(reader, alignment, course_id):
@@ -105,6 +111,11 @@ def _port_slide_details(reader, alignment, slide_id: str):
     s = reader.slide(slide_id)
     if s is None:
         raise HTTPException(status_code=404, detail="Slide not found")
+    return _slide_model(reader, alignment, s)
+
+
+def _slide_model(reader, alignment, s):
+    slide_id = s["id"]
     # Legacy parity: slide detail shows every taught concept (no salience cut),
     # with max(salience) per display name.
     kept = [t for t in s["teaches"] if t.get("concept")]

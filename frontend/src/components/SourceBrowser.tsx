@@ -295,6 +295,7 @@ const CourseItem: React.FC<{ course: CourseNode, heatmapData?: Record<string, { 
     const [slides, setSlides] = useState<SourceSlide[]>(preloadedSlides || []);
     const [thumbs, setThumbs] = useState<Record<string, string>>({}); // slide id -> first embedded image
     const [loading, setLoading] = useState(false);
+    const [loadError, setLoadError] = useState(false);
 
     const isSelected = selectedSourceIds.has(course.id);
 
@@ -352,23 +353,25 @@ const CourseItem: React.FC<{ course: CourseNode, heatmapData?: Record<string, { 
         }
     };
 
+    const load = async () => {
+        setLoading(true);
+        setLoadError(false);
+        try {
+            // One call returns row-ready slides (concepts, preview, image url).
+            const rows = await api.getCourseSlides(course.id);
+            setSlides(rows);
+            loadThumbs(rows);
+        } catch (e) {
+            console.error(e);
+            setLoadError(true);
+        } finally {
+            setLoading(false);
+        }
+    };
+
     const toggle = async () => {
         if (!expanded && slides.length === 0) {
-            setLoading(true);
-            try {
-                const refs = await api.getCourseSlides(course.id);
-                // In default view, we need to fetch details. 
-                // Optimization: The search endpoint returns details. 
-                // The default endpoint returns {id, number, text}.
-                // We need to fetch details for drag preview.
-                const details = await Promise.all(refs.map(s => api.getSlideDetails(s.id)));
-                setSlides(details);
-                loadThumbs(details);
-            } catch (e) {
-                console.error(e);
-            } finally {
-                setLoading(false);
-            }
+            await load();
         }
         setExpanded(!expanded);
     };
@@ -405,7 +408,13 @@ const CourseItem: React.FC<{ course: CourseNode, heatmapData?: Record<string, { 
 
             {expanded && (
                 <div className="pl-4 py-1 space-y-2">
-                    {slides.length === 0 && !loading && <div className="text-[10px] text-slate-400 pl-2">No slides found.</div>}
+                    {slides.length === 0 && !loading && loadError && (
+                        <div className="text-[10px] text-slate-400 pl-2">
+                            Couldn't load slides.{' '}
+                            <button className="text-blue-600 hover:underline" onClick={load}>Retry</button>
+                        </div>
+                    )}
+                    {slides.length === 0 && !loading && !loadError && <div className="text-[10px] text-slate-400 pl-2">No slides found.</div>}
                     {slides.map(slide => (
                         <SlideRow key={slide.id} slide={slide} thumb={thumbs[slide.id]} isHighlighted={false} heatmapData={heatmapData} heatmapMode={heatmapMode} searchQuery={searchQuery} />
                     ))}

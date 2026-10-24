@@ -103,7 +103,7 @@ export const api = {
         return res.data;
     },
     getCourseSlides: async (courseId: string) => {
-        const res = await axios.get<{ id: string, number: number, text: string }[]>(`${API_URL}/source/course/${courseId}/slides`);
+        const res = await axios.get<(SourceSlide & { number: number; text: string })[]>(`${API_URL}/source/course/${courseId}/slides`);
         return res.data;
     },
     getCourseSections: async (courseId: string) => {
