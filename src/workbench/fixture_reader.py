@@ -45,10 +45,10 @@ class FixtureReader:
             self._section_slides.setdefault(e["from"], []).append(e["to"])
         self._covers: Dict[str, List[dict]] = {}
         for e in (edges.get("COVERS") or []):
-            self._covers.setdefault(e["from"], []).append({"concept": e["to"], "score": e["score"]})
+            self._covers.setdefault(e["from"], []).append({"concept": e["to"], "score": e.get("score")})
         self._teaches: Dict[str, List[dict]] = {}
         for e in (edges.get("TEACHES") or []):
-            self._teaches.setdefault(e["from"], []).append({"concept": e["to"], "salience": e["salience"]})
+            self._teaches.setdefault(e["from"], []).append({"concept": e["to"], "salience": e.get("salience")})
         self._concepts = [c["name"] for c in ((nd.get("concepts") or {}).get("nodes") or [])]
         # images: golden media keys under /images/ -> bytes from the pptx zip
         keys = [k for k in ((g.get("minio") or {}).get("keys_required") or []) if "/images/" in k]

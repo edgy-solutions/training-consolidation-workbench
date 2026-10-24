@@ -342,7 +342,7 @@ export const SlideInspector: React.FC = () => {
                                             : "bg-teal-50 text-teal-600 border-teal-100"
                                     )}>
                                         <span>{c.name}</span>
-                                        {c.salience !== undefined && (
+                                        {c.salience != null && (
                                             <span className={clsx(
                                                 "font-mono text-[10px] px-1 rounded",
                                                 // Heatmap Mode: Only color red if this specific concept is a match

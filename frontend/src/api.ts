@@ -6,7 +6,7 @@ const API_URL = runtimeEnv('VITE_API_URL') || 'http://localhost:8000';
 export interface ConceptNode {
     name: string;
     domain: string;
-    salience?: number;
+    salience?: number | null; // null until ingest step d writes TEACHES salience
 }
 
 export interface SourceSlide {

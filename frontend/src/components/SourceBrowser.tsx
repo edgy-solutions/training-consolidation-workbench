@@ -500,7 +500,7 @@ const SlideRow: React.FC<{ slide: SourceSlide, isHighlighted: boolean, heatmapDa
                                     : "bg-slate-100 text-slate-500 border-slate-200"
                             )}>
                                 <span className="truncate">{c.name}</span>
-                                {c.salience !== undefined && (
+                                {c.salience != null && (
                                     <span className={clsx(
                                         "font-mono text-[8px]",
                                         // Heatmap Mode: Only color red if this specific concept is a match

@@ -26,6 +26,13 @@ def _distinct(seq):
     return list(dict.fromkeys(seq))
 
 
+def _max_salience(prev, cur):
+    """max() that treats None as unknown: pre-step-d goldens carry salience null on every edge."""
+    if prev is None:
+        return cur
+    return prev if cur is None else max(prev, cur)
+
+
 def _course_tree(courses: List[dict], extra=None) -> List[Dict[str, Any]]:
     tree: Dict[str, Any] = {}
     for c in courses:
@@ -102,8 +109,7 @@ def _port_slide_details(reader, alignment, slide_id: str):
     best: Dict[str, Optional[float]] = {}
     for t in kept:
         n = disp[t["concept"]]
-        prev, cur = best.get(n), t["salience"]
-        best[n] = cur if prev is None else (prev if cur is None else max(prev, cur))
+        best[n] = _max_salience(best.get(n), t["salience"])
     concepts = [ConceptNode(name=n, domain="General", salience=v) for n, v in best.items()]
     try:
         elements = json.loads(s["elements"]) if s.get("elements") else []
@@ -244,7 +250,7 @@ def _port_search_source_tree(reader, alignment, request):
             best: Dict[str, Optional[float]] = {}
             for t in s["teaches"]:
                 n = disp[t["concept"]]
-                best[n] = max(best[n], t["salience"]) if n in best else t["salience"]
+                best[n] = _max_salience(best.get(n), t["salience"])
             out_slides.append({
                 "id": s["id"],
                 "number": s["number"],
