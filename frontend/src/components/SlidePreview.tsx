@@ -51,27 +51,6 @@ function extractImages(node: TiptapNode): Array<{ src: string; alt: string; layo
     return images;
 }
 
-// Helper to extract images from markdown string
-function extractImagesFromMarkdown(markdown: string): Array<{ src: string; alt: string }> {
-    const images: Array<{ src: string; alt: string }> = [];
-    // Match markdown image syntax: ![alt](src)
-    const regex = /!\[([^\]]*)\]\(([^)]+)\)/g;
-    let match;
-    while ((match = regex.exec(markdown)) !== null) {
-        images.push({
-            alt: match[1] || '',
-            src: match[2],
-        });
-    }
-    return images;
-}
-
-// Helper to strip images from markdown, leaving just text
-function stripImagesFromMarkdown(markdown: string): string {
-    // Remove markdown images: ![alt](src)
-    return markdown.replace(/!\[[^\]]*\]\([^)]+\)/g, '').trim();
-}
-
 // Helper to render text paragraphs
 function renderTextContent(node: TiptapNode): React.ReactNode[] {
     const elements: React.ReactNode[] = [];

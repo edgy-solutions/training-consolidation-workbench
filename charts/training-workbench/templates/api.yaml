@@ -1,0 +1,100 @@
+{{- if .Values.api.enabled }}
+{{- $sel := dict "ctx" $ "component" "api" }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "tw.fullname" . }}-api
+  labels:
+    {{- include "tw.labels" . | nindent 4 }}
+    app.kubernetes.io/component: api
+spec:
+  replicas: {{ .Values.api.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "tw.selectorLabels" $sel | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "tw.labels" . | nindent 8 }}
+        app.kubernetes.io/component: api
+    spec:
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+        runAsUser: 10001
+        runAsGroup: 10001
+      containers:
+        - name: api
+          image: {{ include "tw.image" (dict "ctx" $ "values" .Values.api "component" "api") }}
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          ports:
+            - name: http
+              containerPort: 8000
+          env:
+            - name: SOURCE_READER
+              value: {{ .Values.api.sourceReader | quote }}
+            # Read-only root: caches (dspy, nltk, matplotlib) go under the writable /tmp
+            - name: HOME
+              value: /tmp
+            {{- range $k, $v := .Values.api.env }}
+            - name: {{ $k }}
+              value: {{ $v | quote }}
+            {{- end }}
+          {{- with .Values.api.existingSecret }}
+          envFrom:
+            - secretRef:
+                name: {{ . }}
+          {{- end }}
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 20
+          resources:
+            {{- toYaml .Values.api.resources | nindent 12 }}
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "tw.fullname" . }}-api
+  labels:
+    {{- include "tw.labels" . | nindent 4 }}
+    app.kubernetes.io/component: api
+spec:
+  type: {{ .Values.api.service.type }}
+  ports:
+    - name: http
+      port: {{ .Values.api.service.port }}
+      targetPort: http
+  selector:
+    {{- include "tw.selectorLabels" $sel | nindent 4 }}
+{{- end }}

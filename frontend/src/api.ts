@@ -1,6 +1,7 @@
 import axios from 'axios';
+import { runtimeEnv } from './runtimeConfig';
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+const API_URL = runtimeEnv('VITE_API_URL') || 'http://localhost:8000';
 
 export interface ConceptNode {
     name: string;
@@ -68,8 +69,8 @@ export interface RenderEventCallbacks {
 
 // Add interceptor to attach Bearer token
 axios.interceptors.request.use(config => {
-    const authority = import.meta.env.VITE_KEYCLOAK_REALM_URL || "http://localhost:8080/realms/workbench";
-    const clientId = import.meta.env.VITE_KEYCLOAK_CLIENT_ID || "workbench-app";
+    const authority = runtimeEnv('VITE_KEYCLOAK_REALM_URL') || "http://localhost:8080/realms/workbench";
+    const clientId = runtimeEnv('VITE_KEYCLOAK_CLIENT_ID') || "workbench-app";
 
     const storageKey = `oidc.user:${authority}:${clientId}`;
     const oidcStorage = sessionStorage.getItem(storageKey);

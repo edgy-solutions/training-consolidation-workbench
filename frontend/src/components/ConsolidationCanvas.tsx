@@ -1,6 +1,5 @@
 import React, { useEffect, useMemo } from 'react';
 import { Plus, GitMerge, BookOpen, Shield, Wrench, ClipboardCheck } from 'lucide-react';
-import { api } from '../api';
 import { SynthBlock } from './SynthBlock';
 
 interface ConsolidationCanvasProps {
@@ -28,7 +27,7 @@ const SECTION_CONFIG: Record<string, { label: string; icon: React.ElementType; c
     'mandatory_assessment': { label: 'Assessment', icon: ClipboardCheck, color: 'text-green-600' },
 };
 
-export const ConsolidationCanvas: React.FC<ConsolidationCanvasProps> = ({ projectId, setProjectId, discipline, refreshTrigger }) => {
+export const ConsolidationCanvas: React.FC<ConsolidationCanvasProps> = ({ projectId, discipline, refreshTrigger }) => {
     const structure = useAppStore(state => state.structure);
     const projectStatus = useAppStore(state => state.projectStatus);
     const fetchStructure = useAppStore(state => state.fetchStructure);
