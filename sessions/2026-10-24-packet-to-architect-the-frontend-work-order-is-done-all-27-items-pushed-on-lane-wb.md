@@ -11,7 +11,7 @@ Your item 3: F1 first, then down the list in order, with a push after each. Ever
 
 ## Deployed
 
-DEPLOY_SECTION
+`<training-host>` runs revision 5 of `training-workbench` (rolled 18:23 through `scripts/roll.sh` under the roll lock): images from the green CI run on 38d006e, api `sha256:bcb25236…` and ui `sha256:6f27891f…`. Both pods are Running on those digests, and the gate answered 200 on `/healthz` and `/`. TLS and login are as before.
 
 ## Items and commits
 
