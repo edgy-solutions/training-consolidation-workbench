@@ -25,7 +25,7 @@ from src.workbench.models import (
 
 from src.workbench.source_reader import get_source_reader
 from src.workbench.source_routes import (
-    get_alignment_store, _port_source_tree, _port_source_filters, _port_course_slides,
+    get_alignment_store, _course_name, _port_source_tree, _port_source_filters, _port_course_slides,
     _port_course_sections, _port_slide_details, _port_embedded_images,
     _port_embedded_images_for_slides, _port_resolve_image_urls, _port_resolve_image_url,
     _port_search_concepts, _port_slides_by_concept, _port_heatmap, _port_search_source_tree,
@@ -140,8 +140,8 @@ def get_course_slides(course_id: str):
     """
     results = neo4j_client.execute_query(query, {"course_id": course_id})
     title_rows = neo4j_client.execute_query(
-        "MATCH (c:Course {id: $course_id}) RETURN c.title as title", {"course_id": course_id})
-    course_title = title_rows[0]["title"] if title_rows else None
+        "MATCH (c:Course {id: $course_id}) RETURN c.title as title, c.filename as filename", {"course_id": course_id})
+    course_title = _course_name(title_rows[0]) if title_rows else None
     # One MinIO listing for the course instead of one per slide.
     pages = {}
     prefix = f"{course_id}/generated/"
@@ -256,7 +256,7 @@ def get_slide_details(slide_id: str):
     WITH s, coalesce(cc.name, c.name) as display_name, max(t.salience) as salience
     WITH s, collect(DISTINCT {name: display_name, salience: salience}) as concepts
     RETURN s.id as id, s.number as number, s.text as text, s.elements as elements, concepts,
-           [(co:Course)-[:HAS_SLIDE]->(s) | {id: co.id, title: co.title}][0] as course
+           [(co:Course)-[:HAS_SLIDE]->(s) | {id: co.id, title: co.title, filename: co.filename}][0] as course
     """
     results = neo4j_client.execute_query(query, {"id": slide_id})
     
@@ -322,7 +322,7 @@ def get_slide_details(slide_id: str):
         elements=elements,
         number=row.get("number"),
         course_id=(row.get("course") or {}).get("id"),
-        course_title=(row.get("course") or {}).get("title"),
+        course_title=_course_name(row["course"]) if row.get("course") else None,
     )
 
 @app.get("/source/embedded-images/{course_id}")

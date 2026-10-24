@@ -651,7 +651,7 @@ export const StagingArea: React.FC = () => {
                                                 isMaster ? "text-amber-900" : courseIsRelevant ? "text-slate-800" : "text-slate-500"
                                             )}>
                                                 {isMaster && <span className="text-lg">🏆</span>}
-                                                <span title={courseTooltip(course.title, course.id)}>{course.title}</span>
+                                                <span title={courseTooltip(course.title, course.id)}>{course.title?.trim() || <span className="italic text-slate-400">Untitled course</span>}</span>
                                             </h4>
                                             {courseSubtitle(course) && (
                                                 <p className="text-[10px] text-slate-400 truncate" title={courseTooltip(course.title, course.id)}>{courseSubtitle(course)}</p>

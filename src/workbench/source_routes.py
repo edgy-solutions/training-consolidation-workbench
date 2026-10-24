@@ -5,6 +5,7 @@ main.py returns. Legacy bodies stay in main.py and remain the default.
 """
 import json
 from collections import Counter
+from pathlib import PurePosixPath
 from typing import Any, Dict, List, Optional
 
 from fastapi import HTTPException
@@ -38,6 +39,15 @@ def _bu_key(name: Optional[str]) -> str:
     return " ".join((name or "").split()).casefold()
 
 
+def _course_name(c: dict) -> str:
+    """The course's title; a null or blank one falls back to the filename stem, then "Untitled course"."""
+    title = (c.get("title") or "").strip()
+    if title:
+        return title
+    stem = PurePosixPath((c.get("filename") or "").strip().replace("\\", "/")).stem
+    return stem or "Untitled course"
+
+
 def _course_tree(courses: List[dict], extra=None) -> List[Dict[str, Any]]:
     """Groups by business unit, folding case and whitespace so "Pumps" and "pumps " are one
     group; the group shows its most frequent spelling."""
@@ -52,7 +62,7 @@ def _course_tree(courses: List[dict], extra=None) -> List[Dict[str, Any]]:
         spellings[key][bu] += 1
         entry = {
             "id": c["id"],
-            "name": c["title"],
+            "name": _course_name(c),
             "type": "Course",
             "engineering_discipline": c.get("discipline"),
             "filename": c.get("filename"),
@@ -80,7 +90,7 @@ def _port_source_filters(reader):
 
 
 def _course_title(reader, course_id) -> Optional[str]:
-    return next((c["title"] for c in reader.list_courses(None) if c["id"] == course_id), None)
+    return next((_course_name(c) for c in reader.list_courses(None) if c["id"] == course_id), None)
 
 
 def _port_course_slides(reader, alignment, course_id: str):

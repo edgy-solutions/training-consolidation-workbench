@@ -462,7 +462,7 @@ const CourseItem: React.FC<{ course: CourseNode, heatmapData?: Record<string, { 
                 <div className="flex items-center gap-2 flex-1" onClick={toggle}>
                     <FileText size={14} className="opacity-70" />
                     <div className="flex-1 min-w-0">
-                        <div className="truncate">{course.name}</div>
+                        <div className="truncate">{course.name?.trim() || <span className="italic text-slate-400">Untitled course</span>}</div>
                         {courseSubtitle(course) && <div className="text-[10px] text-slate-400 truncate font-normal">{courseSubtitle(course)}</div>}
                     </div>
                     {loading && <span className="animate-spin">⟳</span>}

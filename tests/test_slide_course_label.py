@@ -43,3 +43,14 @@ def test_tree_tells_same_titled_courses_apart(client):
     assert {"dup-title-a.pptx", "dup-title-b.pptx"} <= set(pumps)
     a, b = pumps["dup-title-a.pptx"], pumps["dup-title-b.pptx"]
     assert a["id"] != b["id"] and (a["version"], b["version"]) == ("1.0", "2.0")
+
+
+def test_nameless_course_falls_back_to_filename_stem():
+    from src.workbench.source_routes import _course_name, _course_tree
+    assert _course_name({"title": None, "filename": "decks/Pump Intro.pptx"}) == "Pump Intro"
+    assert _course_name({"title": "  ", "filename": "a.b.pptx"}) == "a.b"
+    assert _course_name({"title": "", "filename": None}) == "Untitled course"
+    assert _course_name({"title": "Real"}) == "Real"
+    tree = _course_tree([{"id": "1", "title": None, "filename": "x.pptx"},
+                         {"id": "2", "title": " ", "filename": ""}])
+    assert [c["name"] for c in tree[0]["children"]] == ["x", "Untitled course"]
