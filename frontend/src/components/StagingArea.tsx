@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useMemo, useRef, useCallback } from 'react';
-import { ArrowRight, Layers, Zap } from 'lucide-react';
+import { ArrowRight, ChevronDown, ChevronRight, Layers, Zap } from 'lucide-react';
 import { api } from '../api';
 import type { CourseSection } from '../api';
 import { useSelectionStore } from '../stores/selectionStore';
@@ -26,6 +26,28 @@ const SIMILARITY_COLORS = [
     'bg-orange-100 border-orange-300',
     'bg-teal-100 border-teal-300',
 ];
+
+// Indent stops growing after this many steps; deeper rows show a depth number instead
+const MAX_INDENT_STEPS = 3;
+
+// Rows to show, in the API's order. A section's subtree is the run of following sections
+// with a greater level; a collapsed section hides that run.
+function visibleSections(sections: CourseSection[], minLevel: number, collapsed: Set<string>) {
+    const rows: Array<{ section: CourseSection; indentLevel: number; hasChildren: boolean }> = [];
+    let hideBelow: number | null = null;
+    sections.forEach((section, i) => {
+        const indentLevel = (section.level ?? minLevel) - minLevel;
+        if (hideBelow !== null) {
+            if (indentLevel > hideBelow) return;
+            hideBelow = null;
+        }
+        const next = sections[i + 1];
+        const hasChildren = !!next && (next.level ?? minLevel) - minLevel > indentLevel;
+        if (hasChildren && collapsed.has(section.id)) hideBelow = indentLevel;
+        rows.push({ section, indentLevel, hasChildren });
+    });
+    return rows;
+}
 
 // Simple word-based title similarity using Jaccard index
 function getTitleSimilarity(title1: string, title2: string): number {
@@ -91,6 +113,8 @@ export const StagingArea: React.FC = () => {
     // New state for similarity features
     const [hoveredSectionId, setHoveredSectionId] = useState<string | null>(null);
     const [highlightedSections, setHighlightedSections] = useState<Set<string>>(new Set());
+    // Section ids whose subtree is folded (local, not persisted)
+    const [collapsedSections, setCollapsedSections] = useState<Set<string>>(new Set());
     const [matchingConcepts, setMatchingConcepts] = useState<Set<string>>(new Set());
 
     // Refs for scroll sync
@@ -574,9 +598,7 @@ export const StagingArea: React.FC = () => {
                                             {course.sections.length === 0 ? (
                                                 <p className="text-xs text-slate-400 italic">No sections found</p>
                                             ) : (
-                                                course.sections.map(section => {
-                                                    // Indent relative to the course's shallowest level (0 = no indent)
-                                                    const indentLevel = (section.level ?? minLevel) - minLevel;
+                                                visibleSections(course.sections, minLevel, collapsedSections).map(({ section, indentLevel, hasChildren }) => {
                                                     const similarityColor = sectionColorMap.get(section.id);
                                                     const isHovered = hoveredSectionId === section.id;
                                                     const isHighlighted = highlightedSections.has(section.id);
@@ -596,13 +618,40 @@ export const StagingArea: React.FC = () => {
                                                                 // Highlighted matching sections in other columns
                                                                 isHighlighted && "ring-2 ring-purple-500 bg-purple-50"
                                                             )}
-                                                            style={{ marginLeft: `${indentLevel * 16}px` }}
+                                                            style={{ marginLeft: `${Math.min(indentLevel, MAX_INDENT_STEPS) * 16}px` }}
                                                             onMouseEnter={() => handleSectionHover(section.id)}
                                                             onMouseLeave={() => handleSectionHover(null)}
                                                             onClick={() => handleSectionClick(section.id)}
                                                             title="Click to scroll to similar sections"
                                                         >
                                                             <div className="flex items-start gap-2">
+                                                                {hasChildren && (
+                                                                    <button
+                                                                        type="button"
+                                                                        data-testid="section-toggle"
+                                                                        className="mt-0.5 flex-shrink-0 text-slate-400 hover:text-slate-700"
+                                                                        title={collapsedSections.has(section.id) ? 'Expand subsections' : 'Collapse subsections'}
+                                                                        onClick={e => {
+                                                                            e.stopPropagation();
+                                                                            setCollapsedSections(prev => {
+                                                                                const next = new Set(prev);
+                                                                                if (!next.delete(section.id)) next.add(section.id);
+                                                                                return next;
+                                                                            });
+                                                                        }}
+                                                                    >
+                                                                        {collapsedSections.has(section.id) ? <ChevronRight size={12} /> : <ChevronDown size={12} />}
+                                                                    </button>
+                                                                )}
+                                                                {indentLevel > MAX_INDENT_STEPS && (
+                                                                    <span
+                                                                        data-testid="depth-badge"
+                                                                        className="mt-0.5 flex-shrink-0 text-[9px] leading-3 font-semibold text-slate-400 border border-slate-200 rounded px-1"
+                                                                        title={`Level ${indentLevel + 1}`}
+                                                                    >
+                                                                        {indentLevel + 1}
+                                                                    </span>
+                                                                )}
                                                                 <ArrowRight
                                                                     size={12}
                                                                     className={clsx(
