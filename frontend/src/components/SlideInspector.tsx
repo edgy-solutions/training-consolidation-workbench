@@ -24,6 +24,8 @@ export const SlideInspector: React.FC = () => {
     const [loading, setLoading] = useState(false);
     const [rendering, setRendering] = useState(false);
     const [copied, setCopied] = useState(false);
+    const [loadError, setLoadError] = useState(false);
+    const [reloadTick, setReloadTick] = useState(0); // Retry bumps this to refetch
     const copyId = () => {
         if (!slide) return;
         navigator.clipboard.writeText(slide.id).then(() => {
@@ -53,16 +55,25 @@ export const SlideInspector: React.FC = () => {
     // Effect for Source Slides
     useEffect(() => {
         if (activeSlideId) {
+            // Drop the previous slide at once, and ignore a response that arrives after a newer click
+            let cancelled = false;
+            setSlide(null);
+            setLoadError(false);
             setLoading(true);
             api.getSlideDetails(activeSlideId)
-                .then(setSlide)
-                .catch(console.error)
-                .finally(() => setLoading(false));
+                .then(s => { if (!cancelled) setSlide(s); })
+                .catch(e => {
+                    console.error(e);
+                    if (!cancelled) setLoadError(true);
+                })
+                .finally(() => { if (!cancelled) setLoading(false); });
+            return () => { cancelled = true; };
         } else if (!activeNodeId) {
             // Only clear if no active node either
             setSlide(null);
+            setLoadError(false);
         }
-    }, [activeSlideId]);
+    }, [activeSlideId, reloadTick]);
 
     // Slides without a page render fall back to their embedded images
     useEffect(() => {
@@ -320,6 +331,16 @@ export const SlideInspector: React.FC = () => {
                 <ImageIcon size={48} className="mb-4 opacity-20" />
                 <p className="font-medium">No Item Selected</p>
                 <p className="text-xs mt-2">Click on a source slide or synthesized block to inspect details.</p>
+            </div>
+        );
+    }
+
+    // Case 3a: the details fetch failed
+    if (loadError && !slide) {
+        return (
+            <div className="h-full flex flex-col items-center justify-center gap-2 text-slate-500 text-xs">
+                <span>Couldn't load this slide.</span>
+                <button className="text-blue-600 hover:underline" onClick={() => setReloadTick(t => t + 1)}>Retry</button>
             </div>
         );
     }
