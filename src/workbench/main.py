@@ -23,6 +23,14 @@ from src.workbench.models import (
     RenderRequest
 )
 
+from src.workbench.source_reader import get_source_reader
+from src.workbench.source_routes import (
+    get_alignment_store, _port_source_tree, _port_source_filters, _port_course_slides,
+    _port_course_sections, _port_slide_details, _port_embedded_images,
+    _port_embedded_images_for_slides, _port_resolve_image_urls, _port_resolve_image_url,
+    _port_search_concepts, _port_slides_by_concept, _port_heatmap, _port_search_source_tree,
+)
+
 BUCKET_NAME = os.getenv("BUCKET_NAME", "training-content")
 
 app = FastAPI(title="Training Consolidation Workbench API")
@@ -38,13 +46,27 @@ app.add_middleware(
 
 # Initialize Clients
 # In a real app, use dependency injection or lifespan events
-neo4j_client = Neo4jClient()
-weaviate_client = WeaviateClient()
-minio_client = MinioClient()
+class _LazyClient:
+    """Builds the wrapped client on first attribute access (weaviate v3 connects in its constructor)."""
+    def __init__(self, factory):
+        object.__setattr__(self, '_factory', factory)
+        object.__setattr__(self, '_inst', None)
+
+    def __getattr__(self, name):
+        inst = object.__getattribute__(self, '_inst')
+        if inst is None:
+            inst = object.__getattribute__(self, '_factory')()
+            object.__setattr__(self, '_inst', inst)
+        return getattr(inst, name)
+
+
+neo4j_client = _LazyClient(Neo4jClient)
+weaviate_client = _LazyClient(WeaviateClient)
+minio_client = _LazyClient(MinioClient)
 # Dagster client - assuming default port or env var
 DAGSTER_HOST = os.getenv("DAGSTER_HOST", "localhost")
 DAGSTER_PORT = int(os.getenv("DAGSTER_PORT", 3000))
-dagster_client = DagsterGraphQLClient(DAGSTER_HOST, port_number=DAGSTER_PORT)
+dagster_client = _LazyClient(lambda: DagsterGraphQLClient(DAGSTER_HOST, port_number=DAGSTER_PORT))
 
 # --- A. The Explorer Module ---
 
@@ -54,6 +76,9 @@ def get_source_tree(engineering_discipline: Optional[str] = None):
     Returns the hierarchy of Business Units -> Courses.
     Optional: Filter by engineering discipline.
     """
+    reader = get_source_reader()
+    if reader is not None:
+        return _port_source_tree(reader, engineering_discipline)
     discipline = engineering_discipline
     if discipline:
         # Convert discipline to title case to match DB values (e.g. "software" -> "Software")
@@ -100,6 +125,9 @@ def get_course_slides(course_id: str):
     """
     Returns slides for a specific course.
     """
+    reader = get_source_reader()
+    if reader is not None:
+        return _port_course_slides(reader, course_id)
     query = """
     MATCH (c:Course {id: $course_id})-[:HAS_SLIDE]->(s:Slide)
     RETURN s.id as id, s.number as number, s.text as text
@@ -114,6 +142,9 @@ def get_course_sections(course_id: str):
     Returns ALL sections (including nested subsections) for a specific course.
     Uses pre-computed concept summaries or COVERS relationships.
     """
+    reader = get_source_reader()
+    if reader is not None:
+        return _port_course_sections(reader, get_alignment_store(reader), course_id)
     query = """
     MATCH (c:Course {id: $course_id})-[:HAS_SECTION*]->(s:Section)
     
@@ -172,6 +203,9 @@ def get_slide_details(slide_id: str):
     """
     Returns metadata + S3 Presigned URL for the slide image.
     """
+    reader = get_source_reader()
+    if reader is not None:
+        return _port_slide_details(reader, get_alignment_store(reader), slide_id)
     # 1. Fetch Metadata and Concepts from Neo4j
     # Normalize concepts via CanonicalConcept to collapse duplicates/synonyms
     query = """
@@ -253,6 +287,9 @@ def get_embedded_images(course_id: str):
     These are diagrams, charts, photos, etc. extracted during ingestion.
     Includes coordinates and canvas size for proper scaling.
     """
+    reader = get_source_reader()
+    if reader is not None:
+        return _port_embedded_images(reader, course_id)
     # List objects in the course's generated folder
     prefix = f"{course_id}/generated/"
     
@@ -337,6 +374,9 @@ def get_embedded_images_for_slides(slide_ids: List[str]):
     Given a list of slide IDs, returns all embedded images from the source courses.
     Slide ID format is {course_id}_p{page_num}.
     """
+    reader = get_source_reader()
+    if reader is not None:
+        return _port_embedded_images_for_slides(reader, slide_ids)
     # Extract course IDs and map them to set of page numbers
     # Structure: { "course_id": {1, 2, 5} }
     course_pages = {}
@@ -380,6 +420,9 @@ def resolve_image_urls(urls: List[str]):
     
     Returns a map of original URL -> fresh presigned URL.
     """
+    reader = get_source_reader()
+    if reader is not None:
+        return _port_resolve_image_urls(reader, urls)
     result = {}
     
     for url in urls:
@@ -437,6 +480,9 @@ def resolve_single_image_url(url: str):
     Resolve a single stable URL to a fresh presigned URL.
     Convenience endpoint for single URL resolution.
     """
+    reader = get_source_reader()
+    if reader is not None:
+        return _port_resolve_image_url(reader, url)
     result = resolve_image_urls([url])
     resolved = result.get("urls", {}).get(url, url)
     return {"original": url, "presigned": resolved}
@@ -446,6 +492,9 @@ def search_concepts(q: str):
     """
     Semantic search for specific topics. Returns list of Slide IDs.
     """
+    reader = get_source_reader()
+    if reader is not None:
+        return _port_search_concepts(reader, q)
     try:
         # Weaviate NearText search
         response = weaviate_client.client.query.get(
@@ -468,6 +517,9 @@ def get_slides_by_concept(name: str):
     """
     Returns all slides linked to this concept.
     """
+    reader = get_source_reader()
+    if reader is not None:
+        return _port_slides_by_concept(reader, name)
     query = """
     MATCH (s:Slide)-[:TEACHES]->(c:Concept {name: $name}) 
     RETURN s.id as id
@@ -480,6 +532,9 @@ def get_source_filters():
     """
     Returns distinct values for faceted filters.
     """
+    reader = get_source_reader()
+    if reader is not None:
+        return _port_source_filters(reader)
     filters = {
         "origins": [],
         "domains": [],
@@ -516,6 +571,9 @@ def get_concept_heatmap(term: str):
         }
     }
     """
+    reader = get_source_reader()
+    if reader is not None:
+        return _port_heatmap(reader, get_alignment_store(reader), term)
     query = """
     WITH toLower($term) as term
     // 1. Find matching concepts (direct & synonyms)
@@ -568,6 +626,9 @@ def search_source_tree(request: SearchRequest):
     Advanced search with faceted filters.
     Returns a pruned tree structure containing only matching nodes.
     """
+    reader = get_source_reader()
+    if reader is not None:
+        return _port_search_source_tree(reader, get_alignment_store(reader), request)
     params = {}
     
     # 1. Semantic Search (if query provided)
@@ -700,6 +761,20 @@ def search_source_tree(request: SearchRequest):
     return list(tree.values())
 
 # --- B. The Builder Module ---
+
+@app.get("/source/fixture-asset/{name}")
+def get_fixture_asset(name: str):
+    """Serves fixture image bytes (pptx media). Only available when SOURCE_READER=fixture."""
+    from fastapi.responses import Response
+    from src.workbench.fixture_reader import FixtureReader
+    reader = get_source_reader()
+    if not isinstance(reader, FixtureReader):
+        raise HTTPException(status_code=404, detail="Not found")
+    asset = reader.asset(name)
+    if asset is None:
+        raise HTTPException(status_code=404, detail="Not found")
+    return Response(content=asset[0], media_type=asset[1])
+
 
 @app.post("/draft/create", response_model=TargetDraftNode)
 def create_draft_project(title: str, current_user: User = Depends(get_current_user)):
