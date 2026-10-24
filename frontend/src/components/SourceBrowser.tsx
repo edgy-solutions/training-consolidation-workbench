@@ -1,6 +1,6 @@
 import React, { useEffect, useLayoutEffect, useRef, useState, useMemo } from 'react';
 import { Search, Folder, ChevronDown, FileText, Image, ChevronRight, CheckCircle2, Filter, X } from 'lucide-react';
-import { api, assetSrc } from '../api';
+import { api, assetSrc, slideLabel } from '../api';
 import type { CourseNode, SourceSlide } from '../api';
 import { useDraggable } from '@dnd-kit/core';
 import { useVirtualizer } from '@tanstack/react-virtual';
@@ -569,7 +569,7 @@ const SlideRow: React.FC<{ slide: SourceSlide, thumb?: string, isHighlighted: bo
             <div className="flex-1 min-w-0 flex flex-col justify-center">
                 <div className="flex items-center justify-between">
                     <span className="text-[10px] font-bold text-slate-700 truncate">
-                        Slide {slide.id.split('_p')[1] || slide.id}
+                        {slideLabel(slide.id, slide.number)}
                     </span>
                     {thumb && !slide.text_preview?.trim() && !(slide.elements ?? []).some(e => e.text?.trim()) && (
                         <span className="text-[9px] text-slate-400 border border-slate-200 rounded px-1">image-only</span>

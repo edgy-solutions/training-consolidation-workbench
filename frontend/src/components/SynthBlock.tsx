@@ -3,7 +3,7 @@ import { useDroppable } from '@dnd-kit/core';
 import { SortableContext, verticalListSortingStrategy } from '@dnd-kit/sortable';
 import { Sparkles, GripVertical, X, MessageSquare, ChevronRight, ChevronDown, LayoutTemplate } from 'lucide-react';
 import clsx from 'clsx';
-import { api } from '../api';
+import { api, slideLabel } from '../api';
 import type { TargetDraftNode } from '../api';
 import { useAppStore } from '../store';
 import { MarkdownEditor } from './MarkdownEditor';
@@ -61,7 +61,7 @@ const SortableSlideThumbnail: React.FC<{ id: string, url?: string, onRemove?: ()
 
             {/* Info */}
             <div className="flex-1 min-w-0">
-                <span className="text-[10px] font-medium text-slate-700 block truncate">Slide {id.split('_p')[1]}</span>
+                <span className="text-[10px] font-medium text-slate-700 block truncate">{slideLabel(id)}</span>
                 <span className="text-[9px] text-slate-400 block truncate">{id}</span>
             </div>
 

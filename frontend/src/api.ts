@@ -5,6 +5,8 @@ export const API_URL = runtimeEnv('VITE_API_URL') || 'http://localhost:8000';
 
 // Fixture assets come back as backend-relative paths
 export const assetSrc = (url?: string) => (url?.startsWith('/') ? `${API_URL}${url}` : url);
+// The deck's own number when the API sent it; else the id's `_pN` suffix; else the id itself.
+export const slideLabel = (id: string, number?: number) => `Slide ${number ?? id.match(/_p(\d+)$/)?.[1] ?? id}`;
 
 export interface ConceptNode {
     name: string;
@@ -18,6 +20,7 @@ export interface SourceSlide {
     text_preview: string;
     concepts: ConceptNode[];
     elements?: { type: string; text: string; metadata?: any }[]; // Structured unstructured elements
+    number?: number; // Position in the deck; sent by the course slide list, not by slide details
 }
 
 export interface TargetDraftNode {
