@@ -35,7 +35,7 @@ export interface TargetDraftNode {
     suggested_source_ids?: string[];
     rationale?: string;
     order?: number;
-    level?: number; // Hierarchy level: 0 = top-level, 1+ = subsections
+    level?: number; // Hierarchy depth; the decks send top-level as 1, so the UI indents relative to each course's shallowest
 }
 
 export interface CourseNode {

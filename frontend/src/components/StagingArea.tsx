@@ -518,6 +518,8 @@ export const StagingArea: React.FC = () => {
                         <div className="flex-1 overflow-y-auto custom-scrollbar p-4 space-y-4">
                             {group.courses.map(course => {
                                 const isMaster = masterCourseId === course.id;
+                                // Levels start at 1 on every deck; the shallowest section in a course is top-level
+                                const minLevel = Math.min(...course.sections.map(s => s.level ?? 1));
                                 const courseHasSharedConcepts = course.sections.some(s =>
                                     s.concepts?.some(c => sharedConcepts.has(c))
                                 );
@@ -573,8 +575,8 @@ export const StagingArea: React.FC = () => {
                                                 <p className="text-xs text-slate-400 italic">No sections found</p>
                                             ) : (
                                                 course.sections.map(section => {
-                                                    // Calculate indentation based on level (0 = no indent, 1+ = indent)
-                                                    const indentLevel = section.level || 0;
+                                                    // Indent relative to the course's shallowest level (0 = no indent)
+                                                    const indentLevel = (section.level ?? minLevel) - minLevel;
                                                     const similarityColor = sectionColorMap.get(section.id);
                                                     const isHovered = hoveredSectionId === section.id;
                                                     const isHighlighted = highlightedSections.has(section.id);
