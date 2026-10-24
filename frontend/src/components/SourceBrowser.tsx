@@ -7,6 +7,7 @@ import { useVirtualizer } from '@tanstack/react-virtual';
 import { useAppStore } from '../store';
 import { useSelectionStore } from '../stores/selectionStore';
 import { SidebarActionPanel } from './SidebarActionPanel';
+import { conceptKey, mergeByCase } from '../conceptCase';
 import clsx from 'clsx';
 
 interface SourceBrowserProps {
@@ -498,6 +499,7 @@ const SlideRow: React.FC<{ slide: SourceSlide, thumb?: string, isHighlighted: bo
     // Heatmap Logic
     const heat = heatmapData ? heatmapData[slide.id] : undefined;
     const intensity = heat?.score || 0;
+    const merged = mergeByCase(slide.concepts || []);
 
     const heatmapClass = useMemo(() => {
         if (!heatmapMode) return "";
@@ -583,7 +585,7 @@ const SlideRow: React.FC<{ slide: SourceSlide, thumb?: string, isHighlighted: bo
 
                 {/* Concepts Tags */}
                 <div className={clsx("flex flex-wrap gap-1 mt-1", heatmapMode && intensity === 0 && "grayscale")}>
-                    {([...(slide.concepts || [])])
+                    {[...merged]
                         .sort((a, b) => (b.salience || 0) - (a.salience || 0))
                         .slice(0, 6)
                         .map((c, i) => (
@@ -591,7 +593,7 @@ const SlideRow: React.FC<{ slide: SourceSlide, thumb?: string, isHighlighted: bo
                                 "text-[9px] px-1.5 py-0.5 rounded truncate max-w-[100px] border flex items-center gap-1",
                                 // Heatmap Logic: Highlight concept tag if it likely matches the search
                                 // Simple heuristic: Check if search query is part of concept name
-                                (heatmapMode && intensity > 0 && searchQuery && c.name.toLowerCase().includes(searchQuery.toLowerCase()))
+                                (heatmapMode && intensity > 0 && searchQuery && conceptKey(c.name).includes(conceptKey(searchQuery)))
                                     ? ((c.salience || 0) > 0.7
                                         ? "bg-red-100 text-red-700 border-red-300 font-medium ring-1 ring-red-200"
                                         : "bg-orange-100 text-orange-700 border-orange-300 font-medium ring-1 ring-orange-200")
@@ -604,7 +606,7 @@ const SlideRow: React.FC<{ slide: SourceSlide, thumb?: string, isHighlighted: bo
                                         // Heatmap Mode: Only color red if this specific concept is a match
                                         // Otherwise default to slate (grayscale parent handles opacity)
                                         heatmapMode && intensity > 0
-                                            ? (searchQuery && c.name.toLowerCase().includes(searchQuery.toLowerCase())
+                                            ? (searchQuery && conceptKey(c.name).includes(conceptKey(searchQuery))
                                                 ? (c.salience > 0.7 ? "text-red-600 font-bold" : "text-orange-500 font-medium") // Match: Red if high, Orange if low
                                                 : "text-slate-500") // Non-Match: Force Slate
                                             : (c.salience > 0.7 ? "text-green-600 font-bold" : "text-slate-400")
@@ -614,9 +616,9 @@ const SlideRow: React.FC<{ slide: SourceSlide, thumb?: string, isHighlighted: bo
                                 )}
                             </span>
                         ))}
-                    {(slide.concepts || []).length > 6 && (
+                    {merged.length > 6 && (
                         <span className="text-[9px] text-slate-400 self-center pl-1">
-                            +{(slide.concepts || []).length - 6}
+                            +{merged.length - 6}
                         </span>
                     )}
                 </div>

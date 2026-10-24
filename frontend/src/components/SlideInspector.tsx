@@ -3,6 +3,7 @@ import { FileText, Copy, Check, Image as ImageIcon, Maximize2, X, ChevronLeft, C
 import { useAppStore } from '../store';
 import { api, assetSrc, slideLabel } from '../api';
 import type { SourceSlide } from '../api';
+import { conceptKey, mergeByCase } from '../conceptCase';
 import clsx from 'clsx';
 import { marked } from 'marked';
 import { SlidePreview } from './SlidePreview';
@@ -455,7 +456,7 @@ export const SlideInspector: React.FC = () => {
                 <div className="mb-6">
                     <h3 className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-2">Detected Concepts</h3>
                     <div className="flex flex-wrap gap-2">
-                        {([...slide.concepts])
+                        {mergeByCase(slide.concepts)
                             .sort((a, b) => (b.salience || 0) - (a.salience || 0))
                             .map((c, i) => {
                                 // Heatmap Logic
@@ -466,7 +467,7 @@ export const SlideInspector: React.FC = () => {
                                     <span key={i} className={clsx(
                                         "text-xs px-2 py-1 rounded-md flex items-center gap-2 border transition-colors",
                                         // Heatmap Logic: Highlight concept tag if it likely matches the search
-                                        (heatmapMode && intensity > 0 && searchQuery && c.name.toLowerCase().includes(searchQuery.toLowerCase()))
+                                        (heatmapMode && intensity > 0 && searchQuery && conceptKey(c.name).includes(conceptKey(searchQuery)))
                                             ? ((c.salience || 0) > 0.7
                                                 ? "bg-red-100 text-red-700 border-red-300 font-medium ring-1 ring-red-200"
                                                 : "bg-orange-100 text-orange-700 border-orange-300 font-medium ring-1 ring-orange-200")
@@ -478,7 +479,7 @@ export const SlideInspector: React.FC = () => {
                                                 "font-mono text-[10px] px-1 rounded",
                                                 // Heatmap Mode: Only color red if this specific concept is a match
                                                 heatmapMode && intensity > 0
-                                                    ? (searchQuery && c.name.toLowerCase().includes(searchQuery.toLowerCase())
+                                                    ? (searchQuery && conceptKey(c.name).includes(conceptKey(searchQuery))
                                                         ? (c.salience > 0.7 ? "text-red-600 font-bold" : "text-orange-500 font-medium")
                                                         : "text-slate-500")
                                                     : (c.salience > 0.7 ? "bg-teal-100 text-teal-700 font-bold border border-teal-200" : "bg-slate-100 text-slate-500 border border-slate-200")
