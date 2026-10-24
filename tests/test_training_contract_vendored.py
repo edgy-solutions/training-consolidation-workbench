@@ -36,3 +36,20 @@ def test_contract_version_matches_golden():
 
 def test_course_id_is_the_deck_ingest_id():
     assert GOLDEN["ingest_id"] == "sha256:" + GOLDEN["fixture"]["deck_sha256"]
+
+
+CASE_DIRS = sorted(p for p in FIXTURE_DIR.iterdir() if (p / "golden.json").is_file())
+
+
+@pytest.mark.parametrize("case_dir", CASE_DIRS, ids=lambda p: p.name)
+def test_case_golden_pins_its_deck_and_sidecar(case_dir):
+    golden = json.loads((case_dir / "golden.json").read_text(encoding="utf-8"))
+    fixture = golden["fixture"]
+    assert golden["contract_version"] == VENDORED["contract_version"]
+    assert golden["ingest_id"] == "sha256:" + fixture["deck_sha256"]
+    assert sha256_of(case_dir / fixture["deck"]) == fixture["deck_sha256"]
+    # empty-no-metadata ships no sidecar: both fields are null.
+    if fixture["metadata"] is None:
+        assert fixture["metadata_sha256"] is None
+    else:
+        assert sha256_of(case_dir / fixture["metadata"]) == fixture["metadata_sha256"]

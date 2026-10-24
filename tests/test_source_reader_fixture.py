@@ -3,6 +3,7 @@
 No stores needed.
 """
 import json
+import shutil
 from pathlib import Path
 from urllib.parse import quote
 
@@ -76,8 +77,13 @@ def test_embedded_images(reader):
 # --- routes ---
 
 @pytest.fixture
-def client(monkeypatch):
+def client(monkeypatch, tmp_path):
+    # The hydraulics deck alone: FIXTURE_DIR also carries tr's case-deck subfolders.
+    for f in FIXTURE_DIR.iterdir():
+        if f.is_file():
+            shutil.copy(f, tmp_path / f.name)
     monkeypatch.setenv("SOURCE_READER", "fixture")
+    monkeypatch.setenv("SOURCE_FIXTURE_DIR", str(tmp_path))
     reset_source_reader_cache()
     from fastapi.testclient import TestClient
     from src.workbench.main import app

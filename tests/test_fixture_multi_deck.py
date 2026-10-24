@@ -24,6 +24,15 @@ def q(s):
     return quote(s, safe="")
 
 
+def _copy_root_deck(dst: Path) -> Path:
+    """The hydraulics deck alone: SRC also carries tr's case-deck subfolders."""
+    dst.mkdir()
+    for f in SRC.iterdir():
+        if f.is_file():
+            shutil.copy(f, dst / f.name)
+    return dst
+
+
 def _make_second(root: Path, golden_text=None, name="second"):
     d = root / name
     d.mkdir()
@@ -37,8 +46,7 @@ def _make_second(root: Path, golden_text=None, name="second"):
 
 @pytest.fixture
 def root(tmp_path):
-    r = tmp_path / "root"
-    shutil.copytree(SRC, r)
+    r = _copy_root_deck(tmp_path / "root")
     _make_second(r)
     return r
 
@@ -54,8 +62,14 @@ def test_loads_multi(multi):
     assert {c["id"] for c in multi.list_courses()} == {ID1, ID2}
 
 
-def test_single_deck_is_plain_reader():
-    assert type(load_fixture_reader(SRC)) is FixtureReader
+def test_single_deck_is_plain_reader(tmp_path):
+    assert type(load_fixture_reader(_copy_root_deck(tmp_path / "one"))) is FixtureReader
+
+
+def test_vendored_case_decks_load_as_one_course_per_deck():
+    # dup-same-bytes-{a,b} are the same deck, so they are one course.
+    shas = {json.loads(g.read_text(encoding="utf-8"))["fixture"]["deck_sha256"] for g in SRC.glob("**/golden.json")}
+    assert len(load_fixture_reader(SRC).list_courses()) == len(shas)
 
 
 def test_missing_dir_raises(tmp_path):
