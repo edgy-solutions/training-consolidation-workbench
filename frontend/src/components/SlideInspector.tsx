@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useRef } from 'react';
-import { FileText, Image as ImageIcon, Maximize2, Sparkles, Download, Layout } from 'lucide-react';
+import { FileText, Image as ImageIcon, Maximize2, X, ChevronLeft, ChevronRight, Sparkles, Download, Layout } from 'lucide-react';
 import { useAppStore } from '../store';
 import { api, assetSrc } from '../api';
 import type { SourceSlide } from '../api';
@@ -29,6 +29,7 @@ export const SlideInspector: React.FC = () => {
     const [embedded, setEmbedded] = useState<{ filename: string; url: string; size: number }[]>([]);
     const [embeddedLoading, setEmbeddedLoading] = useState(false);
     const [embeddedIdx, setEmbeddedIdx] = useState(0);
+    const [lightbox, setLightbox] = useState(false);
 
     // Fetch templates on mount
     useEffect(() => {
@@ -58,6 +59,7 @@ export const SlideInspector: React.FC = () => {
     useEffect(() => {
         setEmbedded([]);
         setEmbeddedIdx(0);
+        setLightbox(false);
         if (!slide || slide.s3_url) {
             setEmbeddedLoading(false);
             return;
@@ -70,6 +72,18 @@ export const SlideInspector: React.FC = () => {
             .finally(() => { if (!cancelled) setEmbeddedLoading(false); });
         return () => { cancelled = true; };
     }, [slide]);
+
+    // Lightbox keys: Escape closes, arrows step through embedded images
+    useEffect(() => {
+        if (!lightbox) return;
+        const onKey = (e: KeyboardEvent) => {
+            if (e.key === 'Escape') setLightbox(false);
+            else if (e.key === 'ArrowLeft') setEmbeddedIdx(i => Math.max(0, i - 1));
+            else if (e.key === 'ArrowRight') setEmbeddedIdx(i => Math.min(embedded.length - 1, i + 1));
+        };
+        window.addEventListener('keydown', onKey);
+        return () => window.removeEventListener('keydown', onKey);
+    }, [lightbox, embedded.length]);
 
     // Effect to scroll active synthesized node into view
     useEffect(() => {
@@ -360,10 +374,58 @@ export const SlideInspector: React.FC = () => {
                         {!embeddedLoading && <span className="mt-1 italic opacity-70">No embedded images on this slide</span>}
                     </div>
                 )}
-                <button className="absolute top-3 right-3 bg-black/50 text-white p-1.5 rounded hover:bg-black/70 transition-colors">
-                    <Maximize2 size={16} />
-                </button>
+                {(slide.s3_url || embedded.length > 0) && (
+                    <button
+                        aria-label="Enlarge image"
+                        onClick={() => setLightbox(true)}
+                        className="absolute top-3 right-3 bg-black/50 text-white p-1.5 rounded hover:bg-black/70 transition-colors"
+                    >
+                        <Maximize2 size={16} />
+                    </button>
+                )}
             </div>
+
+            {lightbox && (
+                <div
+                    className="fixed inset-0 z-[200] bg-black/85 flex items-center justify-center"
+                    onClick={() => setLightbox(false)}
+                >
+                    <img
+                        src={slide.s3_url || assetSrc(embedded[embeddedIdx]?.url)}
+                        className="max-w-[90vw] max-h-[90vh] object-contain"
+                        alt="Slide enlarged"
+                        data-testid="lightbox-image"
+                        onClick={e => e.stopPropagation()}
+                    />
+                    <button
+                        aria-label="Close"
+                        onClick={() => setLightbox(false)}
+                        className="absolute top-4 right-4 text-white bg-black/50 p-2 rounded hover:bg-black/70"
+                    >
+                        <X size={20} />
+                    </button>
+                    {!slide.s3_url && embedded.length > 1 && (
+                        <>
+                            <button
+                                aria-label="Previous image"
+                                disabled={embeddedIdx === 0}
+                                onClick={e => { e.stopPropagation(); setEmbeddedIdx(i => Math.max(0, i - 1)); }}
+                                className="absolute left-4 top-1/2 -translate-y-1/2 text-white bg-black/50 p-2 rounded hover:bg-black/70 disabled:opacity-30"
+                            >
+                                <ChevronLeft size={24} />
+                            </button>
+                            <button
+                                aria-label="Next image"
+                                disabled={embeddedIdx === embedded.length - 1}
+                                onClick={e => { e.stopPropagation(); setEmbeddedIdx(i => Math.min(embedded.length - 1, i + 1)); }}
+                                className="absolute right-4 top-1/2 -translate-y-1/2 text-white bg-black/50 p-2 rounded hover:bg-black/70 disabled:opacity-30"
+                            >
+                                <ChevronRight size={24} />
+                            </button>
+                        </>
+                    )}
+                </div>
+            )}
 
             {/* Text & Metadata (Bottom Half) */}
             <div className="flex-1 overflow-y-auto p-4">
