@@ -1,13 +1,16 @@
 import React, { useEffect, useState, useRef } from 'react';
-import { FileText, Image as ImageIcon, Maximize2, XCircle, Sparkles, Download, Layout } from 'lucide-react';
+import { FileText, Image as ImageIcon, Maximize2, Sparkles, Download, Layout } from 'lucide-react';
 import { useAppStore } from '../store';
-import { api } from '../api';
+import { api, API_URL } from '../api';
 import type { SourceSlide } from '../api';
 import clsx from 'clsx';
 import { marked } from 'marked';
 import { SlidePreview } from './SlidePreview';
 import type { LayoutArchetype } from './LayoutContext';
 import { toast } from 'sonner';
+
+// Fixture assets come back as backend-relative paths
+const assetSrc = (url?: string) => (url?.startsWith('/') ? `${API_URL}${url}` : url);
 
 export const SlideInspector: React.FC = () => {
     const activeSlideId = useAppStore(state => state.activeSlideId);
@@ -26,6 +29,9 @@ export const SlideInspector: React.FC = () => {
     const [templates, setTemplates] = useState<string[]>(["standard"]);
     const [selectedTemplate, setSelectedTemplate] = useState<string>("standard");
     const [inspectorViewMode, setInspectorViewMode] = useState<'course' | 'spatial'>('spatial');
+    const [embedded, setEmbedded] = useState<{ filename: string; url: string; size: number }[]>([]);
+    const [embeddedLoading, setEmbeddedLoading] = useState(false);
+    const [embeddedIdx, setEmbeddedIdx] = useState(0);
 
     // Fetch templates on mount
     useEffect(() => {
@@ -50,6 +56,23 @@ export const SlideInspector: React.FC = () => {
             setSlide(null);
         }
     }, [activeSlideId]);
+
+    // Slides without a page render fall back to their embedded images
+    useEffect(() => {
+        setEmbedded([]);
+        setEmbeddedIdx(0);
+        if (!slide || slide.s3_url) {
+            setEmbeddedLoading(false);
+            return;
+        }
+        let cancelled = false;
+        setEmbeddedLoading(true);
+        api.getEmbeddedImagesForSlides([slide.id])
+            .then(res => { if (!cancelled) setEmbedded(res.images || []); })
+            .catch(console.error)
+            .finally(() => { if (!cancelled) setEmbeddedLoading(false); });
+        return () => { cancelled = true; };
+    }, [slide]);
 
     // Effect to scroll active synthesized node into view
     useEffect(() => {
@@ -307,10 +330,34 @@ export const SlideInspector: React.FC = () => {
             <div className="flex-1 bg-slate-100 relative overflow-hidden flex items-center justify-center border-b border-slate-200 min-h-[40%]">
                 {slide.s3_url ? (
                     <img src={slide.s3_url} className="max-w-full max-h-full object-contain shadow-lg" alt="Slide Full" />
+                ) : embedded.length > 0 ? (
+                    <>
+                        <img src={assetSrc(embedded[embeddedIdx]?.url)} className="max-w-full max-h-full object-contain shadow-lg" alt="Embedded" />
+                        <span className="absolute top-3 left-3 text-[10px] text-slate-500 bg-white/80 rounded px-1.5 py-0.5">
+                            Page render pending · embedded image {embeddedIdx + 1} of {embedded.length}
+                        </span>
+                        {embedded.length > 1 && (
+                            <div className="absolute bottom-2 left-2 right-2 flex gap-1.5 justify-center overflow-x-auto">
+                                {embedded.map((img, i) => (
+                                    <button
+                                        key={img.url}
+                                        onClick={() => setEmbeddedIdx(i)}
+                                        className={clsx(
+                                            "h-10 w-14 flex-shrink-0 rounded border-2 bg-white overflow-hidden",
+                                            i === embeddedIdx ? "border-teal-600" : "border-slate-300 opacity-70 hover:opacity-100"
+                                        )}
+                                    >
+                                        <img src={assetSrc(img.url)} className="w-full h-full object-cover" alt={`Embedded ${i + 1}`} />
+                                    </button>
+                                ))}
+                            </div>
+                        )}
+                    </>
                 ) : (
                     <div className="text-slate-400 text-xs flex flex-col items-center">
-                        <XCircle size={24} className="mb-2" />
-                        No Image Available
+                        <ImageIcon size={24} className="mb-2 opacity-40" />
+                        Page render pending
+                        {!embeddedLoading && <span className="mt-1 italic opacity-70">No embedded images on this slide</span>}
                     </div>
                 )}
                 <button className="absolute top-3 right-3 bg-black/50 text-white p-1.5 rounded hover:bg-black/70 transition-colors">

@@ -1,7 +1,7 @@
 import axios from 'axios';
 import { runtimeEnv } from './runtimeConfig';
 
-const API_URL = runtimeEnv('VITE_API_URL') || 'http://localhost:8000';
+export const API_URL = runtimeEnv('VITE_API_URL') || 'http://localhost:8000';
 
 export interface ConceptNode {
     name: string;
