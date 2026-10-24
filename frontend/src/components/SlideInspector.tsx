@@ -522,7 +522,7 @@ export const SlideInspector: React.FC = () => {
                                 </div>
                             ))
                         ) : (
-                            slide.text_preview || <span className="italic opacity-50">No text content extracted.</span>
+                            slide.text_preview?.trim() || <span className="italic opacity-50">No text content extracted.</span>
                         )}
                     </div>
                 </div>
