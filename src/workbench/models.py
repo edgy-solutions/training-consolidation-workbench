@@ -93,7 +93,7 @@ class SkeletonRequest(BaseModel):
 class RenderRequest(BaseModel):
     project_id: str
     format: str = "pptx" # "pptx" or "typ"
-    template_name: Optional[str] = "standard"
+    template_name: Optional[str] = "standin"
 
 class ProjectTreeResponse(BaseModel):
     """Full project tree structure with all nodes"""

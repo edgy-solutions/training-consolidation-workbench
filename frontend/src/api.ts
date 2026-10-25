@@ -194,7 +194,7 @@ export const api = {
         });
         return res.data;
     },
-    triggerRender: async (projectId: string, format: string = "pptx", templateName: string = "standard"): Promise<TriggerRenderResponse> => {
+    triggerRender: async (projectId: string, format: string = "pptx", templateName: string = "standin"): Promise<TriggerRenderResponse> => {
         const res = await axios.post<TriggerRenderResponse>(`${API_URL}/render/trigger`, { project_id: projectId, format, template_name: templateName });
         return res.data;
     },

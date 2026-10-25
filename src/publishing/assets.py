@@ -1,7 +1,7 @@
 import os
 import json
-import yaml
 import tempfile
+from pathlib import Path
 from dagster import asset, Config, DynamicPartitionsDefinition, AssetExecutionContext
 from src.storage.dagster_resources import MinioResource, Neo4jResource
 
@@ -10,10 +10,50 @@ published_files_partition = DynamicPartitionsDefinition(name="published_files")
 
 class RenderConfig(Config):
     project_id: str
-    template_name: str = "master_engineering" # Default to a valid yaml config name
+    template_name: str = "standin"
 
 from src.publishing.typst_generator import generate_typst_document
-from src.publishing.pptx_generator import PptxGenerator
+from src.publishing.course import GraphLookup, MinioImageResolver, build_course
+from src.publishing.deck_export import DEFAULT_MAPPING, export_deck, load_mapping
+
+TEMPLATE_BUCKET = "cib-sources"
+
+COURSE_NODES_QUERY = """
+MATCH (p:Project {id: $project_id})-[:HAS_CHILD*]->(n:TargetNode)
+MATCH (parent)-[:HAS_CHILD]->(n)
+OPTIONAL MATCH (n)-[:DERIVED_FROM]->(s:Slide)
+RETURN n.id AS id, parent.id AS parent_id, n.title AS title, n.order AS order,
+       n.content_markdown AS content_markdown, n.key_concepts AS key_concepts,
+       coalesce(n.is_unassigned, false) AS is_unassigned,
+       collect(DISTINCT s.id) AS source_refs
+"""
+
+
+def fetch_course_nodes(neo4j_client, project_id):
+    return [dict(row) for row in neo4j_client.execute_query(COURSE_NODES_QUERY, {"project_id": project_id})]
+
+
+def _download(minio_client, key, dest):
+    obj = minio_client.get_object(TEMPLATE_BUCKET, key)
+    try:
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_bytes(obj.read())
+    finally:
+        obj.close()
+        obj.release_conn()
+
+
+def load_template_mapping(minio_client, name, temp_dir):
+    """The mapping file for a template name: the stand-in from the repo, any other from cib-sources."""
+    if name == "standin":
+        return DEFAULT_MAPPING
+    base = f"templates/{name}/"
+    local = Path(temp_dir) / "template" / name
+    _download(minio_client, base + "deck-template.yaml", local / "deck-template.yaml")
+    mapping = load_mapping(local / "deck-template.yaml")
+    if mapping.template:
+        _download(minio_client, base + mapping.template, local / mapping.template)
+    return local / "deck-template.yaml"
 
 @asset(partitions_def=published_files_partition)
 def rendered_course_file(context: AssetExecutionContext, config: RenderConfig, minio: MinioResource, neo4j: Neo4jResource):
@@ -63,57 +103,6 @@ def rendered_course_file(context: AssetExecutionContext, config: RenderConfig, m
     with tempfile.TemporaryDirectory() as temp_dir:
         local_path = os.path.join(temp_dir, filename)
         
-        # Determine Template Logic
-        selected_template = config.template_name
-        
-        # Load YAML Configuration from MinIO
-        yaml_config = {}
-        template_pptx_path = None
-        
-        # Define bucket for templates
-        SOURCE_BUCKET = "cib-sources"
-        
-        try:
-            # 1. Download YAML Config
-            # e.g. templates/master_engineering.yaml
-            yaml_key = f"templates/{selected_template}.yaml"
-            
-            # Check if exists (or just try to get it)
-            try:
-                obj = minio_client.get_object(SOURCE_BUCKET, yaml_key)
-                yaml_content = obj.read()
-                yaml_config = yaml.safe_load(yaml_content) or {}
-                context.log.info(f"Loaded configuration from {yaml_key}")
-            except Exception as e:
-                # If .yaml not found, check if it was .yml
-                yaml_key = f"templates/{selected_template}.yml"
-                try:
-                    obj = minio_client.get_object(SOURCE_BUCKET, yaml_key)
-                    yaml_content = obj.read()
-                    yaml_config = yaml.safe_load(yaml_content) or {}
-                    context.log.info(f"Loaded configuration from {yaml_key}")
-                except:
-                    context.log.warning(f"Configuration {selected_template}.yaml not found. Using defaults.")
-            
-            # 2. Download Referenced PPTX Template
-            # Config should have 'template_path': "templates/Training Template.pptx"
-            pptx_key = yaml_config.get("template_path")
-            
-            if pptx_key:
-                try:
-                    pptx_obj = minio_client.get_object(SOURCE_BUCKET, pptx_key)
-                    template_pptx_path = os.path.join(temp_dir, "base_template.pptx")
-                    with open(template_pptx_path, "wb") as f:
-                        for chunk in pptx_obj.stream(32*1024):
-                            f.write(chunk)
-                    context.log.info(f"Downloaded base template from {pptx_key}")
-                except Exception as e:
-                     context.log.error(f"Failed to download referenced template {pptx_key}: {e}")
-            
-        except Exception as outer_e:
-            context.log.error(f"Template loading process failed: {outer_e}")
-
-
         if filename.lower().endswith(".typ"):
              # Generate Typst source
             typst_content = generate_typst_document(project_title, nodes)
@@ -121,10 +110,15 @@ def rendered_course_file(context: AssetExecutionContext, config: RenderConfig, m
                 f.write(typst_content)
                 
         elif filename.lower().endswith(".pptx"):
-            # Generate PPTX using Class
-            generator = PptxGenerator(config=yaml_config, template_file_path=template_pptx_path)
-            generator.generate(project_title, nodes, local_path)
-            
+            mapping_path = load_template_mapping(minio_client, config.template_name, temp_dir)
+            course = build_course(
+                {"id": project_id, "title": project_title},
+                fetch_course_nodes(neo4j_client, project_id),
+                GraphLookup(neo4j_client),
+            )
+            resolver = MinioImageResolver(minio_client, os.getenv("BUCKET_NAME", "processing-artifacts"))
+            export_deck(course, mapping_path, local_path, resolver)
+
         else:
             # Default/Fallback
             with open(local_path, "w", encoding="utf-8") as f:

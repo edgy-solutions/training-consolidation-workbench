@@ -34,8 +34,8 @@ export const SlideInspector: React.FC = () => {
         }).catch(console.error);
     };
     const [renderFormat, setRenderFormat] = useState<"pptx" | "typ">("pptx");
-    const [templates, setTemplates] = useState<string[]>(["standard"]);
-    const [selectedTemplate, setSelectedTemplate] = useState<string>("standard");
+    const [templates, setTemplates] = useState<string[]>(["standin"]);
+    const [selectedTemplate, setSelectedTemplate] = useState<string>("standin");
     const [inspectorViewMode, setInspectorViewMode] = useState<'course' | 'spatial'>('spatial');
     const [embedded, setEmbedded] = useState<{ filename: string; url: string; size: number }[]>([]);
     const [embeddedLoading, setEmbeddedLoading] = useState(false);
@@ -293,7 +293,7 @@ export const SlideInspector: React.FC = () => {
                             title="Select Template"
                         >
                             {templates.map(t => (
-                                <option key={t} value={t}>{t}</option>
+                                <option key={t} value={t}>{t === "standin" ? "Stand-in" : t}</option>
                             ))}
                         </select>
 

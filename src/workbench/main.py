@@ -1482,32 +1482,17 @@ def reject_suggested_node(node_id: str, current_user: User = Depends(get_current
 @app.get("/render/templates")
 def list_templates():
     """
-    Lists available Template Configs from MinIO (cib-sources/templates).
-    Returns list of names (e.g. 'master_engineering') for .yaml files.
+    Lists the deck templates: "standin" plus every templates/<name>/deck-template.yaml in cib-sources.
     """
+    names = {"standin"}
     try:
-        # Assuming buckets are defined in assets or env
-        BUCKET_NAME = "cib-sources" 
-        prefix = "templates/"
-        
-        objects = minio_client.list_objects(BUCKET_NAME, prefix=prefix, recursive=True)
-        
-        templates = []
-        for obj in objects:
-            print(f"DEBUG: Found object {obj.object_name}")
-            if obj.object_name.endswith(".yaml") or obj.object_name.endswith(".yml"):
-                # Clean name: remove prefix and extension
-                name = obj.object_name.replace(prefix, "").rsplit('.', 1)[0]
-                templates.append(name)
-                
-        # Always include standard
-        if "standard" not in templates:
-            templates.insert(0, "standard")
-            
-        return {"templates": sorted(templates)}
+        for obj in minio_client.list_objects("cib-sources", prefix="templates/", recursive=True):
+            parts = obj.object_name.split("/")
+            if len(parts) == 3 and parts[2] == "deck-template.yaml":
+                names.add(parts[1])
     except Exception as e:
         print(f"Error listing templates: {e}")
-        return {"templates": ["standard"]}
+    return {"templates": ["standin"] + sorted(names - {"standin"})}
 
 @app.post("/render/trigger")
 def trigger_render(request: RenderRequest, background_tasks: BackgroundTasks, current_user: User = Depends(get_current_user)):
@@ -1601,7 +1586,7 @@ def trigger_render(request: RenderRequest, background_tasks: BackgroundTasks, cu
                 "rendered_course_file": {
                     "config": {
                         "project_id": request.project_id,
-                        "template_name": request.template_name
+                        "template_name": request.template_name or "standin"
                     }
                 }
             }

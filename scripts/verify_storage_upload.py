@@ -13,25 +13,16 @@ def main():
     bucket = "cib-sources"
     minio.ensure_bucket(bucket)
 
-    # 1. Upload YAML
-    yaml_local = "config/templates/master_engineering.yaml"
-    yaml_key = "templates/master_engineering.yaml"
-    
-    if os.path.exists(yaml_local):
-        minio.upload_file(bucket, yaml_key, yaml_local)
-        print(f"Uploaded {yaml_local} to {bucket}/{yaml_key}")
-    else:
-        print(f"Error: {yaml_local} not found")
-
-    # 2. Upload PPTX
-    pptx_local = "test_docs/course_b_git_workflows.pptx"
-    pptx_key = "templates/Training Template.pptx"
-    
-    if os.path.exists(pptx_local):
-        minio.upload_file(bucket, pptx_key, pptx_local)
-        print(f"Uploaded {pptx_local} to {bucket}/{pptx_key}")
-    else:
-        print(f"Error: {pptx_local} not found")
+    # Upload the stand-in template (mapping + pptx) under templates/standin/
+    folder = "tests/fixtures/templates/standin"
+    for name in ("deck-template.yaml", "standin.pptx"):
+        local = f"{folder}/{name}"
+        key = f"templates/standin/{name}"
+        if os.path.exists(local):
+            minio.upload_file(bucket, key, local)
+            print(f"Uploaded {local} to {bucket}/{key}")
+        else:
+            print(f"Error: {local} not found")
 
 if __name__ == "__main__":
     main()
