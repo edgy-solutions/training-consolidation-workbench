@@ -1,5 +1,6 @@
 import axios from 'axios';
 import { runtimeEnv } from './runtimeConfig';
+import { LOGIN_CONFIGURED, OIDC_AUTHORITY, OIDC_CLIENT_ID } from './auth/config';
 
 export const API_URL = runtimeEnv('VITE_API_URL') || 'http://localhost:8000';
 
@@ -89,10 +90,9 @@ export interface RenderEventCallbacks {
 
 // Add interceptor to attach Bearer token
 axios.interceptors.request.use(config => {
-    const authority = runtimeEnv('VITE_KEYCLOAK_REALM_URL') || "http://localhost:8080/realms/workbench";
-    const clientId = runtimeEnv('VITE_KEYCLOAK_CLIENT_ID') || "workbench-app";
+    if (!LOGIN_CONFIGURED) return config;
 
-    const storageKey = `oidc.user:${authority}:${clientId}`;
+    const storageKey = `oidc.user:${OIDC_AUTHORITY}:${OIDC_CLIENT_ID}`;
     const oidcStorage = sessionStorage.getItem(storageKey);
     if (oidcStorage) {
         const user = JSON.parse(oidcStorage);
