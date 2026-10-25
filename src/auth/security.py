@@ -12,14 +12,29 @@ KEYCLOAK_URL = os.getenv("KEYCLOAK_REALM_URL", "http://localhost:8080/realms/wor
 NEO4J_URI = os.getenv("NEO4J_URI", "bolt://localhost:7687")
 NEO4J_USER = os.getenv("NEO4J_USER", "neo4j")
 NEO4J_PASSWORD = os.getenv("NEO4J_PASSWORD", "password")
+# The fleet's identity claim. Users (and so draft ownership) are keyed on it, never on `sub`:
+# a brokered and a local login of one person have different `sub` values.
+AUTHZ_CLAIM = os.getenv("AUTHZ_CLAIM", "authz_id")
 
 # OAuth2 Scheme
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl=f"{KEYCLOAK_URL}/protocol/openid-connect/token")
 
 class User(BaseModel):
     id: str
-    email: str
+    email: Optional[str] = None
     roles: List[str] = []
+
+def user_from_claims(payload: dict) -> User:
+    """The User a verified token names: id is the AUTHZ_CLAIM claim, with no fallback to `sub`."""
+    user_id = payload.get(AUTHZ_CLAIM)
+    if not user_id:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=f"Token carries no {AUTHZ_CLAIM} claim",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    roles = (payload.get("realm_access") or {}).get("roles", [])
+    return User(id=user_id, email=payload.get("email"), roles=roles)
 
 def get_db_driver():
     return GraphDatabase.driver(NEO4J_URI, auth=(NEO4J_USER, NEO4J_PASSWORD))
@@ -44,28 +59,16 @@ def get_current_user(token: str = Depends(oauth2_scheme)) -> User:
             audience="account", # Default audience for Keycloak, adjust if needed
             options={"verify_aud": False} # Relax audience check for now if client ID varies
         )
-        print(f"DEBUG: Token decoded successfully. User: {payload.get('sub')}")
-        
-        user_id = payload.get("sub")
-        email = payload.get("email")
-        realm_access = payload.get("realm_access", {})
-        roles = realm_access.get("roles", [])
-        
-        if not user_id or not email:
-            print("DEBUG: Missing user_id or email in payload")
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid token payload",
-                headers={"WWW-Authenticate": "Bearer"},
-            )
-            
-        user = User(id=user_id, email=email, roles=roles)
-        
+        user = user_from_claims(payload)
+        print(f"DEBUG: Token decoded successfully. User: {user.id}")
+
         # 2. Sync User to Neo4j
         sync_user_to_neo4j(user)
         
         return user
         
+    except HTTPException:
+        raise
     except jwt.ExpiredSignatureError:
         print("DEBUG: Token Expired")
         raise HTTPException(
