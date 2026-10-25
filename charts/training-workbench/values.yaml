@@ -18,7 +18,8 @@ api:
   #   direct   Neo4j, Weaviate and MinIO directly (the interim, until ADR-0060)
   sourceReader: fixture
   # Extra plain env, e.g. NEO4J_URI, NEO4J_USER, WEAVIATE_URL, MINIO_ENDPOINT, BUCKET_NAME,
-  # OLLAMA_BASE_URL, OLLAMA_MODEL, KEYCLOAK_REALM_URL, DAGSTER_HOST.
+  # OLLAMA_BASE_URL, OLLAMA_MODEL, KEYCLOAK_REALM_URL, DAGSTER_HOST, WB_STORE_WRITES ("on" lets
+  # /draft, /curriculum, /project, /synthesis write to Neo4j; held otherwise).
   env: {}
   # Name of an existing Secret loaded whole with envFrom (NEO4J_PASSWORD, MINIO_ACCESS_KEY,
   # MINIO_SECRET_KEY, ...). The chart never creates secrets.

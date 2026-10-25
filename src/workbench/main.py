@@ -827,7 +827,14 @@ def get_fixture_asset(name: str):
     return Response(content=asset[0], media_type=asset[1])
 
 
-@app.post("/draft/create", response_model=TargetDraftNode)
+# The api holds the shared Neo4j admin credential; these routes add edges onto the platform's Slide nodes,
+# so they are held unless enabled (ADR-0060 section 4.3 moves those edges into the workbench's own records).
+def require_store_writes():
+    if os.getenv("WB_STORE_WRITES", "").strip().lower() != "on":
+        raise HTTPException(status_code=403, detail="Writes to the shared graph are held (WB_STORE_WRITES is not on).")
+
+
+@app.post("/draft/create", response_model=TargetDraftNode, dependencies=[Depends(require_store_writes)])
 def create_draft_project(title: str, current_user: User = Depends(get_current_user)):
     """
     Initializes a new empty consolidation project linked to the current user.
@@ -891,7 +898,7 @@ def list_user_projects(current_user: User = Depends(get_current_user)):
         ))
     return projects
 
-@app.post("/draft/node/add", response_model=TargetDraftNode)
+@app.post("/draft/node/add", response_model=TargetDraftNode, dependencies=[Depends(require_store_writes)])
 def add_draft_node(parent_id: str, title: str):
     """
     Adds a new Section/Module to the new outline.
@@ -928,7 +935,7 @@ def add_draft_node(parent_id: str, title: str):
         section_type=row.get("section_type", "technical")
     )
 
-@app.put("/draft/node/map")
+@app.put("/draft/node/map", dependencies=[Depends(require_store_writes)])
 def map_slides_to_node(node_id: str, slide_ids: List[str]):
     """
     Links "Source Slides" to a "Target Node" (Drag & Drop action).
@@ -995,7 +1002,7 @@ def map_slides_to_node(node_id: str, slide_ids: List[str]):
     neo4j_client.execute_query(query, {"node_id": node_id, "slide_ids": slide_ids, "layout": new_layout})
     return {"status": "success", "mapped_slides": len(slide_ids), "auto_layout": new_layout}
 
-@app.put("/draft/node/content")
+@app.put("/draft/node/content", dependencies=[Depends(require_store_writes)])
 def update_node_content(node_id: str, request: dict = Body(...)):
     """
     Updates the content_markdown property of a TargetNode.
@@ -1015,7 +1022,7 @@ def update_node_content(node_id: str, request: dict = Body(...)):
     
     return {"status": "success", "node_id": node_id}
 
-@app.put("/draft/node/layout")
+@app.put("/draft/node/layout", dependencies=[Depends(require_store_writes)])
 def update_node_layout(node_id: str, request: dict = Body(...)):
     """
     Updates the target_layout property of a TargetNode.
@@ -1035,7 +1042,7 @@ def update_node_layout(node_id: str, request: dict = Body(...)):
     
     return {"status": "success", "node_id": node_id, "layout": target_layout}
 
-@app.put("/draft/node/title")
+@app.put("/draft/node/title", dependencies=[Depends(require_store_writes)])
 def update_node_title(node_id: str, request: dict = Body(...)):
     """
     Updates the title of a TargetNode.
@@ -1154,7 +1161,7 @@ def get_draft_structure(project_id: str):
 from fastapi import BackgroundTasks
 from src.services.synthesis_service import SynthesisService
 
-@app.post("/synthesis/trigger")
+@app.post("/synthesis/trigger", dependencies=[Depends(require_store_writes)])
 def trigger_synthesis(request: SynthesisRequest, background_tasks: BackgroundTasks):
     """
     Triggers the DSPy generation logic via background task.
@@ -1248,7 +1255,7 @@ def list_templates():
         traceback.print_exc()
         return {"templates": [{"name": "standard", "display_name": "Standard"}]}
 
-@app.post("/curriculum/generate", response_model=GenerateSkeletonResponse)
+@app.post("/curriculum/generate", response_model=GenerateSkeletonResponse, dependencies=[Depends(require_store_writes)])
 def generate_curriculum(request: GenerateSkeletonRequest, current_user: User = Depends(get_current_user)):
     """
     Generate a consolidated curriculum skeleton from selected source sections.
@@ -1279,7 +1286,7 @@ def generate_curriculum(request: GenerateSkeletonRequest, current_user: User = D
         service.close()
 
 
-@app.post("/project/generate_skeleton", response_model=ProjectTreeResponse)
+@app.post("/project/generate_skeleton", response_model=ProjectTreeResponse, dependencies=[Depends(require_store_writes)])
 def generate_project_skeleton(request: SkeletonRequest, current_user: User = Depends(get_current_user)):
     """
     Generate a new curriculum project with AI-suggested sections.
@@ -1342,7 +1349,7 @@ def generate_project_skeleton(request: SkeletonRequest, current_user: User = Dep
         service.close()
 
 
-@app.post("/draft/node/accept")
+@app.post("/draft/node/accept", dependencies=[Depends(require_store_writes)])
 def accept_suggested_node(node_id: str):
     """
     Accept an AI-suggested node, converting it to a permanent draft.
@@ -1381,7 +1388,7 @@ def accept_suggested_node(node_id: str):
         "sources_linked": results[0]["sources_accepted"]
     }
 
-@app.delete("/draft/node/reject")
+@app.delete("/draft/node/reject", dependencies=[Depends(require_store_writes)])
 def reject_suggested_node(node_id: str):
     """
     Reject an AI-suggested node.
