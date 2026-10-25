@@ -4,6 +4,9 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from fastapi import FastAPI, HTTPException, Query, Body, Depends
+from fastapi.responses import FileResponse
+from src.publishing.render import FORMATS, output_filename
+from src.publishing.render_jobs import create_job, job_file, read_job, run_job
 from src.auth.security import get_current_user, User
 from fastapi.middleware.cors import CORSMiddleware
 from typing import List, Dict, Any, Optional
@@ -1494,36 +1497,51 @@ def list_templates():
         print(f"Error listing templates: {e}")
     return {"templates": ["standin"] + sorted(names - {"standin"})}
 
+RENDER_POLL_SECONDS = 1.0
+PPTX_TYPE = "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+
+
+def render_runner() -> str:
+    """local (in the api process) or dagster; unset means dagster only when DAGSTER_HOST is set."""
+    value = os.getenv("RENDER_RUNNER")
+    if not value:
+        return "dagster" if os.getenv("DAGSTER_HOST") else "local"
+    if value not in ("local", "dagster"):
+        raise HTTPException(status_code=500, detail="RENDER_RUNNER must be local or dagster")
+    return value
+
+
 @app.post("/render/trigger")
 def trigger_render(request: RenderRequest, background_tasks: BackgroundTasks, current_user: User = Depends(get_current_user)):
     """
-    Triggers the Dagster pipeline to render the project to PPTX/DOCX/PDF.
+    Renders (in process, or via Dagster when configured) the project to PPTX/DOCX/PDF.
     """
     _require_owned(current_user.id, request.project_id)
     # 1. Verify Project
     query = """
     MATCH (p:Project {id: $id})
-    RETURN p.id, p.title
+    RETURN p.title AS title
     """
     results = neo4j_client.execute_query(query, {"id": request.project_id})
     if not results:
         raise HTTPException(status_code=404, detail="Project not found")
-    
-    project_title = results[0].get("title", "Untitled_Project")
-    
-    # Generate Filename
-    import re
-    # Sanitize title
-    safe_title = re.sub(r'[^a-zA-Z0-9_\-]', '_', project_title)
-    
-    # Default to PPTX for now, as that's the primary desired output
-    # In the future, we can add a format parameter to the RenderRequest
+
+    project_title = results[0].get("title") or "Untitled_Project"
+
     file_extension = request.format.lower()
-    if file_extension not in ["pptx", "typ"]:
-        file_extension = "pptx"
-        
-    filename = f"{safe_title}_{request.project_id[:8]}.{file_extension}"
-    
+    if file_extension not in FORMATS:
+        raise HTTPException(status_code=400, detail="format must be one of pptx, typ")
+
+    filename = output_filename(project_title, request.project_id, file_extension)
+
+    if render_runner() == "local":
+        job = create_job(request.project_id, filename, file_extension, current_user.id)
+        background_tasks.add_task(
+            run_job, job["run_id"], request.template_name or "standin",
+            neo4j_client=neo4j_client, minio_client=minio_client, reader=get_source_reader(),
+        )
+        return {"status": "triggered", "filename": filename, "job": "render_local", "run_id": job["run_id"]}
+
     print(f"Triggering render for project {request.project_id} -> {filename} (Template: {request.template_name})")
     
     # 2. Add Dynamic Partition
@@ -1603,6 +1621,35 @@ async def render_events(run_id: str):
     SSE endpoint to stream render job status updates.
     The client subscribes to this after triggering a render.
     """
+    if run_id.startswith("local-"):
+        if read_job(run_id) is None:
+            raise HTTPException(status_code=404, detail="Render job not found")
+
+        async def local_events():
+            last = None
+            while True:
+                job = read_job(run_id)
+                if job is None:
+                    yield {"event": "error", "data": json.dumps({"run_id": run_id, "status": "FAILURE", "error": "job vanished", "problems": []})}
+                    return
+                status = job["status"]
+                if status != last:
+                    last = status
+                    yield {"event": "status", "data": json.dumps({"run_id": run_id, "status": status})}
+                if status == "SUCCESS":
+                    yield {"event": "complete", "data": json.dumps({
+                        "run_id": run_id, "status": "SUCCESS", "filename": job["filename"],
+                        "download_url": f"/render/file/{run_id}"})}
+                    return
+                if status == "FAILURE":
+                    problems = job.get("problems") or []
+                    yield {"event": "error", "data": json.dumps({
+                        "run_id": run_id, "status": "FAILURE", "error": "; ".join(problems), "problems": problems})}
+                    return
+                await asyncio.sleep(RENDER_POLL_SECONDS)
+
+        return EventSourceResponse(local_events())
+
     async def event_generator():
         while True:
             try:
@@ -1690,6 +1737,19 @@ async def render_events(run_id: str):
             await asyncio.sleep(2)
     
     return EventSourceResponse(event_generator())
+
+
+@app.get("/render/file/{run_id}")
+def get_render_file(run_id: str):
+    # No auth dependency: the UI opens this with window.open, which cannot send the bearer
+    # token. The run id is a uuid4 (122 random bits), so the URL is a capability like the
+    # presigned URLs the Dagster path hands out, and jobs expire after 24 h.
+    path = job_file(run_id)
+    if path is None:
+        raise HTTPException(status_code=404, detail="Render file not found")
+    job = read_job(run_id)
+    media = PPTX_TYPE if job["format"] == "pptx" else "text/plain"
+    return FileResponse(path, filename=job["filename"], media_type=media)
 
 
 @app.get("/render/download/{filename}")

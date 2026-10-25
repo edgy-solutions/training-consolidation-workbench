@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { FileText, Copy, Check, Image as ImageIcon, Maximize2, X, ChevronLeft, ChevronRight, Sparkles, Download, Layout } from 'lucide-react';
 import { useAppStore } from '../store';
-import { api, assetSrc, slideLabel } from '../api';
+import { api, assetSrc, slideLabel, API_URL } from '../api';
 import type { SourceSlide } from '../api';
 import { conceptKey, mergeByCase } from '../conceptCase';
 import clsx from 'clsx';
@@ -137,7 +137,7 @@ export const SlideInspector: React.FC = () => {
                         description: data.filename,
                         action: {
                             label: 'Download',
-                            onClick: () => window.open(data.download_url, '_blank')
+                            onClick: () => window.open(data.download_url.startsWith('/') ? `${API_URL}${data.download_url}` : data.download_url, '_blank')
                         },
                         duration: 30000 // Keep visible for 30s so user can download
                     });
