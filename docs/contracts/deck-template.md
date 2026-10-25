@@ -94,7 +94,7 @@ The order is the tree, depth-first. Siblings are sorted by `order` ascending; a 
 
 | Node | Becomes |
 |---|---|
-| the Project | the `title` slide. `title` is the project title; `body` is "Consolidated from N source decks". |
+| the Project | the `title` slide. `title` is the project title; `body` is "Consolidated from N source decks" ("1 source deck" when there is one). |
 | a TargetNode with `is_unassigned`, and its subtree | nothing: "Unassigned / For Review" is not part of the course |
 | a TargetNode with children | a `section` slide (`title` only; nesting deeper than one level still gives a `section` slide per node) |
 | a TargetNode without children (a leaf) | a `concept-with-figure` slide if it has a figure (§3.4), otherwise a `concept` slide |
