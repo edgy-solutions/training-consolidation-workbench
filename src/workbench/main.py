@@ -8,7 +8,7 @@ from fastapi.responses import FileResponse
 from src.publishing.render import FORMATS, output_filename
 from src.publishing.image_ids import list_generated_objects
 from src.publishing.render_jobs import create_job, job_file, read_job, run_job
-from src.auth.security import get_current_user, User
+from src.auth.security import get_current_user, store_writes_on, User
 from fastapi.middleware.cors import CORSMiddleware
 from typing import List, Dict, Any, Optional
 import os
@@ -830,8 +830,15 @@ def get_fixture_asset(name: str):
 
 # The api holds the shared Neo4j admin credential; these routes add edges onto the platform's Slide nodes,
 # so they are held unless enabled (ADR-0060 section 4.3 moves those edges into the workbench's own records).
+# Every POST/PUT/PATCH/DELETE carries this guard or is in READ_ONLY_POSTS (tests/test_gap_wb_store_writes.py).
+READ_ONLY_POSTS = {
+    "/source/search",  # a vector search: reads Weaviate
+    "/source/embedded-images-for-slides",  # lists and presigns source images: reads MinIO
+    "/source/resolve-image-urls",  # presigns source images: reads MinIO
+}
+
 def require_store_writes():
-    if os.getenv("WB_STORE_WRITES", "").strip().lower() != "on":
+    if not store_writes_on():
         raise HTTPException(status_code=403, detail="Writes to the shared graph are held (WB_STORE_WRITES is not on).")
 
 
@@ -1548,7 +1555,7 @@ def render_runner() -> str:
     return value
 
 
-@app.post("/render/trigger")
+@app.post("/render/trigger", dependencies=[Depends(require_store_writes)])
 def trigger_render(request: RenderRequest, background_tasks: BackgroundTasks, current_user: User = Depends(get_current_user)):
     """
     Renders (in process, or via Dagster when configured) the project to PPTX/DOCX/PDF.

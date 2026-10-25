@@ -60,6 +60,7 @@ def harness(monkeypatch, tmp_path):
     exports = tmp_path / "exports"
     exports.mkdir()
     monkeypatch.setenv("WB_EXPORT_DIR", str(exports))
+    monkeypatch.setenv("WB_STORE_WRITES", "on")
     monkeypatch.delenv("DAGSTER_HOST", raising=False)
     monkeypatch.delenv("RENDER_RUNNER", raising=False)
     from src.auth.security import User, get_current_user

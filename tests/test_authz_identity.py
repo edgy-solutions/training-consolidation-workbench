@@ -25,6 +25,7 @@ def verify(monkeypatch):
     synced = []
     monkeypatch.setattr(security, "PyJWKClient", StubJwks)
     monkeypatch.setattr(security, "sync_user_to_neo4j", synced.append)
+    monkeypatch.setenv("WB_STORE_WRITES", "on")
 
     def run(**claims):
         token = jwt.encode({"exp": int(time.time()) + 60, **claims}, KEY, algorithm="RS256")

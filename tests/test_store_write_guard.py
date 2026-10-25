@@ -14,6 +14,7 @@ GUARDED = [
     ("POST", "/project/generate_skeleton", {}),
     ("POST", "/draft/node/accept", {}),
     ("DELETE", "/draft/node/reject", {}),
+    ("POST", "/render/trigger", {}),
 ]
 
 

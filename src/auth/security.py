@@ -16,6 +16,11 @@ NEO4J_PASSWORD = os.getenv("NEO4J_PASSWORD", "password")
 # a brokered and a local login of one person have different `sub` values.
 AUTHZ_CLAIM = os.getenv("AUTHZ_CLAIM", "authz_id")
 
+
+def store_writes_on() -> bool:
+    """The api holds the shared Neo4j admin credential; every write to the shared graph waits on WB_STORE_WRITES=on."""
+    return os.getenv("WB_STORE_WRITES", "").strip().lower() == "on"
+
 # OAuth2 Scheme
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl=f"{KEYCLOAK_URL}/protocol/openid-connect/token")
 
@@ -62,8 +67,9 @@ def get_current_user(token: str = Depends(oauth2_scheme)) -> User:
         user = user_from_claims(payload)
         print(f"DEBUG: Token decoded successfully. User: {user.id}")
 
-        # 2. Sync User to Neo4j
-        sync_user_to_neo4j(user)
+        # 2. Sync User to Neo4j (a graph write, so held with the others)
+        if store_writes_on():
+            sync_user_to_neo4j(user)
         
         return user
         
