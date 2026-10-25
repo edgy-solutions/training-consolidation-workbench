@@ -196,7 +196,7 @@ class Harmonizer:
                     """
                     MATCH (c:Concept {name: $source_name})
                     MATCH (cc:CanonicalConcept {name: $canon_name})
-                    MERGE (c)-[:ALIGNS_TO]->(cc)
+                    MERGE (cc)-[:ALIGNS_TO]->(c)
                     """,
                     {"source_name": source_name, "canon_name": cluster.canonical_name}
                 )

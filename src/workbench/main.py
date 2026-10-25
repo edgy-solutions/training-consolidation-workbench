@@ -132,7 +132,7 @@ def get_course_slides(course_id: str):
     query = """
     MATCH (c:Course {id: $course_id})-[:HAS_SLIDE]->(s:Slide)
     OPTIONAL MATCH (s)-[t:TEACHES]->(con:Concept)
-    OPTIONAL MATCH (con)-[:ALIGNS_TO]->(cc:CanonicalConcept)
+    OPTIONAL MATCH (cc:CanonicalConcept)-[:ALIGNS_TO]->(con)
     WITH s, coalesce(cc.name, con.name) as display_name, max(t.salience) as salience
     WITH s, collect(DISTINCT {name: display_name, salience: salience}) as concepts
     RETURN s.id as id, s.number as number, s.text as text, s.elements as elements, concepts
@@ -190,12 +190,12 @@ def get_course_sections(course_id: str):
     // Normalize via CanonicalConcept to collapse duplicates/synonyms
     
     OPTIONAL MATCH (s)-[:COVERS]->(con:Concept)
-    OPTIONAL MATCH (con)-[:ALIGNS_TO]->(cc1:CanonicalConcept)
+    OPTIONAL MATCH (cc1:CanonicalConcept)-[:ALIGNS_TO]->(con)
     WITH s, collect(DISTINCT coalesce(cc1.name, con.name)) as covered_concepts
     
     OPTIONAL MATCH (s)-[:HAS_SLIDE]->(sl:Slide)-[t:TEACHES]->(slide_con:Concept)
     WHERE coalesce(t.salience, 0) >= 0.5
-    OPTIONAL MATCH (slide_con)-[:ALIGNS_TO]->(cc2:CanonicalConcept)
+    OPTIONAL MATCH (cc2:CanonicalConcept)-[:ALIGNS_TO]->(slide_con)
     WITH s, covered_concepts, collect(DISTINCT coalesce(cc2.name, slide_con.name)) as slide_concepts
     
     RETURN s.id as id, 
@@ -214,7 +214,7 @@ def get_course_sections(course_id: str):
     course_concepts_query = """
     MATCH (c:Course {id: $course_id})-[:HAS_SLIDE]->(sl:Slide)-[t:TEACHES]->(con:Concept)
     WHERE coalesce(t.salience, 0) >= 0.5
-    OPTIONAL MATCH (con)-[:ALIGNS_TO]->(cc:CanonicalConcept)
+    OPTIONAL MATCH (cc:CanonicalConcept)-[:ALIGNS_TO]->(con)
     RETURN collect(DISTINCT coalesce(cc.name, con.name))[0..10] as course_concepts
     """
     course_result = neo4j_client.execute_query(course_concepts_query, {"course_id": course_id})
@@ -252,7 +252,7 @@ def get_slide_details(slide_id: str):
     query = """
     MATCH (s:Slide {id: $id})
     OPTIONAL MATCH (s)-[t:TEACHES]->(c:Concept)
-    OPTIONAL MATCH (c)-[:ALIGNS_TO]->(cc:CanonicalConcept)
+    OPTIONAL MATCH (cc:CanonicalConcept)-[:ALIGNS_TO]->(c)
     WITH s, coalesce(cc.name, c.name) as display_name, max(t.salience) as salience
     WITH s, collect(DISTINCT {name: display_name, salience: salience}) as concepts
     RETURN s.id as id, s.number as number, s.text as text, s.elements as elements, concepts,
@@ -630,7 +630,7 @@ def get_concept_heatmap(term: str):
     WITH c as direct_hit
     
     // Find synonyms via CanonicalConcept (if any)
-    OPTIONAL MATCH (direct_hit)-[:ALIGNS_TO]->(cc:CanonicalConcept)<-[:ALIGNS_TO]-(synonym:Concept)
+    OPTIONAL MATCH (direct_hit)<-[:ALIGNS_TO]-(cc:CanonicalConcept)-[:ALIGNS_TO]->(synonym:Concept)
     
     // Aggregate all related concepts into a single list
     WITH collect(distinct direct_hit) + collect(distinct synonym) as all_concepts
@@ -756,7 +756,7 @@ def search_source_tree(request: SearchRequest):
     query_parts.append("""
     WITH c, s
     OPTIONAL MATCH (s)-[t:TEACHES]->(con:Concept)
-    OPTIONAL MATCH (con)-[:ALIGNS_TO]->(cc:CanonicalConcept)
+    OPTIONAL MATCH (cc:CanonicalConcept)-[:ALIGNS_TO]->(con)
     WITH c, s, coalesce(cc.name, con.name) as display_name, con.domain as domain, max(t.salience) as salience
     WITH c, s, collect(DISTINCT {name: display_name, domain: domain, salience: salience}) as concepts
     RETURN c.business_unit as bu, 
@@ -908,7 +908,7 @@ def add_draft_node(parent_id: str, title: str):
     node_id = str(uuid.uuid4())
     
     query = """
-    MATCH (parent {id: $parent_id})
+    MATCH (parent:Project|TargetNode {id: $parent_id})
     CREATE (child:TargetNode {
         id: $id, 
         title: $title, 

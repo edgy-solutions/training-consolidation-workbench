@@ -37,7 +37,7 @@ class Neo4jAlignmentStore:
         rows = self.client.execute_query(
             """
             MATCH (c:Concept) WHERE c.name IN $names
-            OPTIONAL MATCH (c)-[:ALIGNS_TO]->(cc:CanonicalConcept)
+            OPTIONAL MATCH (cc:CanonicalConcept)-[:ALIGNS_TO]->(c)
             RETURN c.name as name, coalesce(cc.name, c.name) as display
             """,
             {"names": names},
@@ -54,7 +54,7 @@ class Neo4jAlignmentStore:
         rows = self.client.execute_query(
             """
             MATCH (c:Concept) WHERE c.name IN $names
-            OPTIONAL MATCH (c)-[:ALIGNS_TO]->(cc:CanonicalConcept)<-[:ALIGNS_TO]-(syn:Concept)
+            OPTIONAL MATCH (c)<-[:ALIGNS_TO]-(cc:CanonicalConcept)-[:ALIGNS_TO]->(syn:Concept)
             RETURN collect(DISTINCT syn.name) as syns
             """,
             {"names": names},

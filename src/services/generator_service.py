@@ -55,7 +55,7 @@ class GeneratorService:
         query = """
         UNWIND $concepts as concept_name
         MATCH (c:Concept {name: concept_name})
-        OPTIONAL MATCH (c)-[:ALIGNS_TO]->(cc:CanonicalConcept)
+        OPTIONAL MATCH (cc:CanonicalConcept)-[:ALIGNS_TO]->(c)
         RETURN concept_name, coalesce(cc.name, c.name) as display_name
         """
         results = self.neo4j_client.execute_query(query, {"concepts": concepts})
@@ -481,7 +481,7 @@ class GeneratorService:
             # Create TargetNode linked to parent (Project or another TargetNode)
             self.neo4j_client.execute_query(
                 """
-                MATCH (parent {id: $parent_id})
+                MATCH (parent:Project|TargetNode {id: $parent_id})
                 CREATE (t:TargetNode {
                     id: $target_id,
                     title: $title,
