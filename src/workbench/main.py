@@ -834,6 +834,20 @@ def require_store_writes():
         raise HTTPException(status_code=403, detail="Writes to the shared graph are held (WB_STORE_WRITES is not on).")
 
 
+def _require_owned(user_id, node_id):
+    # Not found and not yours answer the same, so ids of other users' drafts are not revealed.
+    rows = neo4j_client.execute_query(
+        """
+        MATCH (u:User {id: $uid})-[:OWNS]->(p:Project)-[:HAS_CHILD*0..]->(n)
+        WHERE n.id = $id AND (n:Project OR n:TargetNode)
+        RETURN n.id LIMIT 1
+        """,
+        {"uid": user_id, "id": node_id},
+    )
+    if not rows:
+        raise HTTPException(status_code=404, detail="Draft not found")
+
+
 @app.post("/draft/create", response_model=TargetDraftNode, dependencies=[Depends(require_store_writes)])
 def create_draft_project(title: str, current_user: User = Depends(get_current_user)):
     """
@@ -899,11 +913,12 @@ def list_user_projects(current_user: User = Depends(get_current_user)):
     return projects
 
 @app.post("/draft/node/add", response_model=TargetDraftNode, dependencies=[Depends(require_store_writes)])
-def add_draft_node(parent_id: str, title: str):
+def add_draft_node(parent_id: str, title: str, current_user: User = Depends(get_current_user)):
     """
     Adds a new Section/Module to the new outline.
     Defaults to 'technical' section type.
     """
+    _require_owned(current_user.id, parent_id)
     import uuid
     node_id = str(uuid.uuid4())
     
@@ -936,7 +951,7 @@ def add_draft_node(parent_id: str, title: str):
     )
 
 @app.put("/draft/node/map", dependencies=[Depends(require_store_writes)])
-def map_slides_to_node(node_id: str, slide_ids: List[str]):
+def map_slides_to_node(node_id: str, slide_ids: List[str], current_user: User = Depends(get_current_user)):
     """
     Links "Source Slides" to a "Target Node" (Drag & Drop action).
     Now performs a full sync: removes existing links and adds new ones.
@@ -946,6 +961,7 @@ def map_slides_to_node(node_id: str, slide_ids: List[str]):
     - Calculates the majority layout
     - Sets 'suggested_layout' and 'target_layout' to the majority
     """
+    _require_owned(current_user.id, node_id)
     # 1. Get layouts of selected slides
     layout_query = """
     UNWIND $slide_ids as sid
@@ -1003,11 +1019,12 @@ def map_slides_to_node(node_id: str, slide_ids: List[str]):
     return {"status": "success", "mapped_slides": len(slide_ids), "auto_layout": new_layout}
 
 @app.put("/draft/node/content", dependencies=[Depends(require_store_writes)])
-def update_node_content(node_id: str, request: dict = Body(...)):
+def update_node_content(node_id: str, request: dict = Body(...), current_user: User = Depends(get_current_user)):
     """
     Updates the content_markdown property of a TargetNode.
     Used for auto-saving edited synthesis content from the TipTap editor.
     """
+    _require_owned(current_user.id, node_id)
     content_markdown = request.get("content_markdown", "")
     
     query = """
@@ -1023,11 +1040,12 @@ def update_node_content(node_id: str, request: dict = Body(...)):
     return {"status": "success", "node_id": node_id}
 
 @app.put("/draft/node/layout", dependencies=[Depends(require_store_writes)])
-def update_node_layout(node_id: str, request: dict = Body(...)):
+def update_node_layout(node_id: str, request: dict = Body(...), current_user: User = Depends(get_current_user)):
     """
     Updates the target_layout property of a TargetNode.
     Used for selecting specific slide layouts (e.g. split, grid, hero).
     """
+    _require_owned(current_user.id, node_id)
     target_layout = request.get("target_layout", "documentary")
     
     query = """
@@ -1043,11 +1061,12 @@ def update_node_layout(node_id: str, request: dict = Body(...)):
     return {"status": "success", "node_id": node_id, "layout": target_layout}
 
 @app.put("/draft/node/title", dependencies=[Depends(require_store_writes)])
-def update_node_title(node_id: str, request: dict = Body(...)):
+def update_node_title(node_id: str, request: dict = Body(...), current_user: User = Depends(get_current_user)):
     """
     Updates the title of a TargetNode.
     Only allowed for non-mandatory sections (technical).
     """
+    _require_owned(current_user.id, node_id)
     title = request.get("title", "")
     
     if not title.strip():
@@ -1078,10 +1097,11 @@ def update_node_title(node_id: str, request: dict = Body(...)):
     return {"status": "success", "node_id": node_id, "title": title}
 
 @app.get("/draft/structure/{project_id}", response_model=List[TargetDraftNode])
-def get_draft_structure(project_id: str):
+def get_draft_structure(project_id: str, current_user: User = Depends(get_current_user)):
     """
     Returns the current "New" outline tree.
     """
+    _require_owned(current_user.id, project_id)
     # This is a simplified traversal. Recursion might be needed for full tree.
     # For now, let's return flat list with parent_ids
     query = """
@@ -1162,10 +1182,11 @@ from fastapi import BackgroundTasks
 from src.services.synthesis_service import SynthesisService
 
 @app.post("/synthesis/trigger", dependencies=[Depends(require_store_writes)])
-def trigger_synthesis(request: SynthesisRequest, background_tasks: BackgroundTasks):
+def trigger_synthesis(request: SynthesisRequest, background_tasks: BackgroundTasks, current_user: User = Depends(get_current_user)):
     """
     Triggers the DSPy generation logic via background task.
     """
+    _require_owned(current_user.id, request.target_node_id)
     # 1. Gather Context - Verify node exists
     query = """
     MATCH (t:TargetNode {id: $id})
@@ -1197,10 +1218,11 @@ def get_synthesis_status(run_id: str):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 @app.get("/synthesis/preview/{node_id}")
-def get_synthesis_preview(node_id: str):
+def get_synthesis_preview(node_id: str, current_user: User = Depends(get_current_user)):
     """
     Fetches the generated text (once Dagster is done).
     """
+    _require_owned(current_user.id, node_id)
     query = """
     MATCH (n:TargetNode {id: $id})
     RETURN n.content_markdown as content, n.status as status
@@ -1350,7 +1372,7 @@ def generate_project_skeleton(request: SkeletonRequest, current_user: User = Dep
 
 
 @app.post("/draft/node/accept", dependencies=[Depends(require_store_writes)])
-def accept_suggested_node(node_id: str):
+def accept_suggested_node(node_id: str, current_user: User = Depends(get_current_user)):
     """
     Accept an AI-suggested node, converting it to a permanent draft.
     
@@ -1359,6 +1381,7 @@ def accept_suggested_node(node_id: str):
     2. Converts SUGGESTED_SOURCE relationships to DERIVED_FROM
     3. Makes the suggestion permanent
     """
+    _require_owned(current_user.id, node_id)
     query = """
     MATCH (t:TargetNode {id: $node_id})
     WHERE t.status = 'suggestion'
@@ -1389,7 +1412,7 @@ def accept_suggested_node(node_id: str):
     }
 
 @app.delete("/draft/node/reject", dependencies=[Depends(require_store_writes)])
-def reject_suggested_node(node_id: str):
+def reject_suggested_node(node_id: str, current_user: User = Depends(get_current_user)):
     """
     Reject an AI-suggested node.
     
@@ -1400,6 +1423,7 @@ def reject_suggested_node(node_id: str):
     For technical sections:
     - Delete the node entirely
     """
+    _require_owned(current_user.id, node_id)
     # First check the section type
     check_query = """
     MATCH (t:TargetNode {id: $node_id})
@@ -1486,10 +1510,11 @@ def list_templates():
         return {"templates": ["standard"]}
 
 @app.post("/render/trigger")
-def trigger_render(request: RenderRequest, background_tasks: BackgroundTasks):
+def trigger_render(request: RenderRequest, background_tasks: BackgroundTasks, current_user: User = Depends(get_current_user)):
     """
     Triggers the Dagster pipeline to render the project to PPTX/DOCX/PDF.
     """
+    _require_owned(current_user.id, request.project_id)
     # 1. Verify Project
     query = """
     MATCH (p:Project {id: $id})
