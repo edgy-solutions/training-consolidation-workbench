@@ -60,3 +60,67 @@ This packet carries no secret and no infra detail.
 - `master_engineering` is the asset's default and appears in two scripts.
 - If that is the customer template's name, the constraint says it should not be here. I could not find the text of ADR-0042 C3/C4: the ADR-0042 in invincible-agent covers live views and has no C clauses.
 - I have taken the name out of every default (see below) but **not deleted the file**. Deleting it would not remove the name from history either. Your call.
+
+## Steps 2–5: what I built
+
+**Step 2: the contract** ([`docs/contracts/deck-template.md`](../docs/contracts/deck-template.md), 433f28b).
+- The exporter reads a `.pptx` plus `deck-template.yaml`. Per role, the yaml names a layout and the placeholder `idx` for `title`, `body`, `citation` and `image`. `notes` takes `notes-page` or an `idx`, and defaults to the notes page.
+- There are six roles: title, section, concept, concept-with-figure, summary, sources.
+- **Unmapped role → `role 'concept-with-figure' is not mapped`.** The exporter checks the mapping, the course and every image before writing a slide. It raises all problems together and writes no file. Nothing falls back: no default role, no default layout, no "first layout".
+- Content with nowhere to go also fails, so text is never dropped. This covers a leaf with an empty body, a leaf with no sources or no concepts, a second image on one leaf, and an image that will not resolve.
+- No code names a template. A new template is one `.pptx` plus one yaml.
+
+**Step 3: the stand-in** (`tests/fixtures/templates/standin/`, 036706c).
+- `make_standin.py` generates `standin.pptx`: six layouts named for the roles, the default theme with no styling set, no slides. It is committed with its `deck-template.yaml`.
+- It is the default everywhere: the Dagster asset, `RenderRequest`, `/render/templates` and the UI's template picker.
+
+**Step 4: the golden** (`tests/test_deck_export_golden.py`).
+- The hydraulics fixture course (`tests/fixtures/export/hydraulics-course.json`, over the vendored fixture deck) exports to 8 slides: title, section, concept, concept, section, concept-with-figure, summary, sources.
+- The test asserts:
+  - the layout names in order and every placeholder's text;
+  - the picture on slide 6 only;
+  - `Source: hydraulics_fixture.pptx, slide 3` / `Sources: hydraulics_fixture.pptx, slides 1, 2` on every concept slide;
+  - the `Concepts:` line in each slide's notes;
+  - the summary and sources slides.
+- I re-exported the course and dumped it slide by slide myself; it matches.
+- Not done: rendering the slides to images (the optional bonus).
+
+**Step 5: round trip** (`check_round_trip`, `tests/test_deck_round_trip.py`).
+- The check reads the written deck back and asserts:
+  - the slide count and layout sequence;
+  - every course concept exactly once;
+  - every concept slide's citation equal to its sources;
+  - a picture exactly where the role has one;
+  - nothing in the summary, sources or citations that the course lacks.
+- **It runs inside every export, not only in tests.** A failed check deletes the partial file.
+- The tests take a good export and break it in seven ways: a citation deleted, a concept added to notes, a concept repeated, the picture removed, a picture added to a concept slide, an extra slide, two slides swapped. Each test asserts the check names the problem. The summary and sources comparisons have no corruption test of their own.
+
+**Rewire** (e0992dc).
+- `rendered_course_file` builds the course from the graph and exports through the new exporter:
+  - the tree;
+  - `DERIVED_FROM` to source slides, for the deck filename and slide number;
+  - `key_concepts`, or else `TEACHES` by salience.
+- Images resolve by MinIO key. The resolver accepts contract image keys, fixture references, presigned URLs (key only) and `{{asset_id}}`.
+- `PptxGenerator` and its print-only test are deleted.
+
+**Tests.** 207 → 250 passed, with 44 added and 1 removed:
+- course builder: 17;
+- mapping validation: 14;
+- round trip: 8;
+- golden: 3;
+- stand-in: 2.
+
+Frontend `tsc` is clean.
+
+**Choices you may want to overrule.**
+- The title role must map `body`: the subtitle "Consolidated from N source decks" always exists, and content is never dropped.
+- Concept names compare exactly. "Pascal's law" and "Pascal's Law" count as two concepts.
+- A mapping that sends two fields to one placeholder fails.
+- A concept named by two leaves fails, naming both. In a consolidated course that means consolidation is not finished.
+
+**Not verified.**
+- The asset path (graph query → MinIO → export) has no test. It cannot run on the deploy until something in `training` runs Dagster (step-1 finding 8). The exporter it calls is fully tested.
+- `config/master_engineering.yaml` is still in the repo, unreferenced, awaiting your call (above).
+- ADR-0042 C3/C4: I followed the brief's wording (no customer template, names or styling vocabulary) without the ADR text.
+
+**Commits.** 0833d01 (step 1), 433f28b (contract), 036706c (stand-in, exporter, golden, round trip), e0992dc (rewire). All pushed to `lane/wb`.
