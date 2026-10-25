@@ -263,14 +263,6 @@ export const api = {
     },
 
     /**
-     * Get a presigned download URL for a rendered file.
-     */
-    getDownloadUrl: async (filename: string): Promise<{ download_url: string; filename: string }> => {
-        const res = await axios.get<{ download_url: string; filename: string }>(`${API_URL}/render/download/${filename}`);
-        return res.data;
-    },
-
-    /**
      * Resolve stable minio:// URLs or expired presigned URLs to fresh presigned URLs.
      * Use this when loading content with embedded images to refresh expired URLs.
      */

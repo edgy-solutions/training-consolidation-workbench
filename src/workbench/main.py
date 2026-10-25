@@ -1742,26 +1742,17 @@ async def render_events(run_id: str):
 @app.get("/render/file/{run_id}")
 def get_render_file(run_id: str):
     # No auth dependency: the UI opens this with window.open, which cannot send the bearer
-    # token. The run id is a uuid4 (122 random bits), so the URL is a capability like the
-    # presigned URLs the Dagster path hands out, and jobs expire after 24 h.
-    path = job_file(run_id)
+    # token. The URL is a presigned-style capability (architect ruling): the run id is 128
+    # CSPRNG bits, the file is found only through its own run's record, and the link answers
+    # 404 once LINK_TTL_SECONDS have passed since the export finished.
+    job = read_job(run_id)
+    path = job_file(run_id) if job else None
     if path is None:
         raise HTTPException(status_code=404, detail="Render file not found")
-    job = read_job(run_id)
     media = PPTX_TYPE if job["format"] == "pptx" else "text/plain"
-    return FileResponse(path, filename=job["filename"], media_type=media)
+    return FileResponse(path, filename=job["filename"], media_type=media,
+                        headers={"Cache-Control": "no-store", "Referrer-Policy": "no-referrer"})
 
-
-@app.get("/render/download/{filename}")
-def get_download_url(filename: str):
-    """
-    Returns a presigned URL for downloading the rendered file.
-    """
-    try:
-        url = minio_client.get_presigned_url("published", filename)
-        return {"download_url": url, "filename": filename}
-    except Exception as e:
-        raise HTTPException(status_code=404, detail=f"File not found: {str(e)}")
 
 if __name__ == "__main__":
     import uvicorn
