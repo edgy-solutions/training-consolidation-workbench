@@ -1,27 +1,30 @@
 import pytest
 
+from src.publishing.image_ids import ImageRefError
+
 from src.publishing.course import (
     DeckExportError, FixtureImageResolver, MinioImageResolver, ReaderLookup, Section, SourceRef, build_course,
     format_citation, iter_leaves, iter_slides, split_body_and_figure,
 )
-from tests.deck_fixtures import COURSE_ID, reader
+from tests.deck_fixtures import COURSE_ID, image_id, reader
 
-PROJECT = {"id": "p", "title": "P"}
+PROJECT = {"id": "p", "title": "P", "deck_ids": ["c1", "c2"]}
 
 
 class Lookup:
     def __init__(self, slides):
         self.slides = slides
 
-    def slide(self, sid):
-        return self.slides.get(sid)
+    def deck_slides(self, deck_id):
+        found = [s for s in self.slides.values() if s["course_id"] == deck_id]
+        return found or None
 
 
 SLIDES = {
-    "s1": {"course_id": "c1", "filename": "a.pptx", "number": 1, "teaches": [
+    "s1": {"id": "s1", "course_id": "c1", "filename": "a.pptx", "number": 1, "teaches": [
         {"name": "Low", "salience": 0.1}, {"name": "High", "salience": 0.9}, {"name": "None", "salience": None}]},
-    "s2": {"course_id": "c1", "filename": "a.pptx", "number": 2, "teaches": [{"name": "Two", "salience": 0.5}]},
-    "s3": {"course_id": "c2", "filename": "b.pptx", "number": 7, "teaches": [{"name": "Three", "salience": 0.5}]},
+    "s2": {"id": "s2", "course_id": "c1", "filename": "a.pptx", "number": 2, "teaches": [{"name": "Two", "salience": 0.5}]},
+    "s3": {"id": "s3", "course_id": "c2", "filename": "b.pptx", "number": 7, "teaches": [{"name": "Three", "salience": 0.5}]},
 }
 
 
@@ -128,18 +131,20 @@ def test_citation_one_deck_several_slides():
 
 
 def test_reader_lookup_shape():
-    s = ReaderLookup(reader()).slide(COURSE_ID + "_p3")
+    slides = {s["id"]: s for s in ReaderLookup(reader()).deck_slides(COURSE_ID)}
+    s = slides[COURSE_ID + "_p3"]
     assert s["filename"] == "hydraulics_fixture.pptx" and s["number"] == 3
     assert [t["name"] for t in s["teaches"]] == ["Hydraulic pump", "Gear pump"]
-    assert ReaderLookup(reader()).slide("missing") is None
+    assert ReaderLookup(reader()).deck_slides("missing") is None
 
 
 def test_fixture_image_resolver_forms():
-    r = FixtureImageResolver(reader())
-    a = r("fixture://images/slide_4_img_0.png")
-    assert a and a == r("/source/fixture-asset/slide_4_img_0.png") == r("x/y/images/slide_4_img_0.png")
-    assert a == r("slide_4_img_0")
-    assert r("fixture://images/unknown.png") is None
+    r = FixtureImageResolver(reader(), [COURSE_ID])
+    n = image_id("slide_4_img_0")
+    a = r("fixture://images/" + n + ".png")
+    assert a and a == r("/source/fixture-asset/" + n + ".png") == r("x/y/images/" + n + ".png")
+    assert a == r(n)
+    assert r("fixture://images/" + image_id("unknown") + ".png") is None
 
 
 class _Obj:
@@ -168,11 +173,12 @@ class _Minio:
 
 def test_minio_resolver_forms():
     m = _Minio()
-    r = MinioImageResolver(m, "bkt")
+    r = MinioImageResolver(m, "bkt", [COURSE_ID])
     key = "training/generated/abc/1.0/images/slide_4_img_0.png"
     assert r(key) == b"img"
     assert r("/" + key) == b"img"
     assert r(f"http://host:9000/bkt/{key}?X-Amz-Signature=abc&X-Amz-Expires=3600") == b"img"
     assert {k for _, k in m.asked} == {key}
     assert r("training/generated/abc/1.0/images/missing.png") is None
-    assert r("slide_4_img_0") is None
+    with pytest.raises(ImageRefError, match="carries no deck prefix"):
+        r("slide_4_img_0")

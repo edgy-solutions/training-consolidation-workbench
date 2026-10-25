@@ -11,6 +11,8 @@ import zipfile
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
+from src.publishing.image_ids import deck_prefix
+
 REF_PREFIX = "fixture://images/"
 ASSET_URL = "/source/fixture-asset/"
 
@@ -201,8 +203,7 @@ class FixtureReader:
         return sorted(scored)
 
 
-def _prefix(course_id: str) -> str:
-    return course_id.split(":", 1)[-1][:12]
+_prefix = deck_prefix
 
 
 class MultiFixtureReader:
@@ -326,4 +327,4 @@ def load_fixture_reader(fixture_dir):
         elif first.deck_sha256 != r.deck_sha256:
             raise ValueError(f"Course id {r.course_id} appears with different deck content in {d}")
         # same id and same deck bytes: one Course, first folder wins
-    return readers[0] if len(readers) == 1 else MultiFixtureReader(readers)
+    return MultiFixtureReader(readers)

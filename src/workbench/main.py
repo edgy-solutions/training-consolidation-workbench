@@ -6,6 +6,7 @@ load_dotenv()
 from fastapi import FastAPI, HTTPException, Query, Body, Depends
 from fastapi.responses import FileResponse
 from src.publishing.render import FORMATS, output_filename
+from src.publishing.image_ids import list_generated_objects
 from src.publishing.render_jobs import create_job, job_file, read_job, run_job
 from src.auth.security import get_current_user, User
 from fastapi.middleware.cors import CORSMiddleware
@@ -339,11 +340,8 @@ def get_embedded_images(course_id: str):
     if reader is not None:
         return _port_embedded_images(reader, course_id)
     # List objects in the course's generated folder
-    prefix = f"{course_id}/generated/"
-    
     try:
-        objects = minio_client.list_objects(BUCKET_NAME, prefix=prefix, recursive=True)
-        objects_list = list(objects)
+        objects_list = list_generated_objects(minio_client, BUCKET_NAME, course_id)
         
         # First, try to load text.json to get image coordinates
         image_metadata = {}
@@ -862,7 +860,7 @@ def create_draft_project(title: str, current_user: User = Depends(get_current_us
     
     query = """
     MATCH (u:User {id: $user_id})
-    CREATE (p:Project:TargetNode {id: $id, title: $title, status: "empty", content_markdown: "", created_at: datetime()})
+    CREATE (p:Project:TargetNode {id: $id, title: $title, status: "empty", content_markdown: "", created_at: datetime(), source_deck_ids: []})
     MERGE (u)-[:OWNS]->(p)
     RETURN p.id as id, p.title as title, p.status as status, p.created_at as created_at
     """
@@ -871,7 +869,7 @@ def create_draft_project(title: str, current_user: User = Depends(get_current_us
     # Fallback if user node doesn't exist (shouldn't happen due to sync, but safety first)
     if not results:
         query_fallback = """
-        CREATE (p:Project:TargetNode {id: $id, title: $title, status: "empty", content_markdown: "", created_at: datetime()})
+        CREATE (p:Project:TargetNode {id: $id, title: $title, status: "empty", content_markdown: "", created_at: datetime(), source_deck_ids: []})
         RETURN p.id as id, p.title as title, p.status as status, p.created_at as created_at
         """
         results = neo4j_client.execute_query(query_fallback, {"id": project_id, "title": title})
@@ -953,6 +951,23 @@ def add_draft_node(parent_id: str, title: str, current_user: User = Depends(get_
         section_type=row.get("section_type", "technical")
     )
 
+def slide_decks(slide_ids) -> Dict[str, str]:
+    """{slide_id: course_id} for the slides that sit in a deck; ids it cannot place are left out."""
+    reader = get_source_reader()
+    if reader is not None:
+        out = {}
+        for sid in slide_ids:
+            s = reader.slide(sid)
+            if s and s.get("course_id"):
+                out[sid] = s["course_id"]
+        return out
+    rows = neo4j_client.execute_query(
+        "MATCH (c:Course)-[:HAS_SLIDE]->(s:Slide) WHERE s.id IN $ids RETURN s.id AS id, c.id AS course_id",
+        {"ids": list(slide_ids)},
+    )
+    return {r["id"]: r["course_id"] for r in rows}
+
+
 @app.put("/draft/node/map", dependencies=[Depends(require_store_writes)])
 def map_slides_to_node(node_id: str, slide_ids: List[str], current_user: User = Depends(get_current_user)):
     """
@@ -965,6 +980,11 @@ def map_slides_to_node(node_id: str, slide_ids: List[str], current_user: User = 
     - Sets 'suggested_layout' and 'target_layout' to the majority
     """
     _require_owned(current_user.id, node_id)
+    decks = slide_decks(slide_ids)
+    unknown = [sid for sid in dict.fromkeys(slide_ids) if sid not in decks]
+    if unknown:
+        raise HTTPException(status_code=400, detail=f"unknown source slides: {', '.join(unknown)}")
+    deck_ids = list(dict.fromkeys(decks[sid] for sid in slide_ids))
     # 1. Get layouts of selected slides
     layout_query = """
     UNWIND $slide_ids as sid
@@ -1000,8 +1020,16 @@ def map_slides_to_node(node_id: str, slide_ids: List[str], current_user: User = 
     // Update layouts AND Status (Suggestion -> Draft if modified)
     SET t.target_layout = $layout,
         t.suggested_layout = $layout,
+        t.source_slide_ids = $slide_ids,
         t.status = CASE WHEN t.status = 'suggestion' THEN 'draft' ELSE t.status END
-    
+
+    // The course records the decks its sources come from
+    WITH t
+    OPTIONAL MATCH (p:Project)-[:HAS_CHILD*]->(t)
+    FOREACH (_ IN CASE WHEN p IS NULL THEN [] ELSE [1] END |
+        SET p.source_deck_ids = coalesce(p.source_deck_ids, [])
+            + [d IN $deck_ids WHERE NOT d IN coalesce(p.source_deck_ids, [])])
+
     // Clear old links
     WITH t
     OPTIONAL MATCH (t)-[r:DERIVED_FROM]->(:Slide)
@@ -1018,7 +1046,7 @@ def map_slides_to_node(node_id: str, slide_ids: List[str], current_user: User = 
     MATCH (s:Slide {id: sid})
     MERGE (t)-[:DERIVED_FROM]->(s)
     """
-    neo4j_client.execute_query(query, {"node_id": node_id, "slide_ids": slide_ids, "layout": new_layout})
+    neo4j_client.execute_query(query, {"node_id": node_id, "slide_ids": slide_ids, "layout": new_layout, "deck_ids": deck_ids})
     return {"status": "success", "mapped_slides": len(slide_ids), "auto_layout": new_layout}
 
 @app.put("/draft/node/content", dependencies=[Depends(require_store_writes)])
@@ -1395,9 +1423,18 @@ def accept_suggested_node(node_id: str, current_user: User = Depends(get_current
     // Convert relationships
     WITH t
     OPTIONAL MATCH (t)-[r:SUGGESTED_SOURCE]->(s:Slide)
+    OPTIONAL MATCH (c:Course)-[:HAS_SLIDE]->(s)
     DELETE r
-    WITH t, collect(s) as slides
+    WITH t, collect(DISTINCT s) as slides, collect(DISTINCT c.id) as deck_ids
     FOREACH (slide IN slides | CREATE (t)-[:DERIVED_FROM]->(slide))
+    SET t.source_slide_ids = [x IN slides | x.id]
+
+    // The course records the decks its sources come from
+    WITH t, slides, deck_ids
+    OPTIONAL MATCH (p:Project)-[:HAS_CHILD*]->(t)
+    FOREACH (_ IN CASE WHEN p IS NULL THEN [] ELSE [1] END |
+        SET p.source_deck_ids = coalesce(p.source_deck_ids, [])
+            + [d IN deck_ids WHERE NOT d IN coalesce(p.source_deck_ids, [])])
     
     RETURN t.id as id, t.status as status, size(slides) as sources_accepted
     """

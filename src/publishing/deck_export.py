@@ -13,6 +13,7 @@ import yaml
 from pptx import Presentation
 from pptx.enum.shapes import PP_PLACEHOLDER
 
+from src.publishing.image_ids import ImageRefError
 from src.publishing.course import (
     Course, DeckExportError, course_concepts, decks, format_citation, format_deck_line,
     iter_leaves, iter_slides, notes_text, title_body,
@@ -216,6 +217,9 @@ def export_deck(course: Course, mapping_path, out_path, resolve_image) -> Path:
             continue
         try:
             data = resolve_image(leaf.figure.ref)
+        except ImageRefError as e:
+            problems.append(f"leaf '{leaf.title}': {e}")
+            continue
         except Exception:
             data = None
         if not data:

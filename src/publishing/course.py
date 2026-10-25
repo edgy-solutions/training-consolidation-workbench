@@ -4,6 +4,8 @@ from dataclasses import dataclass, field
 from typing import Dict, List, Optional
 from urllib.parse import unquote, urlparse
 
+from src.publishing.image_ids import ImageRefError, deck_prefix, image_objects, list_generated_objects, split
+
 
 class DeckExportError(Exception):
     """Every export failure: one exception listing all the problems found."""
@@ -154,6 +156,18 @@ def build_course(project, nodes, lookup) -> Course:
             p = None
         by_parent.setdefault(p, []).append(n)
 
+    deck_ids = list(project.get("deck_ids") or [])
+    slide_index: Dict[str, dict] = {}
+    if not deck_ids:
+        problems.append("the course records no source decks")
+    for deck_id in deck_ids:
+        found = lookup.deck_slides(deck_id)
+        if found is None:
+            problems.append(f"source deck '{deck_id}' was not found")
+            continue
+        for sl in found:
+            slide_index.setdefault(sl["id"], sl)
+
     seen_concepts: Dict[str, str] = {}
 
     def children_of(pid):
@@ -170,9 +184,9 @@ def build_course(project, nodes, lookup) -> Course:
         where = f"'{title}'"
         sources, teaches = [], []
         for sid in n.get("source_refs") or []:
-            s = lookup.slide(sid)
+            s = slide_index.get(sid)
             if s is None:
-                problems.append(f"leaf {where}: source slide '{sid}' was not found")
+                problems.append(f"leaf {where}: source slide '{sid}' is not in any deck this course was built from")
                 continue
             sources.append(SourceRef(s["course_id"], s["filename"], s["number"], sid))
             teaches.extend(s.get("teaches") or [])
@@ -203,7 +217,7 @@ def build_course(project, nodes, lookup) -> Course:
 
 
 class ReaderLookup:
-    """Slide lookup over a SourceReader (fixture or multi-fixture)."""
+    """Deck lookup over a SourceReader (fixture or multi-fixture)."""
 
     def __init__(self, reader):
         self.reader = reader
@@ -214,38 +228,43 @@ class ReaderLookup:
             self._filenames = {c["id"]: c.get("filename") for c in self.reader.list_courses(None)}
         return self._filenames.get(course_id)
 
-    def slide(self, slide_id):
-        s = self.reader.slide(slide_id)
-        if not s:
+    def deck_slides(self, deck_id):
+        """The deck's slides, or None when the reader does not know the deck."""
+        if deck_id not in {c["id"] for c in self.reader.list_courses(None)}:
             return None
-        return {
-            "course_id": s["course_id"],
-            "filename": self._filename(s["course_id"]) or s["course_id"],
-            "number": s["number"],
-            "teaches": [{"name": t["concept"], "salience": t.get("salience")} for t in s.get("teaches") or []],
-        }
+        filename = self._filename(deck_id) or deck_id
+        out = []
+        for row in self.reader.course_slides(deck_id):
+            s = self.reader.slide(row["id"]) or {}
+            out.append({
+                "id": row["id"],
+                "course_id": deck_id,
+                "filename": filename,
+                "number": row["number"],
+                "teaches": [{"name": t["concept"], "salience": t.get("salience")} for t in s.get("teaches") or []],
+            })
+        return out
 
 
 class GraphLookup:
-    """Slide lookup over Neo4j, read-only. `client.execute_query(query, params)` returns row dicts."""
+    """Deck lookup over Neo4j, read-only. `client.execute_query(query, params)` returns row dicts."""
 
-    SLIDE = """
-    MATCH (c:Course)-[:HAS_SLIDE]->(s:Slide {id: $id})
+    DECK = """
+    MATCH (c:Course {id: $deck})-[:HAS_SLIDE]->(s:Slide)
     OPTIONAL MATCH (s)-[t:TEACHES]->(k:Concept)
-    RETURN c.id AS course_id, c.filename AS filename, s.number AS number,
+    RETURN c.id AS course_id, c.filename AS filename, s.id AS id, s.number AS number,
            collect(CASE WHEN k IS NULL THEN NULL ELSE {name: k.name, salience: t.salience} END) AS teaches
     """
 
     def __init__(self, client):
         self.client = client
 
-    def slide(self, slide_id):
-        rows = self.client.execute_query(self.SLIDE, {"id": slide_id})
+    def deck_slides(self, deck_id):
+        rows = self.client.execute_query(self.DECK, {"deck": deck_id})
         if not rows:
             return None
-        r = rows[0]
-        return {"course_id": r["course_id"], "filename": r["filename"] or r["course_id"], "number": r["number"],
-                "teaches": [t for t in r["teaches"] or [] if t]}
+        return [{"id": r["id"], "course_id": r["course_id"], "filename": r["filename"] or r["course_id"],
+                 "number": r["number"], "teaches": [t for t in r["teaches"] or [] if t]} for r in rows]
 
 
 def _read_all(obj) -> bytes:
@@ -258,17 +277,31 @@ def _read_all(obj) -> bytes:
                 fn()
 
 
+def _checked_name(name, prefixes):
+    """The prefixed image name if it is '<deck>--<name>' of a recorded deck; otherwise ImageRefError."""
+    parts = split(name)
+    if parts is None:
+        raise ImageRefError(f"image '{name}' carries no deck prefix; image ids are '<deck>--<name>'")
+    if parts[0] not in prefixes:
+        raise ImageRefError(
+            f"image '{name}' names deck prefix '{parts[0]}', which is not a deck this course was built from")
+    return parts
+
+
 class FixtureImageResolver:
-    """Resolves fixture image references through reader.asset(name); None when unknown."""
+    """Resolves fixture image references through reader.asset(name); None when unknown.
+    Image ids are '<deck>--<name>' of a deck the course records; anything else is refused."""
 
     EXTENSIONS = ("", ".png", ".jpg", ".jpeg")
 
-    def __init__(self, reader):
+    def __init__(self, reader, deck_ids):
         self.reader = reader
+        self.prefixes = {deck_prefix(d) for d in deck_ids or []}
 
     def __call__(self, ref):
         ref = unquote((ref or "").strip())
         name = ref.rsplit("images/", 1)[-1] if "images/" in ref else ref.rsplit("/", 1)[-1]
+        _checked_name(name, self.prefixes)
         # an asset_id has no extension: try the usual image ones
         for ext in self.EXTENSIONS if re.fullmatch(r"[\w\-]+", name) else ("",):
             got = self.reader.asset(name + ext)
@@ -278,11 +311,14 @@ class FixtureImageResolver:
 
 
 class MinioImageResolver:
-    """Resolves a source-contract image key, a presigned URL (key read from the path) or a /.../images/... key."""
+    """Resolves a source-contract image key, a presigned URL (key read from the path) or a /.../images/... key;
+    a deck-prefixed image id resolves to the object of that deck whose key ends with /images/<name>."""
 
-    def __init__(self, minio_client, bucket):
+    def __init__(self, minio_client, bucket, deck_ids):
         self.client = minio_client
         self.bucket = bucket
+        self.deck_ids = list(deck_ids or [])
+        self.prefixes = {deck_prefix(d) for d in self.deck_ids}
 
     def _key(self, ref):
         ref = (ref or "").strip()
@@ -293,8 +329,22 @@ class MinioImageResolver:
             ref = ref[len(self.bucket) + 1:]
         return ref if "images/" in ref else None
 
+    def _by_id(self, name):
+        prefix, bare = _checked_name(name, self.prefixes)
+        for deck in self.deck_ids:
+            if deck_prefix(deck) != prefix:
+                continue
+            for obj in image_objects(list_generated_objects(self.client, self.bucket, deck)):
+                if obj.object_name.endswith("/images/" + bare):
+                    return obj.object_name
+        return None
+
     def __call__(self, ref):
+        ref = unquote((ref or "").strip())
         key = self._key(ref)
+        if key is None:
+            # a bare id: {{name}} or a markdown target without a path
+            key = self._by_id(ref.rsplit("/", 1)[-1])
         if not key:
             return None
         try:

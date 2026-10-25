@@ -104,7 +104,7 @@ The order is the tree, depth-first. Siblings are sorted by `order` ascending; a 
 - **`title`** is the node's title.
 - **`concepts`** are the node's `key_concepts`. If it has none, they are the concepts its source slides `TEACHES`, in descending salience. A leaf with no concepts fails.
 - **`body`** is `content_markdown` with the image markup removed. An empty body (whitespace only) fails: it would be a blank slide.
-- **`sources`** are the slides the node is `DERIVED_FROM`. Each one gives a deck `filename` and a slide `number` (source contract §4.1). A leaf with no sources fails. A source slide the reader cannot find also fails.
+- **`sources`** are the node's recorded source slides (`source_slide_ids`), resolved through the decks the course records (`source_deck_ids` on the Project), not through whatever the graph holds. Each one gives a deck `filename` and a slide `number` (source contract §4.1). Three failures, all listed with the others: the course records no source decks; a recorded deck is not found; a source slide is not in any recorded deck (`leaf '<title>': source slide '<id>' is not in any deck this course was built from`). A leaf with no sources fails.
 - **`notes`** hold the node's speaker notes, if there are any, and always end with the line `Concepts: <name>; <name>`.
 
 **Each concept appears exactly once.** A concept named by two leaves fails, and the message names both leaves. In a consolidated course, a concept taught twice means the consolidation is not finished.
@@ -114,9 +114,10 @@ The order is the tree, depth-first. Siblings are sorted by `order` ascending; a 
 - **What a figure is.** A leaf's figure is the first image reference in its `content_markdown`, either `![alt](ref)` or the synthesizer's `{{asset_id}}`. A leaf with more than one image reference fails, because a role holds one image.
 - **How a reference is resolved.** The resolver turns a reference into bytes. It accepts:
   - a source-contract image key (`…/images/slide_{n}_img_{k}.png`);
-  - a fixture reference (`fixture://images/<name>`, `/source/fixture-asset/<name>`);
+  - a fixture reference (`fixture://images/<id>`, `/source/fixture-asset/<id>`);
   - a presigned URL, read by its key with the query dropped;
-  - an `asset_id` the reader can map to a key.
+  - an image id (`{{id}}`) the reader can map to a key.
+- **Image ids are `<deck>--<name>`.** `<deck>` is the first 12 characters of the deck's course id after its `sha256:` prefix (lowercase hex), `<name>` the image file name. The synthesizer always emits the prefixed id. An id without the prefix is refused (`image '<id>' carries no deck prefix; image ids are '<deck>--<name>'`), and so is a prefix that names a deck the course does not record (`… names deck prefix '<p>', which is not a deck this course was built from`).
 - **An unresolvable reference fails.** An image is never dropped silently.
 
 ### 3.5 Generated slides

@@ -37,6 +37,7 @@ def harness(monkeypatch):
         return []
 
     monkeypatch.setattr(main.neo4j_client, "execute_query", execute_query, raising=False)
+    monkeypatch.setattr(main, "slide_decks", lambda ids: {i: "c1" for i in ids})
     main.app.dependency_overrides[get_current_user] = lambda: User(id="u1", email="u1@example.com")
     yield TestClient(main.app, raise_server_exceptions=False), state
     main.app.dependency_overrides.pop(get_current_user, None)

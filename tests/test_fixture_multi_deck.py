@@ -62,8 +62,8 @@ def test_loads_multi(multi):
     assert {c["id"] for c in multi.list_courses()} == {ID1, ID2}
 
 
-def test_single_deck_is_plain_reader(tmp_path):
-    assert type(load_fixture_reader(_copy_root_deck(tmp_path / "one"))) is FixtureReader
+def test_single_deck_is_still_a_multi_reader(tmp_path):
+    assert type(load_fixture_reader(_copy_root_deck(tmp_path / "one"))) is MultiFixtureReader
 
 
 def test_vendored_case_decks_load_as_one_course_per_deck():

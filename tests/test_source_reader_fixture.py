@@ -9,6 +9,7 @@ from urllib.parse import quote
 
 import pytest
 
+from src.publishing.image_ids import qualify
 from src.workbench.fixture_reader import FixtureReader
 from src.workbench.source_reader import get_source_reader, reset_source_reader_cache
 
@@ -172,7 +173,7 @@ def test_route_embedded_and_asset(client):
     assert r.headers["content-type"] == "image/png"
     for_slides = client.post("/source/embedded-images-for-slides", json=[SLIDE4["id"]]).json()
     assert len(for_slides["images"]) == 1
-    res = client.get("/source/resolve-image-url", params={"url": f"fixture://images/{IMG_NAME}"}).json()
+    res = client.get("/source/resolve-image-url", params={"url": f"fixture://images/{qualify(COURSE_ID, IMG_NAME)}"}).json()
     assert res["presigned"] == imgs[0]["url"]
 
 

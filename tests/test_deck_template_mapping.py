@@ -106,5 +106,5 @@ def test_unresolvable_image_writes_nothing(tmp_path):
     out = tmp_path / "out.pptx"
     with pytest.raises(DeckExportError) as e:
         export_deck(golden_course(), cp(tmp_path / "t"), out, lambda ref: None)
-    assert e.value.problems == ["image 'fixture://images/slide_4_img_0.png' on 'Reservoir Schematic' could not be resolved"]
+    assert e.value.problems == ["image 'fixture://images/895392accf24--slide_4_img_0.png' on 'Reservoir Schematic' could not be resolved"]
     assert not out.exists()

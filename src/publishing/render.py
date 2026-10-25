@@ -21,11 +21,15 @@ TEMPLATE_BUCKET = "cib-sources"
 COURSE_NODES_QUERY = """
 MATCH (p:Project {id: $project_id})-[:HAS_CHILD*]->(n:TargetNode)
 MATCH (parent)-[:HAS_CHILD]->(n)
-OPTIONAL MATCH (n)-[:DERIVED_FROM]->(s:Slide)
 RETURN n.id AS id, parent.id AS parent_id, n.title AS title, n.order AS order,
        n.content_markdown AS content_markdown, n.key_concepts AS key_concepts,
        coalesce(n.is_unassigned, false) AS is_unassigned,
-       collect(DISTINCT s.id) AS source_refs
+       coalesce(n.source_slide_ids, []) AS source_refs
+"""
+
+PROJECT_QUERY = """
+MATCH (p:Project {id: $id})
+RETURN p.title AS title, coalesce(p.source_deck_ids, []) AS deck_ids
 """
 
 TYPST_NODES_QUERY = """
@@ -85,10 +89,11 @@ def render_project(project_id, fmt, template_name, out_path, *, neo4j_client, mi
     """Write the project as `fmt` to out_path. `reader` set means fixture mode, None means the direct stores."""
     if fmt not in FORMATS:
         raise ValueError(f"format must be one of {', '.join(sorted(FORMATS))}")
-    rows = neo4j_client.execute_query("MATCH (p:Project {id: $id}) RETURN p.title AS title", {"id": project_id})
+    rows = neo4j_client.execute_query(PROJECT_QUERY, {"id": project_id})
     if not rows:
         raise LookupError(f"Project {project_id} not found")
     title = rows[0]["title"]
+    deck_ids = list(rows[0].get("deck_ids") or [])
     out_path = Path(out_path)
 
     if fmt == "typ":
@@ -98,10 +103,10 @@ def render_project(project_id, fmt, template_name, out_path, *, neo4j_client, mi
     with tempfile.TemporaryDirectory() as tmpdir:
         mapping_path = load_template_mapping(minio_client, template_name or "standin", tmpdir)
         if reader is not None:
-            lookup, resolver = ReaderLookup(reader), FixtureImageResolver(reader)
+            lookup, resolver = ReaderLookup(reader), FixtureImageResolver(reader, deck_ids)
         else:
             lookup = GraphLookup(neo4j_client)
-            resolver = MinioImageResolver(minio_client, os.getenv("BUCKET_NAME", "processing-artifacts"))
-        course = build_course({"id": project_id, "title": title}, fetch_course_nodes(neo4j_client, project_id), lookup)
+            resolver = MinioImageResolver(minio_client, os.getenv("BUCKET_NAME", "processing-artifacts"), deck_ids)
+        course = build_course({"id": project_id, "title": title, "deck_ids": deck_ids}, fetch_course_nodes(neo4j_client, project_id), lookup)
         export_deck(course, mapping_path, out_path, resolver)
     return out_path

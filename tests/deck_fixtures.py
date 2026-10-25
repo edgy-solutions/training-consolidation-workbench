@@ -4,7 +4,8 @@ import shutil
 from pathlib import Path
 
 from src.publishing.course import FixtureImageResolver, ReaderLookup, build_course
-from src.workbench.fixture_reader import FixtureReader
+from src.publishing.image_ids import qualify
+from src.workbench.fixture_reader import FixtureReader, MultiFixtureReader
 
 ROOT = Path(__file__).resolve().parent
 FIXTURE_DIR = ROOT / "fixtures" / "training"
@@ -14,7 +15,11 @@ COURSE_ID = json.loads((FIXTURE_DIR / "golden.json").read_text(encoding="utf-8")
 
 
 def reader():
-    return FixtureReader(FIXTURE_DIR)
+    return MultiFixtureReader([FixtureReader(FIXTURE_DIR)])
+
+
+def image_id(name):
+    return qualify(COURSE_ID, name)
 
 
 def course_data():
@@ -27,7 +32,7 @@ def golden_course():
 
 
 def resolver():
-    return FixtureImageResolver(reader())
+    return FixtureImageResolver(reader(), [COURSE_ID])
 
 
 def copy_standin(dest):

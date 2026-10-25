@@ -170,7 +170,8 @@ class GeneratorService:
             })
 
         # Step 5: Persist
-        project_id = self._persist_project(enriched_sections, title=title, user_id=user_id)
+        project_id = self._persist_project(enriched_sections, title=title, user_id=user_id,
+                                           source_deck_ids=list(dict.fromkeys(source_course_ids)))
         
         return {
             'project_id': project_id,
@@ -437,7 +438,8 @@ class GeneratorService:
         # Return list (limit to reasonable number, e.g. 6 slides max per section)
         return list(unique_slides.values())[:6]
     
-    def _persist_project(self, sections: List[Dict], title: str = "New Curriculum", user_id: Optional[str] = None) -> str:
+    def _persist_project(self, sections: List[Dict], title: str = "New Curriculum", user_id: Optional[str] = None,
+                         source_deck_ids: Optional[List[str]] = None) -> str:
         """Create Project and TargetNode entries in Neo4j with hierarchy support"""
         project_id = str(uuid.uuid4())
         
@@ -448,10 +450,11 @@ class GeneratorService:
                 id: $project_id,
                 title: $title,
                 created_at: datetime(),
-                status: 'draft'
+                status: 'draft',
+                source_deck_ids: $source_deck_ids
             })
             """,
-            {"project_id": project_id, "title": title}
+            {"project_id": project_id, "title": title, "source_deck_ids": list(source_deck_ids or [])}
         )
 
         # Link to User if provided

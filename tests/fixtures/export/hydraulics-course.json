@@ -1,7 +1,10 @@
 {
   "project": {
     "id": "proj-hydraulics",
-    "title": "Hydraulic Systems (consolidated)"
+    "title": "Hydraulic Systems (consolidated)",
+    "deck_ids": [
+      "sha256:895392accf240f84d20c095c97384eee337541266ac21b31f9e09d1781597ebc"
+    ]
   },
   "nodes": [
     {
@@ -57,7 +60,7 @@
       "parent_id": "n-components",
       "title": "Reservoir Schematic",
       "order": 4,
-      "content_markdown": "Figure 1: reservoir, filter and pump in series\n\n![slide_4_img_0.png](fixture://images/slide_4_img_0.png)",
+      "content_markdown": "Figure 1: reservoir, filter and pump in series\n\n![895392accf24--slide_4_img_0.png](fixture://images/895392accf24--slide_4_img_0.png)",
       "key_concepts": [
         "Hydraulic reservoir"
       ],

@@ -34,7 +34,7 @@ class FakeNeo4j:
         if "RETURN p.title AS title" in query:
             if params["id"] != self.project["id"]:
                 return []
-            return [{"title": self.project["title"]}]
+            return [{"title": self.project["title"], "deck_ids": self.project["deck_ids"]}]
         if query == COURSE_NODES_QUERY:
             return [dict(n) for n in self.nodes]
         return []
