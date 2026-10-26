@@ -7,7 +7,9 @@ the workbench, `<keycloak-host>` the realm, `<llm-host>` the LiteLLM proxy.
 
 # Work install: images, values, client, LLM, storage, one check each
 
-The work order's last item before b5. The items before it, in your order:
+Chris installs from this packet. Its images (03335a8) are the sandbox's revision 18 (f99584c,
+login and Generate Outline confirmed by Chris) plus the template fetch in section 6 (480 tests
+pass). They are not rolled to the sandbox yet. The work-order items, in your order:
 
 **1. Answer-only + low reasoning: measured, and not kept (f99584c).** One dry run per mode on the
 same deck pair, in the live pod, with the DSPy cache off and nothing saved:
@@ -40,12 +42,12 @@ fills yet. Nothing is asked of tr.
 
 ## 1. Images, by digest
 
-Build of lane/wb `f99584c63b9e93b4f1f23321c9aacc685c78dbef` (CI `build-images.yml`, multi-arch amd64 + arm64, tag = full commit sha):
+Build of lane/wb `03335a8cb5de6ed4455e4519e2de4944bbc1d864` (CI `build-images.yml`, multi-arch amd64 + arm64, tag = full commit sha):
 
 | image | digest |
 |---|---|
-| `ghcr.io/edgy-solutions/training-consolidation-workbench/api` | `sha256:0332fd02a251560a3d46d0e69f34f7801c4637f6f05c0744866337ed2060017c` |
-| `ghcr.io/edgy-solutions/training-consolidation-workbench/ui` | `sha256:f18b57456fa0fde0428c6788cb008c3fcdeaa2f864a6ad9f031132f8dc86a818` |
+| `ghcr.io/edgy-solutions/training-consolidation-workbench/api` | `sha256:75008de02d317707ce583d1e27d1854539f7ec37886adcb73c2c78f2e1460c57` |
+| `ghcr.io/edgy-solutions/training-consolidation-workbench/ui` | `sha256:e79bf431bc2d094b1fadaedc5cffa5307b8d8c9ec1ab913a0d6156e32be3eea0` |
 
 Set them as `api.image.digest` and `ui.image.digest`; the chart then ignores the tag.
 
@@ -63,7 +65,7 @@ api:
   replicaCount: 1                 # jobs and signed links are in-process; keep one replica
   sourceReader: store             # contract reads: Neo4j + MinIO + Weaviate
   existingSecret: <api secret>    # section 4 lists its keys
-  image: {digest: "sha256:0332fd02a251560a3d46d0e69f34f7801c4637f6f05c0744866337ed2060017c"}
+  image: {digest: "sha256:75008de02d317707ce583d1e27d1854539f7ec37886adcb73c2c78f2e1460c57"}
   env:
     KEYCLOAK_REALM_URL: <in-cluster realm URL>   # JWKS only; the keys are the same on any host
     NEO4J_URI: bolt://<neo4j service>:7687
@@ -83,7 +85,7 @@ ui:
   keycloak:
     realmUrl: https://<keycloak-host>/realms/<realm>
     clientId: training-workbench   # the chart default "workbench-app" is wrong; set it
-  image: {digest: "sha256:f18b57456fa0fde0428c6788cb008c3fcdeaa2f864a6ad9f031132f8dc86a818"}
+  image: {digest: "sha256:e79bf431bc2d094b1fadaedc5cffa5307b8d8c9ec1ab913a0d6156e32be3eea0"}
   ingress:
     enabled: true
     host: <work-host>             # same host as the api: the UI calls the api same-origin
@@ -164,6 +166,7 @@ elapsed time, and the canvas opens with a notice giving the section count and th
 | search | Weaviate `DocumentChunk` (BM25) | read-only |
 | deck exports, outline jobs | the api pod's `/tmp` (emptyDir), or `WB_EXPORT_DIR` | lost on a pod restart, swept after 24 h |
 | caches (DSPy, NLTK, matplotlib) | `$HOME` = `/tmp`, set by the chart | per pod |
+| deck template | `.pptx` at `api.deckTemplate.uri`, cached in `/tmp/wb-template`; mapping in a ConfigMap (section 6) | fetched once per pod |
 
 The root filesystem is read-only. The work log's `Errno 13` on `/home/workbench/.dspy_cache` came
 from a deployment that does not set `HOME=/tmp`. This chart sets it.
@@ -174,9 +177,38 @@ deck export link answers 404 and the user exports again. Nothing in the graph is
 **Check:** `kubectl exec <api pod> -- sh -c 'touch $HOME/.w && ls -d /tmp && echo ok'` prints `ok`.
 Signed in, `https://<work-host>/source/tree` returns the courses, and a slide's page image opens.
 
-## Open: the deck template at work
+## 6. Deck template
 
-Deck export uses the stand-in template unless `DECK_TEMPLATE` points to a mapping file
-(`deck-template.yaml` next to its `.pptx`). The real template stays out of the repo (ADR-0042), and
-the chart cannot mount one yet. Proposal: `api.deckTemplate.existingSecret` mounts both files
-read-only at `/etc/wb/template` and sets `DECK_TEMPLATE`. Say yes and I add it before the install.
+Per your rule, deck export uses one configured template. The template has two parts, and neither
+goes in the repo or the chart:
+
+| part | where | set by |
+|---|---|---|
+| the `.pptx` | object storage, at `api.deckTemplate.uri` = `s3://<bucket>/<key>`. The api fetches it at startup and caches it in `/tmp/wb-template` | Chris uploads it and sets the path |
+| the mapping (`deck-template.yaml`: layout and placeholder per role, see `docs/contracts/deck-template.md`) | a ConfigMap named by `api.deckTemplate.mappingConfigMap`, key `deck-template.yaml`, mounted read-only at `/etc/wb/template` | Chris |
+
+```yaml
+api:
+  deckTemplate:
+    uri: s3://<bucket>/<key>.pptx
+    mappingConfigMap: <configmap name>
+```
+
+```sh
+kubectl -n <ns> create configmap <configmap name> --from-file=deck-template.yaml=<local mapping file>
+```
+
+- **The api reads the `.pptx` with the MinIO credentials in section 4.** Their policy must allow
+  `GetObject` on that key, as well as the `training/` read.
+- **Leave `template:` in the mapping as any name.** The api points it at the cached `.pptx`.
+- **No URI means the stand-in template.** The api logs that once at startup. A URI that cannot be
+  fetched does not fall back: the api logs the error at startup, and each export fails with
+  `deck template s3://… could not be fetched`. So a wrongly branded deck never ships silently.
+- **The template is read once per pod.** To change it, upload the new `.pptx` and restart the api
+  pod: `kubectl rollout restart deploy/<release>-api`.
+
+**Check:**
+- `kubectl logs deploy/<release>-api | grep "deck template"` shows one line naming the URI and its
+  size, not "stand-in" and not an error.
+- `curl -sk https://<work-host>/render/templates` returns `{"templates":["configured"]}`.
+- Export a draft as PPTX from the inspector, open it, and its slides use your template's layouts.
