@@ -61,3 +61,13 @@ def baml_client_registry(s: LlmSettings | None = None):
     cr.add_llm_client(name="Llm", provider="openai-generic", options=baml_client_options(s))
     cr.set_primary("Llm")
     return cr
+
+
+def reasoning_kwargs(effort: str, s: LlmSettings | None = None) -> dict:
+    """Per-call reasoning effort for gpt-oss, as DSPy call config. litellm turns it into
+    Ollama's think; for an OpenAI-compatible server (vLLM behind LiteLLM) it rides in the
+    request body, because litellm refuses the parameter for model names it does not know."""
+    s = s or llm_settings()
+    if s.provider == "ollama":
+        return {"reasoning_effort": effort}
+    return {"extra_body": {"reasoning_effort": effort}}

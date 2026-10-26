@@ -1,4 +1,4 @@
-from src.llm_settings import baml_client_options, llm_settings
+from src.llm_settings import baml_client_options, llm_settings, reasoning_kwargs
 
 
 def test_ollama_default():
@@ -47,3 +47,21 @@ def test_build_lm_models():
     from src.dspy_modules.config import build_lm
     assert build_lm(llm_settings({"LLM_BASE_URL": "http://a/v1", "LLM_MODEL": "m"})).model == "openai/m"
     assert build_lm(llm_settings({"OLLAMA_MODEL": "m"})).model == "ollama_chat/m"
+
+
+def test_reasoning_kwargs_per_provider():
+    # litellm maps reasoning_effort to Ollama's think, but refuses it on the OpenAI path for an unknown model
+    assert reasoning_kwargs("low", llm_settings({"OLLAMA_MODEL": "m"})) == {"reasoning_effort": "low"}
+    assert reasoning_kwargs("low", llm_settings({"LLM_BASE_URL": "http://a/v1"})) == {"extra_body": {"reasoning_effort": "low"}}
+
+
+def test_outline_harmonizer_answers_only_at_low_effort(monkeypatch):
+    import dspy
+    from src.dspy_modules.outline_harmonizer import OutlineHarmonizer
+    for k in ("LLM_BASE_URL", "OPENAI_BASE_URL", "OUTLINE_REASONING_EFFORT"):
+        monkeypatch.delenv(k, raising=False)
+    h = OutlineHarmonizer()
+    assert type(h.generate) is dspy.Predict
+    assert h.call_config == {"reasoning_effort": "low"}
+    monkeypatch.setenv("OUTLINE_REASONING_EFFORT", "medium")
+    assert OutlineHarmonizer().call_config == {"reasoning_effort": "medium"}

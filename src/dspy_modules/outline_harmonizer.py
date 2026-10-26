@@ -7,7 +7,7 @@ Supports iterative pairwise merging for large inputs to avoid context overflow.
 import dspy
 import yaml
 import os
-from src.llm_settings import llm_settings
+from src.llm_settings import llm_settings, reasoning_kwargs
 import json
 from typing import List, Dict, Any, Optional
 from pydantic import BaseModel, Field
@@ -150,7 +150,10 @@ class OutlineHarmonizer(dspy.Module):
         self.template_modules = load_curriculum_template(template_name)
         print(f"[DEBUG] Loaded {len(self.template_modules)} template modules for '{template_name}'")
         signature_class = create_signature_class(self.template_modules)
-        self.generate = dspy.ChainOfThought(signature_class)
+        # Answer only: gpt-oss reasons on its own, and ChainOfThought had it write that reasoning
+        # out a second time. Low effort by default; a 163-section merge took 7 minutes before.
+        self.generate = dspy.Predict(signature_class)
+        self.call_config = reasoning_kwargs(os.getenv("OUTLINE_REASONING_EFFORT", "low"))
         
         # Calculate max sections per merge based on context
         self.max_sections_per_merge = self._calculate_max_sections()
@@ -189,7 +192,7 @@ class OutlineHarmonizer(dspy.Module):
         
         # Call LLM to merge
         source_json_str = json.dumps(combined, indent=2)
-        prediction = self.generate(source_outlines=source_json_str)
+        prediction = self.generate(source_outlines=source_json_str, config=self.call_config)
         
         # Parse output and convert back to outline format
         try:
@@ -304,7 +307,7 @@ class OutlineHarmonizer(dspy.Module):
         source_json_str = json.dumps(source_outlines, indent=2)
         
         # 2. Call DSPy
-        prediction = self.generate(source_outlines=source_json_str)
+        prediction = self.generate(source_outlines=source_json_str, config=self.call_config)
         
         print(f"\n{'='*60}")
         print("[DEBUG] Raw LLM Response:")
