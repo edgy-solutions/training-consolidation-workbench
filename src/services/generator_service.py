@@ -304,7 +304,9 @@ class GeneratorService:
         WITH n, target, level, bu, course_id, parent.id as parent_section_id
         
         // Get Concepts WITH MAX SCORE (Aggregation)
-        OPTIONAL MATCH (target)-[:HAS_SLIDE]->(slide:Slide)-[t:TEACHES]->(con:Concept)
+        // HAS_CHILD is the generic Section -> Slide edge (contract §4); the sandbox graph has no
+        // Section HAS_SLIDE overlay, so either one counts (as in store_reader).
+        OPTIONAL MATCH (target)-[:HAS_SLIDE|HAS_CHILD]->(slide:Slide)-[t:TEACHES]->(con:Concept)
         WITH target, level, bu, course_id, parent_section_id, 
              con.name as c_name, max(coalesce(t.salience, 0)) as max_score
         WHERE c_name IS NOT NULL
