@@ -17,6 +17,17 @@ NEO4J_PASSWORD = os.getenv("NEO4J_PASSWORD", "password")
 AUTHZ_CLAIM = os.getenv("AUTHZ_CLAIM", "authz_id")
 
 
+def token_audience() -> str:
+    """The client every accepted token must name in `aud` (architect, b5): the workbench's own."""
+    return os.getenv("KEYCLOAK_AUDIENCE", "training-workbench")
+
+
+def token_issuer() -> str:
+    """The realm's issuer as tokens carry it: the public realm URL, which differs from the
+    in-cluster KEYCLOAK_REALM_URL the keys are fetched from."""
+    return os.getenv("KEYCLOAK_ISSUER") or KEYCLOAK_URL
+
+
 def store_writes_on() -> bool:
     """The api holds the shared Neo4j admin credential; every write to the shared graph waits on WB_STORE_WRITES=on."""
     return os.getenv("WB_STORE_WRITES", "").strip().lower() == "on"
@@ -63,8 +74,9 @@ def get_current_user(token: str = Depends(oauth2_scheme)) -> User:
             token,
             signing_key.key,
             algorithms=["RS256"],
-            audience="account", # Default audience for Keycloak, adjust if needed
-            options={"verify_aud": False} # Relax audience check for now if client ID varies
+            audience=token_audience(),
+            issuer=token_issuer(),
+            options={"require": ["exp", "iss", "aud"]},
         )
         user = user_from_claims(payload)
         print(f"DEBUG: Token decoded successfully. User: {user.id}")
@@ -82,6 +94,19 @@ def get_current_user(token: str = Depends(oauth2_scheme)) -> User:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Token expired",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    except (jwt.InvalidAudienceError, jwt.InvalidIssuerError, jwt.MissingRequiredClaimError) as e:
+        # Which client and realm minted it (claim values, not secrets), so a mismatch can be fixed.
+        try:
+            seen = jwt.decode(token, options={"verify_signature": False})
+        except jwt.PyJWTError:
+            seen = {}
+        print(f"DEBUG: token refused ({e}): iss={seen.get('iss')!r} aud={seen.get('aud')!r} azp={seen.get('azp')!r}; "
+              f"want iss={token_issuer()!r} aud={token_audience()!r}")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=f"Could not validate credentials: {e}",
             headers={"WWW-Authenticate": "Bearer"},
         )
     except jwt.PyJWTError as e:

@@ -41,6 +41,16 @@ spec:
             # Read-only root: caches (dspy, nltk, matplotlib) go under the writable /tmp
             - name: HOME
               value: /tmp
+            {{- $env := .Values.api.env | default dict }}
+            # Accepted tokens are the UI's: aud = its client, iss = its realm (api.env may override).
+            {{- if and .Values.ui.keycloak.clientId (not (hasKey $env "KEYCLOAK_AUDIENCE")) }}
+            - name: KEYCLOAK_AUDIENCE
+              value: {{ .Values.ui.keycloak.clientId | quote }}
+            {{- end }}
+            {{- if and .Values.ui.keycloak.realmUrl (not (hasKey $env "KEYCLOAK_ISSUER")) }}
+            - name: KEYCLOAK_ISSUER
+              value: {{ .Values.ui.keycloak.realmUrl | quote }}
+            {{- end }}
             {{- range $k, $v := .Values.api.env }}
             - name: {{ $k }}
               value: {{ $v | quote }}

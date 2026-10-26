@@ -10,6 +10,8 @@ from src.auth import security
 from src.auth.security import user_from_claims
 
 KEY = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+ISS = "https://sso.example/realms/fleet"
+AUD = "training-workbench"
 
 
 @pytest.fixture
@@ -26,9 +28,13 @@ def verify(monkeypatch):
     monkeypatch.setattr(security, "PyJWKClient", StubJwks)
     monkeypatch.setattr(security, "sync_user_to_neo4j", synced.append)
     monkeypatch.setenv("WB_STORE_WRITES", "on")
+    monkeypatch.setenv("KEYCLOAK_AUDIENCE", AUD)
+    monkeypatch.setenv("KEYCLOAK_ISSUER", ISS)
 
     def run(**claims):
-        token = jwt.encode({"exp": int(time.time()) + 60, **claims}, KEY, algorithm="RS256")
+        """A token from the right client and realm unless a claim overrides it; None drops a claim."""
+        body = {"exp": int(time.time()) + 60, "iss": ISS, "aud": AUD, **claims}
+        token = jwt.encode({k: v for k, v in body.items() if v is not None}, KEY, algorithm="RS256")
         return security.get_current_user(token)
     return run, synced
 
