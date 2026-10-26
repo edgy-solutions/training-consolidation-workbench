@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Image, ChevronLeft, ChevronRight, GripVertical, Loader2 } from 'lucide-react';
 import clsx from 'clsx';
-import { api } from '../api';
+import { api, assetSrc } from '../api';
 
 interface EmbeddedImage {
     filename: string;
@@ -136,7 +136,7 @@ export const AssetDrawer: React.FC<AssetDrawerProps> = ({ slideIds, onInsert }) 
                             )}
                         >
                             <img
-                                src={image.url}
+                                src={assetSrc(image.url)}
                                 alt={image.filename}
                                 className="w-full h-full object-contain bg-white"
                                 draggable={false}

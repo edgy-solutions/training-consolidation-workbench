@@ -46,6 +46,7 @@ class GenerateRichContent(dspy.Signature):
     3. Select the most relevant diagrams/images to support the text.
     4. Extract specific safety warnings into structured 'Callouts'.
     5. Insert placeholders like {{asset_id}} in the markdown where the image should visually appear.
+       Copy each asset id exactly as listed in the available assets, including its '<deck>--' prefix.
     6. Format content according to the target layout requirements.
     7. DO NOT start with the section title as a heading - the title is already displayed separately in the UI.
        Jump straight into the content.

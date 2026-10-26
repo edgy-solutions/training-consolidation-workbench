@@ -1,6 +1,5 @@
 import React, { useEffect, useMemo } from 'react';
 import { Plus, GitMerge, BookOpen, Shield, Wrench, ClipboardCheck } from 'lucide-react';
-import { api } from '../api';
 import { SynthBlock } from './SynthBlock';
 
 interface ConsolidationCanvasProps {
@@ -11,6 +10,14 @@ interface ConsolidationCanvasProps {
 }
 
 import { useAppStore } from '../store';
+import type { ProjectStatus } from '../store';
+
+const PROJECT_PLACEHOLDER: Record<ProjectStatus, string> = {
+    loading: 'Loading...',
+    ready: 'Loading...',
+    empty: 'Untitled Project',
+    error: 'Project unavailable',
+};
 
 // Section type metadata for display
 const SECTION_CONFIG: Record<string, { label: string; icon: React.ElementType; color: string }> = {
@@ -20,8 +27,9 @@ const SECTION_CONFIG: Record<string, { label: string; icon: React.ElementType; c
     'mandatory_assessment': { label: 'Assessment', icon: ClipboardCheck, color: 'text-green-600' },
 };
 
-export const ConsolidationCanvas: React.FC<ConsolidationCanvasProps> = ({ projectId, setProjectId, discipline, refreshTrigger }) => {
+export const ConsolidationCanvas: React.FC<ConsolidationCanvasProps> = ({ projectId, discipline, refreshTrigger }) => {
     const structure = useAppStore(state => state.structure);
+    const projectStatus = useAppStore(state => state.projectStatus);
     const fetchStructure = useAppStore(state => state.fetchStructure);
     const addNode = useAppStore(state => state.addNode);
 
@@ -116,9 +124,9 @@ export const ConsolidationCanvas: React.FC<ConsolidationCanvasProps> = ({ projec
                 {/* Root Project Title */}
                 <div className="text-center mb-10">
                     <h1 className="text-3xl font-bold text-slate-800 tracking-tight">
-                        {structure.find(n => n.id === projectId)?.title || "Loading..."}
+                        {structure.find(n => n.id === projectId)?.title || PROJECT_PLACEHOLDER[projectStatus]}
                     </h1>
-                    <p className="text-slate-500 text-sm mt-2">Global Standardization Project • {discipline}</p>
+                    <p className="text-slate-500 text-sm mt-2">Global Standardization Project • {discipline || 'All disciplines'}</p>
                 </div>
 
                 {/* Grouped Draft Nodes (SynthBlocks) */}

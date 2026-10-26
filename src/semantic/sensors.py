@@ -30,7 +30,7 @@ def unharmonized_concepts_sensor(context: SensorEvaluationContext):
         # Count concepts that have no alignment to a CanonicalConcept
         query = """
         MATCH (c:Concept)
-        WHERE NOT (c)-[:ALIGNS_TO]->(:CanonicalConcept)
+        WHERE NOT (:CanonicalConcept)-[:ALIGNS_TO]->(c)
         RETURN count(c) as cnt
         """
         results = client.execute_query(query)

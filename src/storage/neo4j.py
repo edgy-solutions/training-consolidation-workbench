@@ -7,7 +7,11 @@ class Neo4jClient:
         self.user = user or os.getenv("NEO4J_USER", "neo4j")
         self.password = password or os.getenv("NEO4J_PASSWORD", "password")
         
-        self.driver = GraphDatabase.driver(self.uri, auth=(self.user, self.password))
+        # A long LLM call leaves pooled connections idle for minutes, and something on the path
+        # drops them; check any connection idle over a minute before reusing it.
+        self.driver = GraphDatabase.driver(
+            self.uri, auth=(self.user, self.password), liveness_check_timeout=60
+        )
 
     def close(self):
         self.driver.close()

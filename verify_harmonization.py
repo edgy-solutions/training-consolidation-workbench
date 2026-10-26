@@ -43,7 +43,7 @@ def verify_harmonization():
             
             # Verify Graph
             results = client.execute_query(
-                "MATCH (c:Concept)-[:ALIGNS_TO]->(cc:CanonicalConcept) RETURN c.name, cc.name"
+                "MATCH (cc:CanonicalConcept)-[:ALIGNS_TO]->(c:Concept) RETURN c.name, cc.name"
             )
             if len(results) > 0:
                 print(f"SUCCESS: Found {len(results)} alignment relationships.")

@@ -1,0 +1,3 @@
+# Vendored from doc-tools and pinned by sha256: never normalize their bytes.
+docs/contracts/training-workbench.md -text
+tests/fixtures/training/** -text

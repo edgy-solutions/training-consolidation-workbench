@@ -14,6 +14,9 @@ class SourceSlide(BaseModel):
     text_preview: str
     concepts: List[ConceptNode]
     elements: Optional[List[Dict[str, Any]]] = None
+    number: Optional[int] = None         # position in the deck
+    course_id: Optional[str] = None
+    course_title: Optional[str] = None   # same name the course tree shows
 
 
 class TargetDraftNode(BaseModel):
@@ -29,6 +32,7 @@ class TargetDraftNode(BaseModel):
     is_placeholder: bool = False # Flag for "NO_SOURCE_DATA" sections
     is_unassigned: bool = False # Flag for "Unassigned / For Review" section
     section_type: Optional[str] = None # Template section type (introduction, mandatory_safety, technical, mandatory_assessment)
+    role: Optional[str] = None # In /draft/list: "owner" or "reviewer" (reviewers read, never write)
     rationale: Optional[str] = None  # AI-generated rationale for this section
     suggested_source_ids: List[str] = []  # Slide IDs suggested by AI
     
@@ -90,7 +94,7 @@ class SkeletonRequest(BaseModel):
 class RenderRequest(BaseModel):
     project_id: str
     format: str = "pptx" # "pptx" or "typ"
-    template_name: Optional[str] = "standard"
+    template_name: Optional[str] = "standin"
 
 class ProjectTreeResponse(BaseModel):
     """Full project tree structure with all nodes"""

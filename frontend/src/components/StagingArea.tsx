@@ -1,9 +1,10 @@
 import React, { useEffect, useState, useMemo, useRef, useCallback } from 'react';
-import { ArrowRight, Layers, Zap } from 'lucide-react';
-import { api } from '../api';
-import type { CourseSection } from '../api';
+import { ArrowRight, ChevronDown, ChevronRight, Layers, Zap } from 'lucide-react';
+import { api, courseSubtitle, courseTooltip } from '../api';
+import { conceptKey, displayCasing } from '../conceptCase';
+import type { CourseSection, GenerateJob } from '../api';
 import { useSelectionStore } from '../stores/selectionStore';
-import { useAppStore } from '../store';
+import { useAppStore, projectTitle } from '../store';
 import clsx from 'clsx';
 
 interface StagingGroup {
@@ -11,6 +12,8 @@ interface StagingGroup {
     courses: {
         id: string;
         title: string;
+        filename?: string | null;
+        version?: string | null;
         sections: CourseSection[];
     }[];
 }
@@ -27,10 +30,52 @@ const SIMILARITY_COLORS = [
     'bg-teal-100 border-teal-300',
 ];
 
+// No slides and no concepts of its own: kept in the list, left out of similarity
+const isEmptySection = (s: CourseSection) => (s.slide_count ?? 1) === 0 && s.concepts_inherited === true;
+
+// Indent stops growing after this many steps; deeper rows show a depth number instead
+const MAX_INDENT_STEPS = 3;
+
+// Rows to show, depth-first. The tree comes from parent_id (the HAS_SECTION edge), so it does
+// not depend on the API's order; children keep their relative order, and a section whose
+// parent is missing is a root. An API without parent_id falls back to nesting by level.
+// A collapsed section hides its subtree.
+function visibleSections(sections: CourseSection[], collapsed: Set<string>) {
+    const ids = new Set(sections.map(s => s.id));
+    const hasParentIds = sections.some(s => s.parent_id !== undefined);
+    const byParent = new Map<string | null, CourseSection[]>();
+    const stack: CourseSection[] = [];
+    for (const s of sections) {
+        let parent: string | null = null;
+        if (hasParentIds) {
+            parent = s.parent_id && ids.has(s.parent_id) ? s.parent_id : null;
+        } else {
+            while (stack.length && (stack[stack.length - 1].level ?? 0) >= (s.level ?? 0)) stack.pop();
+            parent = stack.length ? stack[stack.length - 1].id : null;
+            stack.push(s);
+        }
+        byParent.set(parent, [...(byParent.get(parent) ?? []), s]);
+    }
+    const rows: Array<{ section: CourseSection; indentLevel: number; hasChildren: boolean }> = [];
+    const seen = new Set<string>();
+    const walk = (s: CourseSection, indentLevel: number) => {
+        if (seen.has(s.id)) return;
+        seen.add(s.id);
+        const kids = byParent.get(s.id) ?? [];
+        rows.push({ section: s, indentLevel, hasChildren: kids.length > 0 });
+        if (!collapsed.has(s.id)) kids.forEach(k => walk(k, indentLevel + 1));
+    };
+    (byParent.get(null) ?? []).forEach(s => walk(s, 0));
+    return rows;
+}
+
 // Simple word-based title similarity using Jaccard index
+// Words of 2 characters or fewer don't count, so "Q&A" or "Lab" can match only on concepts
+const titleWords = (title: string) => new Set(title.toLowerCase().split(/\s+/).filter(w => w.length > 2));
+
 function getTitleSimilarity(title1: string, title2: string): number {
-    const words1 = new Set(title1.toLowerCase().split(/\s+/).filter(w => w.length > 2));
-    const words2 = new Set(title2.toLowerCase().split(/\s+/).filter(w => w.length > 2));
+    const words1 = titleWords(title1);
+    const words2 = titleWords(title2);
     if (words1.size === 0 || words2.size === 0) return 0;
 
     const intersection = [...words1].filter(w => words2.has(w)).length;
@@ -40,8 +85,8 @@ function getTitleSimilarity(title1: string, title2: string): number {
 
 // Calculate concept overlap using Jaccard index
 function getConceptOverlap(concepts1: string[], concepts2: string[]): number {
-    const set1 = new Set(concepts1.map(c => c.toLowerCase()));
-    const set2 = new Set(concepts2.map(c => c.toLowerCase()));
+    const set1 = new Set(concepts1.map(conceptKey));
+    const set2 = new Set(concepts2.map(conceptKey));
     if (set1.size === 0 || set2.size === 0) return 0;
 
     const intersection = [...set1].filter(c => set2.has(c)).length;
@@ -57,23 +102,54 @@ function getSimilarityScore(section1: CourseSection, section2: CourseSection): n
     return titleSim * 0.3 + conceptSim * 0.7;
 }
 
-// Find similar sections across all groups
+// A section with where it sits: ancestor titles (root = '') and its place in its course's outline (0..1)
+type SectionEntry = { section: CourseSection; groupIdx: number; courseId: string; path: string; position: number };
+
+// Titles of the ancestors, so same-titled siblings can be told apart by what they sit under
+function pathSimilarity(a: string, b: string): number {
+    if (!a && !b) return 1;
+    if (!a || !b) return 0;
+    return getTitleSimilarity(a, b);
+}
+
+// Order candidates for a target: score, then same parent path, then nearer position, then id
+function compareMatches(
+    target: SectionEntry,
+    a: { entry: SectionEntry; score: number },
+    b: { entry: SectionEntry; score: number }
+): number {
+    if (Math.abs(a.score - b.score) > 1e-9) return b.score - a.score;
+    const pathDiff = pathSimilarity(target.path, b.entry.path) - pathSimilarity(target.path, a.entry.path);
+    if (pathDiff !== 0) return pathDiff;
+    const posDiff = Math.abs(target.position - a.entry.position) - Math.abs(target.position - b.entry.position);
+    if (posDiff !== 0) return posDiff;
+    return a.entry.section.id < b.entry.section.id ? -1 : a.entry.section.id > b.entry.section.id ? 1 : 0;
+}
+
+// Candidates in other courses (same column or not) above the threshold, best first
+function rankedMatches(target: SectionEntry, allSections: SectionEntry[], threshold: number) {
+    return allSections
+        .filter(s => s.courseId !== target.courseId)
+        .map(s => ({ entry: s, score: getSimilarityScore(target.section, s.section) }))
+        .filter(m => m.score >= threshold)
+        .sort((a, b) => compareMatches(target, a, b));
+}
+
+// Same business unit = same column; those matches are drawn dashed
+type MatchKind = 'same-bu' | 'cross-bu';
+const matchKind = (a: SectionEntry, b: SectionEntry): MatchKind => (a.groupIdx === b.groupIdx ? 'same-bu' : 'cross-bu');
+
+// Find similar sections across all courses
 function findSimilarSections(
     sectionId: string,
-    allSections: Array<{ section: CourseSection; groupIdx: number; courseId: string }>,
+    allSections: SectionEntry[],
     threshold: number = 0.25
-): Array<{ sectionId: string; score: number }> {
+): Array<{ sectionId: string; score: number; kind: MatchKind }> {
     const targetSection = allSections.find(s => s.section.id === sectionId);
     if (!targetSection) return [];
 
-    return allSections
-        .filter(s => s.section.id !== sectionId && s.groupIdx !== targetSection.groupIdx)
-        .map(s => ({
-            sectionId: s.section.id,
-            score: getSimilarityScore(targetSection.section, s.section)
-        }))
-        .filter(s => s.score >= threshold)
-        .sort((a, b) => b.score - a.score);
+    return rankedMatches(targetSection, allSections, threshold)
+        .map(m => ({ sectionId: m.entry.section.id, score: m.score, kind: matchKind(targetSection, m.entry) }));
 }
 
 export const StagingArea: React.FC = () => {
@@ -82,15 +158,31 @@ export const StagingArea: React.FC = () => {
     const [groups, setGroups] = useState<StagingGroup[]>([]);
     const [loading, setLoading] = useState(true);
     const [strategy, setStrategy] = useState<'union' | 'intersection' | 'master_outline'>('union');
-    const [sharedConcepts, setSharedConcepts] = useState<Set<string>>(new Set());
+    const [sharedConcepts, setSharedConcepts] = useState<Map<string, string>>(new Map());
     const [masterCourseId, setMasterCourseId] = useState<string | null>(null);
     const [templates, setTemplates] = useState<Array<{ name: string; display_name: string }>>([]);
     const [selectedTemplate, setSelectedTemplate] = useState<string>("standard");
     const [generating, setGenerating] = useState(false);
+    const [job, setJob] = useState<GenerateJob | null>(null);
+    const [genError, setGenError] = useState<string | null>(null);
+    const [lost, setLost] = useState(false);
+    const lastPayload = useRef<any>(null);
+    const pollTimer = useRef<number | null>(null);
+    const unmounted = useRef(false);
+
+    useEffect(() => {
+        unmounted.current = false;
+        return () => {
+            unmounted.current = true;
+            if (pollTimer.current) window.clearTimeout(pollTimer.current);
+        };
+    }, []);
 
     // New state for similarity features
     const [hoveredSectionId, setHoveredSectionId] = useState<string | null>(null);
-    const [highlightedSections, setHighlightedSections] = useState<Set<string>>(new Set());
+    const [highlightedSections, setHighlightedSections] = useState<Map<string, MatchKind>>(new Map());
+    // Section ids whose subtree is folded (local, not persisted)
+    const [collapsedSections, setCollapsedSections] = useState<Set<string>>(new Set());
     const [matchingConcepts, setMatchingConcepts] = useState<Set<string>>(new Set());
 
     // Refs for scroll sync
@@ -99,31 +191,51 @@ export const StagingArea: React.FC = () => {
 
     // Flatten all sections for similarity lookup
     const allSections = useMemo(() => {
-        const result: Array<{ section: CourseSection; groupIdx: number; courseId: string }> = [];
+        const result: SectionEntry[] = [];
         groups.forEach((group, groupIdx) => {
             group.courses.forEach(course => {
-                course.sections.forEach(section => {
-                    result.push({ section, groupIdx, courseId: course.id });
+                const byId = new Map(course.sections.map(s => [s.id, s]));
+                const pathOf = (s: CourseSection) => {
+                    const titles: string[] = [];
+                    const seen = new Set([s.id]);
+                    let p = s.parent_id ? byId.get(s.parent_id) : undefined;
+                    while (p && !seen.has(p.id)) {
+                        seen.add(p.id);
+                        titles.unshift(p.title);
+                        p = p.parent_id ? byId.get(p.parent_id) : undefined;
+                    }
+                    return titles.join(' / ');
+                };
+                const span = Math.max(1, course.sections.length - 1);
+                course.sections.forEach((section, i) => {
+                    if (isEmptySection(section)) return;
+                    result.push({ section, groupIdx, courseId: course.id, path: pathOf(section), position: i / span });
                 });
             });
         });
         return result;
     }, [groups]);
 
-    // Compute similarity color groups - only sections with cross-column matches get colored
+    // Compute similarity color groups - only sections with matches in another course get colored
     const sectionColorMap = useMemo(() => {
-        const colorMap = new Map<string, string>();
-        const matchPairs: Array<{ id1: string; id2: string; score: number }> = [];
+        const colorMap = new Map<string, { color: string; kind: MatchKind }>();
+        const matchPairs: Array<{ id1: string; id2: string; score: number; kind: MatchKind }> = [];
 
-        // Find all cross-column match pairs
-        allSections.forEach(({ section: sec1, groupIdx: g1 }) => {
-            allSections.forEach(({ section: sec2, groupIdx: g2 }) => {
-                // Only match across different columns (BUs)
-                if (g1 >= g2) return; // Avoid duplicates and same-column matches
-
-                const score = getSimilarityScore(sec1, sec2);
-                if (score >= 0.2) {  // Match threshold with hover highlighting
-                    matchPairs.push({ id1: sec1.id, id2: sec2.id, score });
+        // Only mutual best matches share a colour: A's best in B's course is B and B's best in A's course is A,
+        // so same-titled siblings cannot both join one partner
+        const bestIn = new Map<string, SectionEntry>(); // `${sectionId}|${courseId}` -> best candidate there
+        allSections.forEach(target => {
+            const best = new Map<string, { entry: SectionEntry; score: number }>();
+            rankedMatches(target, allSections, 0.2).forEach(m => {
+                if (!best.has(m.entry.courseId)) best.set(m.entry.courseId, m);
+            });
+            best.forEach((m, c) => bestIn.set(`${target.section.id}|${c}`, m.entry));
+        });
+        allSections.forEach(a => {
+            allSections.forEach(b => {
+                if (a.courseId >= b.courseId) return; // each course pair once
+                if (bestIn.get(`${a.section.id}|${b.courseId}`) === b && bestIn.get(`${b.section.id}|${a.courseId}`) === a) {
+                    matchPairs.push({ id1: a.section.id, id2: b.section.id, score: getSimilarityScore(a.section, b.section), kind: matchKind(a, b) });
                 }
             });
         });
@@ -157,7 +269,10 @@ export const StagingArea: React.FC = () => {
         colorGroups.forEach((group, idx) => {
             const color = SIMILARITY_COLORS[idx % SIMILARITY_COLORS.length];
             group.forEach(sectionId => {
-                colorMap.set(sectionId, color);
+                // cross-bu wins when a section has partners of both kinds
+                const kind: MatchKind = matchPairs.some(m => m.kind === 'cross-bu' && (m.id1 === sectionId || m.id2 === sectionId))
+                    ? 'cross-bu' : 'same-bu';
+                colorMap.set(sectionId, { color, kind });
             });
         });
 
@@ -168,26 +283,26 @@ export const StagingArea: React.FC = () => {
     const handleSectionHover = useCallback((sectionId: string | null) => {
         setHoveredSectionId(sectionId);
         if (!sectionId) {
-            setHighlightedSections(new Set());
+            setHighlightedSections(new Map());
             setMatchingConcepts(new Set());
             return;
         }
 
         const similar = findSimilarSections(sectionId, allSections, 0.2);
-        setHighlightedSections(new Set(similar.map(s => s.sectionId)));
+        setHighlightedSections(new Map(similar.map(s => [s.sectionId, s.kind])));
 
         // Find concepts that are shared between hovered section and highlighted sections
         const hoveredSection = allSections.find(s => s.section.id === sectionId);
         if (hoveredSection && similar.length > 0) {
-            const hoveredConcepts = new Set((hoveredSection.section.concepts || []).map(c => c.toLowerCase()));
+            const hoveredConcepts = new Set((hoveredSection.section.concepts || []).map(conceptKey));
             const sharedConceptsSet = new Set<string>();
 
             similar.forEach(({ sectionId: matchId }) => {
                 const matchSection = allSections.find(s => s.section.id === matchId);
                 if (matchSection) {
                     (matchSection.section.concepts || []).forEach(c => {
-                        if (hoveredConcepts.has(c.toLowerCase())) {
-                            sharedConceptsSet.add(c.toLowerCase());
+                        if (hoveredConcepts.has(conceptKey(c))) {
+                            sharedConceptsSet.add(conceptKey(c));
                         }
                     });
                 }
@@ -203,18 +318,18 @@ export const StagingArea: React.FC = () => {
         const similar = findSimilarSections(sectionId, allSections, 0.2);
         if (similar.length === 0) return;
 
-        // Find best match per group (different from clicked section's group)
+        // Find best match per course (always another course)
         const clickedSection = allSections.find(s => s.section.id === sectionId);
         if (!clickedSection) return;
 
-        // Scroll to first similar section in each other group
-        const scrolledGroups = new Set<number>();
+        // Scroll to first similar section in each other course
+        const scrolledCourses = new Set<string>();
         similar.forEach(({ sectionId: matchId }) => {
             const match = allSections.find(s => s.section.id === matchId);
-            if (!match || match.groupIdx === clickedSection.groupIdx) return;
-            if (scrolledGroups.has(match.groupIdx)) return;
+            if (!match || match.courseId === clickedSection.courseId) return;
+            if (scrolledCourses.has(match.courseId)) return;
 
-            scrolledGroups.add(match.groupIdx);
+            scrolledCourses.add(match.courseId);
 
             // Scroll to element
             const element = sectionRefs.current.get(matchId);
@@ -236,18 +351,22 @@ export const StagingArea: React.FC = () => {
                 const tree = await api.getSourceTree();
 
                 // Fetch sections for each selected course
-                const coursesData: { id: string; title: string; bu: string; sections: CourseSection[] }[] = [];
+                const coursesData: { id: string; title: string; filename?: string | null; version?: string | null; bu: string; sections: CourseSection[] }[] = [];
 
                 for (const courseId of Array.from(selectedSourceIds)) {
                     // Find the course in the tree to get its BU
                     let courseBU = 'Unknown';
                     let courseTitle = '';
+                    let courseFile: string | null | undefined;
+                    let courseVersion: string | null | undefined;
 
                     for (const bu of tree) {
                         const course = bu.children?.find(c => c.id === courseId);
                         if (course) {
                             courseBU = bu.name;
                             courseTitle = course.name;
+                            courseFile = course.filename;
+                            courseVersion = course.version;
                             break;
                         }
                     }
@@ -257,6 +376,8 @@ export const StagingArea: React.FC = () => {
                     coursesData.push({
                         id: courseId,
                         title: courseTitle,
+                        filename: courseFile,
+                        version: courseVersion,
                         bu: courseBU,
                         sections
                     });
@@ -269,6 +390,8 @@ export const StagingArea: React.FC = () => {
                         existing.courses.push({
                             id: course.id,
                             title: course.title,
+                            filename: course.filename,
+                            version: course.version,
                             sections: course.sections
                         });
                     } else {
@@ -277,6 +400,8 @@ export const StagingArea: React.FC = () => {
                             courses: [{
                                 id: course.id,
                                 title: course.title,
+                                filename: course.filename,
+                                version: course.version,
                                 sections: course.sections
                             }]
                         });
@@ -286,33 +411,27 @@ export const StagingArea: React.FC = () => {
 
                 setGroups(grouped);
 
-                // Calculate shared concepts (present in at least 2 BUs)
-                if (grouped.length >= 2) {
-                    const conceptsByBU = grouped.map(g => {
-                        const concepts = new Set<string>();
-                        g.courses.forEach(c => {
-                            c.sections.forEach(s => {
-                                s.concepts?.forEach(concept => concepts.add(concept));
-                            });
-                        });
-                        return concepts;
+                // Shared concepts: carried by at least 2 staged courses (empty sections left out),
+                // compared case-insensitively and shown in their most common casing
+                const courseKeys = grouped.flatMap(g => g.courses).map(c => {
+                    const keys = new Set<string>();
+                    c.sections.filter(s => !isEmptySection(s)).forEach(s => {
+                        s.concepts?.forEach(concept => keys.add(conceptKey(concept)));
                     });
-
-                    const shared = new Set<string>();
-                    conceptsByBU.forEach((buConcepts, i) => {
-                        buConcepts.forEach(concept => {
-                            // Check if this concept appears in at least one other BU
-                            const appearsInOtherBU = conceptsByBU.some((otherBUConcepts, j) =>
-                                i !== j && otherBUConcepts.has(concept)
-                            );
-                            if (appearsInOtherBU) {
-                                shared.add(concept);
-                            }
-                        });
+                    return keys;
+                });
+                const spelled = new Map<string, string[]>();
+                grouped.flatMap(g => g.courses).forEach(c => c.sections.filter(s => !isEmptySection(s)).forEach(s => {
+                    s.concepts?.forEach(concept => {
+                        const k = conceptKey(concept);
+                        spelled.set(k, [...(spelled.get(k) ?? []), concept]);
                     });
-
-                    setSharedConcepts(shared);
-                }
+                }));
+                const shared = new Map<string, string>(); // key -> display casing
+                spelled.forEach((names, k) => {
+                    if (courseKeys.filter(keys => keys.has(k)).length >= 2) shared.set(k, displayCasing(names));
+                });
+                setSharedConcepts(shared);
 
             } catch (error) {
                 console.error('Failed to fetch staging data:', error);
@@ -341,37 +460,76 @@ export const StagingArea: React.FC = () => {
         fetchTemplates();
     }, []);
 
-    const handleGenerate = async () => {
-        if (generating) return;
-        setGenerating(true);
+    const poll = async (jobId: string) => {
+        if (unmounted.current) return;
         try {
-            // Build the payload
-            const { discipline } = useAppStore.getState();
-            const payload: any = {
-                title: `Unified ${discipline} Standard`, // Must match createProjectIfNeeded logic
-                domain: null,
-                selected_source_ids: Array.from(selectedSourceIds)
-            };
-
-            // Add master_course_id if in master outline mode
-            if (strategy === 'master_outline' && masterCourseId) {
-                payload.master_course_id = masterCourseId;
+            const j = await api.getGenerateJob(jobId);
+            if (unmounted.current) return;
+            setJob(j);
+            if (j.status === 'SUCCESS' && j.result) {
+                const r = j.result;
+                useAppStore.getState().setOutlineNotice(
+                    `Outline ready: ${r.section_count} sections. ${r.unassigned_count} source slides were not assigned; they are under "Unassigned / For Review".`
+                );
+                setGenerating(false);
+                setStagingMode(false);
+                setProjectId(r.project_id);
+            } else if (j.status === 'FAILURE') {
+                setGenError(j.error || 'Outline generation failed.');
+                setGenerating(false);
+            } else if (j.status === 'LOST') {
+                setLost(true);
+                setGenerating(false);
+            } else {
+                pollTimer.current = window.setTimeout(() => poll(jobId), 3000);
             }
+        } catch (error: any) {
+            if (unmounted.current) return;
+            if (error?.response?.status === 404) {
+                setLost(true);
+                setGenerating(false);
+            } else {
+                // transient network error: keep polling
+                pollTimer.current = window.setTimeout(() => poll(jobId), 3000);
+            }
+        }
+    };
 
-            // Add selected template
-            payload.template_name = selectedTemplate;
-
-            const result = await api.generateProjectSkeleton(payload);
-
-            // Switch back to consolidation view and load the new project
-            setStagingMode(false);
-            setProjectId(result.project_id);
-        } catch (error) {
+    const startJob = async (payload: any) => {
+        setGenerating(true);
+        setGenError(null);
+        setLost(false);
+        setJob(null);
+        try {
+            lastPayload.current = payload;
+            const started = await api.generateProjectSkeleton(payload);
+            setJob(started);
+            pollTimer.current = window.setTimeout(() => poll(started.job_id), 3000);
+        } catch (error: any) {
             console.error('Failed to generate outline:', error);
-        } finally {
+            setGenError(error?.response?.data?.detail || error?.message || 'Could not start outline generation.');
             setGenerating(false);
         }
     };
+
+    const handleGenerate = () => {
+        if (generating) return;
+        const { discipline } = useAppStore.getState();
+        const payload: any = {
+            title: projectTitle(discipline), // Must match createProjectIfNeeded logic
+            domain: null,
+            selected_source_ids: Array.from(selectedSourceIds)
+        };
+        // Add master_course_id if in master outline mode
+        if (strategy === 'master_outline' && masterCourseId) {
+            payload.master_course_id = masterCourseId;
+        }
+        payload.template_name = selectedTemplate;
+        startJob(payload);
+    };
+
+    const stepLabel = job?.steps?.find(s => s.key === job.step)?.label ?? 'Starting';
+    const elapsed = job?.elapsed != null ? ` (${Math.round(job.elapsed)}s)` : '';
 
     if (loading) {
         return (
@@ -426,7 +584,7 @@ export const StagingArea: React.FC = () => {
                             {generating ? (
                                 <>
                                     <div className="animate-spin h-4 w-4 border-2 border-slate-500 border-t-transparent rounded-full" />
-                                    Generating...
+                                    {stepLabel}{elapsed}...
                                 </>
                             ) : (
                                 <>
@@ -437,6 +595,20 @@ export const StagingArea: React.FC = () => {
                         </button>
                     </div>
                 </div>
+
+                {(genError || lost) && (
+                    <div className="flex items-center justify-between gap-3 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">
+                        <span>{lost ? 'The api restarted while generating; nothing was saved.' : genError}</span>
+                        {lost && (
+                            <button
+                                onClick={() => lastPayload.current && startJob(lastPayload.current)}
+                                className="px-3 py-1 rounded bg-red-600 text-white hover:bg-red-700"
+                            >
+                                Retry
+                            </button>
+                        )}
+                    </div>
+                )}
 
                 {/* Strategy Toggle */}
                 <div className="flex items-center gap-4">
@@ -481,7 +653,7 @@ export const StagingArea: React.FC = () => {
                         </button>
                     </div>
                     {strategy === 'intersection' && sharedConcepts.size > 0 && (
-                        <span className="text-xs text-slate-500">
+                        <span className="text-xs text-slate-500" title={[...sharedConcepts.values()].slice(0, 40).join(', ')}>
                             {sharedConcepts.size} shared concepts
                         </span>
                     )}
@@ -519,7 +691,7 @@ export const StagingArea: React.FC = () => {
                             {group.courses.map(course => {
                                 const isMaster = masterCourseId === course.id;
                                 const courseHasSharedConcepts = course.sections.some(s =>
-                                    s.concepts?.some(c => sharedConcepts.has(c))
+                                    s.concepts?.some(c => sharedConcepts.has(conceptKey(c)))
                                 );
                                 const courseIsRelevant = strategy === 'union' || courseHasSharedConcepts;
 
@@ -549,8 +721,11 @@ export const StagingArea: React.FC = () => {
                                                 isMaster ? "text-amber-900" : courseIsRelevant ? "text-slate-800" : "text-slate-500"
                                             )}>
                                                 {isMaster && <span className="text-lg">🏆</span>}
-                                                {course.title}
+                                                <span title={courseTooltip(course.title, course.id)}>{course.title?.trim() || <span className="italic text-slate-400">Untitled course</span>}</span>
                                             </h4>
+                                            {courseSubtitle(course) && (
+                                                <p className="text-[10px] text-slate-400 truncate" title={courseTooltip(course.title, course.id)}>{courseSubtitle(course)}</p>
+                                            )}
                                             <div className="flex items-center justify-between mt-1">
                                                 <p className="text-xs text-slate-500">
                                                     {course.sections.length} section{course.sections.length !== 1 ? 's' : ''}
@@ -572,12 +747,12 @@ export const StagingArea: React.FC = () => {
                                             {course.sections.length === 0 ? (
                                                 <p className="text-xs text-slate-400 italic">No sections found</p>
                                             ) : (
-                                                course.sections.map(section => {
-                                                    // Calculate indentation based on level (0 = no indent, 1+ = indent)
-                                                    const indentLevel = section.level || 0;
-                                                    const similarityColor = sectionColorMap.get(section.id);
+                                                visibleSections(course.sections, collapsedSections).map(({ section, indentLevel, hasChildren }) => {
+                                                    const similarity = sectionColorMap.get(section.id);
+                                                    const hlKind = highlightedSections.get(section.id);
+                                                    const matchAttr = similarity?.kind ?? hlKind;
                                                     const isHovered = hoveredSectionId === section.id;
-                                                    const isHighlighted = highlightedSections.has(section.id);
+                                                    const isHighlighted = hlKind !== undefined;
                                                     const hasMatches = highlightedSections.size > 0;
 
                                                     return (
@@ -586,21 +761,56 @@ export const StagingArea: React.FC = () => {
                                                             ref={el => { if (el) sectionRefs.current.set(section.id, el); }}
                                                             className={clsx(
                                                                 "pb-2 border-b border-slate-100 last:border-0 rounded-md px-2 py-1 transition-all cursor-pointer",
-                                                                similarityColor,
+                                                                similarity?.color,
+                                                                // Same-business-unit matches: dashed outline instead of solid
+                                                                similarity?.kind === 'same-bu' && "border-2 border-dashed",
                                                                 // Hovered section: fill background only if it has matches
                                                                 isHovered && hasMatches && "ring-2 ring-blue-500 bg-blue-50",
                                                                 // Hovered section with no matches: just show outline
                                                                 isHovered && !hasMatches && "ring-1 ring-slate-400",
                                                                 // Highlighted matching sections in other columns
-                                                                isHighlighted && "ring-2 ring-purple-500 bg-purple-50"
+                                                                isHighlighted && hlKind === 'cross-bu' && "ring-2 ring-purple-500 bg-purple-50",
+                                                                isHighlighted && hlKind === 'same-bu' && "border-2 border-dashed border-purple-500 bg-purple-50"
                                                             )}
-                                                            style={{ marginLeft: `${indentLevel * 16}px` }}
+                                                            style={{ marginLeft: `${Math.min(indentLevel, MAX_INDENT_STEPS) * 16}px` }}
                                                             onMouseEnter={() => handleSectionHover(section.id)}
                                                             onMouseLeave={() => handleSectionHover(null)}
                                                             onClick={() => handleSectionClick(section.id)}
-                                                            title="Click to scroll to similar sections"
+                                                            data-match={matchAttr}
+                                                            title={[
+                                                                matchAttr === 'same-bu' && "Similar section in the same business unit.",
+                                                                "Click to scroll to similar sections",
+                                                                titleWords(section.title || '').size === 0 && "(Title too short to compare: matched on concepts only.)",
+                                                            ].filter(Boolean).join(' ')}
                                                         >
                                                             <div className="flex items-start gap-2">
+                                                                {hasChildren && (
+                                                                    <button
+                                                                        type="button"
+                                                                        data-testid="section-toggle"
+                                                                        className="mt-0.5 flex-shrink-0 text-slate-400 hover:text-slate-700"
+                                                                        title={collapsedSections.has(section.id) ? 'Expand subsections' : 'Collapse subsections'}
+                                                                        onClick={e => {
+                                                                            e.stopPropagation();
+                                                                            setCollapsedSections(prev => {
+                                                                                const next = new Set(prev);
+                                                                                if (!next.delete(section.id)) next.add(section.id);
+                                                                                return next;
+                                                                            });
+                                                                        }}
+                                                                    >
+                                                                        {collapsedSections.has(section.id) ? <ChevronRight size={12} /> : <ChevronDown size={12} />}
+                                                                    </button>
+                                                                )}
+                                                                {indentLevel > MAX_INDENT_STEPS && (
+                                                                    <span
+                                                                        data-testid="depth-badge"
+                                                                        className="mt-0.5 flex-shrink-0 text-[9px] leading-3 font-semibold text-slate-400 border border-slate-200 rounded px-1"
+                                                                        title={`Level ${indentLevel + 1}`}
+                                                                    >
+                                                                        {indentLevel + 1}
+                                                                    </span>
+                                                                )}
                                                                 <ArrowRight
                                                                     size={12}
                                                                     className={clsx(
@@ -616,14 +826,23 @@ export const StagingArea: React.FC = () => {
                                                                             : "font-medium text-slate-700"
                                                                     )}>
                                                                         {section.title}
+                                                                    {isEmptySection(section) && (
+                                                                        <span
+                                                                            data-testid="empty-badge"
+                                                                            className="ml-1.5 text-[9px] leading-3 font-semibold text-slate-400 border border-slate-200 rounded px-1 align-middle"
+                                                                            title="No slides and no concepts of its own"
+                                                                        >
+                                                                            empty
+                                                                        </span>
+                                                                    )}
                                                                     </p>
                                                                     {/* Concepts */}
                                                                     {section.concepts && section.concepts.length > 0 && (
                                                                         <div className="flex flex-wrap gap-1 mt-1">
                                                                             {section.concepts.map((concept, i) => {
-                                                                                const isShared = sharedConcepts.has(concept);
+                                                                                const isShared = sharedConcepts.has(conceptKey(concept));
                                                                                 const isDimmed = strategy === 'intersection' && !isShared;
-                                                                                const isMatchingConcept = matchingConcepts.has(concept.toLowerCase()) &&
+                                                                                const isMatchingConcept = matchingConcepts.has(conceptKey(concept)) &&
                                                                                     (isHovered || isHighlighted);
 
                                                                                 return (
@@ -641,7 +860,7 @@ export const StagingArea: React.FC = () => {
                                                                                                         : 'bg-slate-100 text-slate-600 border-slate-200'
                                                                                         )}
                                                                                     >
-                                                                                        {concept}
+                                                                                        {sharedConcepts.get(conceptKey(concept)) ?? concept}
                                                                                     </span>
                                                                                 );
                                                                             })}

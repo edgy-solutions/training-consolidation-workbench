@@ -1,9 +1,11 @@
 import React from 'react';
-import { AuthProvider as OidcProvider } from 'react-oidc-context';
+import { AuthProvider as OidcProvider, AuthContext } from 'react-oidc-context';
+import type { AuthContextProps } from 'react-oidc-context';
+import { LOGIN_CONFIGURED, OIDC_AUTHORITY, OIDC_CLIENT_ID } from './config';
 
 const oidcConfig = {
-    authority: import.meta.env.VITE_KEYCLOAK_REALM_URL || "http://localhost:8080/realms/workbench",
-    client_id: import.meta.env.VITE_KEYCLOAK_CLIENT_ID || "workbench-app",
+    authority: OIDC_AUTHORITY,
+    client_id: OIDC_CLIENT_ID,
     redirect_uri: window.location.origin,
     onSigninCallback: () => {
         // Remove the code and state from the URL after successful login
@@ -11,6 +13,13 @@ const oidcConfig = {
     }
 };
 
+// OidcProvider cannot take an empty authority, so an unconfigured install gets a
+// signed-out context instead. useAuth() keeps working for every consumer.
+const signedOut = { isAuthenticated: false, isLoading: false } as unknown as AuthContextProps;
+
 export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
+    if (!LOGIN_CONFIGURED) {
+        return <AuthContext.Provider value={signedOut}>{children}</AuthContext.Provider>;
+    }
     return <OidcProvider {...oidcConfig}>{children}</OidcProvider>;
 };

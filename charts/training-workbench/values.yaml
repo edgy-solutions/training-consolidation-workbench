@@ -1,0 +1,99 @@
+# Images come from .github/workflows/build-images.yml:
+#   <global.imageRegistry>/<component.image.name>@<digest>  or  :<tag> (the commit sha)
+# Each component needs a digest or a tag. The repo's chart has no default; a released chart
+# (release-chart.yml) carries the digests it was released with.
+global:
+  imageRegistry: ghcr.io/edgy-solutions/training-consolidation-workbench
+  imagePullPolicy: IfNotPresent
+  imagePullSecrets: []
+
+api:
+  enabled: true
+  replicaCount: 1
+  image:
+    name: api
+    digest: ""
+    tag: ""
+  # Where the source display reads from:
+  #   fixture  the vendored contract fixture baked into the image; needs no stores
+  #   store    the contract's Neo4j, MinIO and Weaviate, read through the SourceReader port
+  #   direct   Neo4j, Weaviate and MinIO directly (the interim, until ADR-0060)
+  sourceReader: fixture
+  # Extra plain env, e.g. NEO4J_URI, NEO4J_USER, WEAVIATE_URL, MINIO_ENDPOINT, BUCKET_NAME,
+  # LLM_BASE_URL, LLM_MODEL, LLM_NUM_CTX (an OpenAI-compatible endpoint such as a LiteLLM proxy;
+  # else OLLAMA_BASE_URL, OLLAMA_MODEL, OLLAMA_NUM_CTX), KEYCLOAK_REALM_URL, DAGSTER_HOST, WB_STORE_WRITES ("on" lets
+  # /draft, /curriculum, /project, /synthesis write to Neo4j; held otherwise).
+  env: {}
+  # The deck template export uses.
+  deckTemplate:
+    uri: ""                 # s3://<bucket>/<key> of the .pptx; empty = the stand-in
+    mappingConfigMap: ""    # ConfigMap with key deck-template.yaml
+  # Name of an existing Secret loaded whole with envFrom (NEO4J_PASSWORD, MINIO_ACCESS_KEY,
+  # MINIO_SECRET_KEY, LLM_API_KEY, ...). The chart never creates secrets.
+  existingSecret: ""
+  service:
+    type: ClusterIP
+    port: 8000
+  ingress:
+    enabled: false
+    className: ""
+    annotations: {}
+    host: ""
+    # Prefix paths routed to this component. To share the UI's host, list the API's route
+    # prefixes here (/source, /draft, /render, /templates, /search, /synthesis, /curriculum,
+    # /project, /healthz); the UI keeps / and the ingress picks the longest prefix.
+    paths: ["/"]
+    tls: []
+  resources:
+    requests:
+      cpu: 100m
+      memory: 512Mi
+    limits:
+      memory: 2Gi
+
+ui:
+  enabled: true
+  replicaCount: 1
+  image:
+    name: ui
+    digest: ""
+    tag: ""
+  # Browser-facing URL of the API. Empty: <scheme>://<api.ingress.host> when the API ingress is on,
+  # https if api.ingress.tls is set and http otherwise.
+  apiUrl: ""
+  # true runs without Keycloak (sandbox and fixture mode); the backend's project routes then answer 401.
+  noAuth: false
+  keycloak:
+    realmUrl: ""
+    clientId: workbench-app
+  service:
+    type: ClusterIP
+    port: 8080
+  ingress:
+    enabled: false
+    className: ""
+    annotations: {}
+    host: ""
+    paths: ["/"]
+    tls: []
+  resources:
+    requests:
+      cpu: 10m
+      memory: 32Mi
+    limits:
+      memory: 128Mi
+
+podSecurityContext:
+  runAsNonRoot: true
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop: [ALL]
+
+nodeSelector: {}
+tolerations: []
+affinity: {}

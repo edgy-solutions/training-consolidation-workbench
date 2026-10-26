@@ -1,24 +1,53 @@
-import React from 'react';
-import { Settings, Code, Activity, Globe, Cpu, User } from 'lucide-react';
+import React, { useEffect, useState } from 'react';
+import { Settings, Code, Activity, Globe, Cpu, User, Layers, Tag } from 'lucide-react';
+import type { LucideIcon } from 'lucide-react';
 import clsx from 'clsx';
 import { LoginButton } from './LoginButton';
 import { LogoutButton } from './LogoutButton';
 import { useAuth } from 'react-oidc-context';
+import { api } from '../api';
 
 interface TopBarProps {
     discipline: string;
     setDiscipline: (d: string) => void;
 }
 
+const SHORT_LABELS: Record<string, string> = {
+    Mechanical: 'ME',
+    Electrical: 'EE',
+    Software: 'SWE',
+    Systems: 'SysE',
+};
+
+const ICONS: Record<string, LucideIcon> = {
+    Mechanical: Settings,
+    Electrical: Activity, // Using Activity for waves/signals
+    Software: Code,
+    Systems: Globe, // Globe for big picture? Or Cpu?
+};
+
 export const TopBar: React.FC<TopBarProps> = ({ discipline, setDiscipline }) => {
     const auth = useAuth();
     // const userDisplay = auth.user?.profile.preferred_username || auth.user?.profile.email || "Guest";
 
+    // The buttons come from the disciplines the courses actually carry (/source/filters domains).
+    // '' is "All": the tree request then sends no discipline, so courses without one show too.
+    const [domains, setDomains] = useState<string[] | null>(null);
+
+    useEffect(() => {
+        api.getFilterOptions()
+            .then(f => setDomains(f.domains))
+            .catch(err => console.error("Failed to load disciplines", err));
+    }, []);
+
+    // A persisted choice that no course carries any more would hide every course.
+    useEffect(() => {
+        if (domains && discipline && !domains.includes(discipline)) setDiscipline('');
+    }, [domains, discipline, setDiscipline]);
+
     const disciplines = [
-        { id: 'Mechanical', label: 'ME', icon: Settings },
-        { id: 'Electrical', label: 'EE', icon: Activity }, // Using Activity for waves/signals
-        { id: 'Software', label: 'SWE', icon: Code },
-        { id: 'Systems', label: 'SysE', icon: Globe }, // Globe for big picture? Or Cpu?
+        { id: '', label: 'All', title: 'All disciplines', icon: Layers },
+        ...(domains ?? []).map(d => ({ id: d, label: SHORT_LABELS[d] ?? d, title: d, icon: ICONS[d] ?? Tag })),
     ];
 
     return (
@@ -33,14 +62,16 @@ export const TopBar: React.FC<TopBarProps> = ({ discipline, setDiscipline }) => 
                 </div>
             </div>
 
-            <div className="flex bg-slate-800 rounded-lg p-1">
+            {/* As many buttons as the courses have disciplines: scroll rather than crowd the bar. */}
+            <div className="flex bg-slate-800 rounded-lg p-1 mx-4 min-w-0 overflow-x-auto">
                 <span className="px-3 py-1 text-xs text-slate-400 font-semibold self-center">DISCIPLINE:</span>
                 {disciplines.map(d => (
                     <button
                         key={d.id}
+                        title={d.title}
                         onClick={() => setDiscipline(d.id)}
                         className={clsx(
-                            "flex items-center gap-2 px-3 py-1 rounded-md text-sm transition-all",
+                            "flex items-center gap-2 px-3 py-1 rounded-md text-sm transition-all shrink-0 whitespace-nowrap",
                             discipline === d.id
                                 ? "bg-brand-teal text-white shadow-sm font-medium"
                                 : "text-slate-400 hover:text-slate-200"

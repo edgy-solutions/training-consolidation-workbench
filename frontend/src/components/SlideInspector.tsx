@@ -1,8 +1,9 @@
 import React, { useEffect, useState, useRef } from 'react';
-import { FileText, Image as ImageIcon, Maximize2, XCircle, Sparkles, Download, Layout } from 'lucide-react';
+import { FileText, Copy, Check, Image as ImageIcon, Maximize2, X, ChevronLeft, ChevronRight, Sparkles, Download, Layout } from 'lucide-react';
 import { useAppStore } from '../store';
-import { api } from '../api';
+import { api, assetSrc, slideLabel, API_URL } from '../api';
 import type { SourceSlide } from '../api';
+import { conceptKey, mergeByCase } from '../conceptCase';
 import clsx from 'clsx';
 import { marked } from 'marked';
 import { SlidePreview } from './SlidePreview';
@@ -22,10 +23,24 @@ export const SlideInspector: React.FC = () => {
     const [slide, setSlide] = useState<SourceSlide | null>(null);
     const [loading, setLoading] = useState(false);
     const [rendering, setRendering] = useState(false);
+    const [copied, setCopied] = useState(false);
+    const [loadError, setLoadError] = useState(false);
+    const [reloadTick, setReloadTick] = useState(0); // Retry bumps this to refetch
+    const copyId = () => {
+        if (!slide) return;
+        navigator.clipboard.writeText(slide.id).then(() => {
+            setCopied(true);
+            setTimeout(() => setCopied(false), 1500);
+        }).catch(console.error);
+    };
     const [renderFormat, setRenderFormat] = useState<"pptx" | "typ">("pptx");
-    const [templates, setTemplates] = useState<string[]>(["standard"]);
-    const [selectedTemplate, setSelectedTemplate] = useState<string>("standard");
+    const [templates, setTemplates] = useState<string[]>(["standin"]);
+    const [selectedTemplate, setSelectedTemplate] = useState<string>("standin");
     const [inspectorViewMode, setInspectorViewMode] = useState<'course' | 'spatial'>('spatial');
+    const [embedded, setEmbedded] = useState<{ filename: string; url: string; size: number }[]>([]);
+    const [embeddedLoading, setEmbeddedLoading] = useState(false);
+    const [embeddedIdx, setEmbeddedIdx] = useState(0);
+    const [lightbox, setLightbox] = useState(false);
 
     // Fetch templates on mount
     useEffect(() => {
@@ -40,16 +55,55 @@ export const SlideInspector: React.FC = () => {
     // Effect for Source Slides
     useEffect(() => {
         if (activeSlideId) {
+            // Drop the previous slide at once, and ignore a response that arrives after a newer click
+            let cancelled = false;
+            setSlide(null);
+            setLoadError(false);
             setLoading(true);
             api.getSlideDetails(activeSlideId)
-                .then(setSlide)
-                .catch(console.error)
-                .finally(() => setLoading(false));
+                .then(s => { if (!cancelled) setSlide(s); })
+                .catch(e => {
+                    console.error(e);
+                    if (!cancelled) setLoadError(true);
+                })
+                .finally(() => { if (!cancelled) setLoading(false); });
+            return () => { cancelled = true; };
         } else if (!activeNodeId) {
             // Only clear if no active node either
             setSlide(null);
+            setLoadError(false);
         }
-    }, [activeSlideId]);
+    }, [activeSlideId, reloadTick]);
+
+    // Slides without a page render fall back to their embedded images
+    useEffect(() => {
+        setEmbedded([]);
+        setEmbeddedIdx(0);
+        setLightbox(false);
+        if (!slide || slide.s3_url) {
+            setEmbeddedLoading(false);
+            return;
+        }
+        let cancelled = false;
+        setEmbeddedLoading(true);
+        api.getEmbeddedImagesForSlides([slide.id])
+            .then(res => { if (!cancelled) setEmbedded(res.images || []); })
+            .catch(console.error)
+            .finally(() => { if (!cancelled) setEmbeddedLoading(false); });
+        return () => { cancelled = true; };
+    }, [slide]);
+
+    // Lightbox keys: Escape closes, arrows step through embedded images
+    useEffect(() => {
+        if (!lightbox) return;
+        const onKey = (e: KeyboardEvent) => {
+            if (e.key === 'Escape') setLightbox(false);
+            else if (e.key === 'ArrowLeft') setEmbeddedIdx(i => Math.max(0, i - 1));
+            else if (e.key === 'ArrowRight') setEmbeddedIdx(i => Math.min(embedded.length - 1, i + 1));
+        };
+        window.addEventListener('keydown', onKey);
+        return () => window.removeEventListener('keydown', onKey);
+    }, [lightbox, embedded.length]);
 
     // Effect to scroll active synthesized node into view
     useEffect(() => {
@@ -83,7 +137,7 @@ export const SlideInspector: React.FC = () => {
                         description: data.filename,
                         action: {
                             label: 'Download',
-                            onClick: () => window.open(data.download_url, '_blank')
+                            onClick: () => window.open(data.download_url.startsWith('/') ? `${API_URL}${data.download_url}` : data.download_url, '_blank')
                         },
                         duration: 30000 // Keep visible for 30s so user can download
                     });
@@ -239,7 +293,7 @@ export const SlideInspector: React.FC = () => {
                             title="Select Template"
                         >
                             {templates.map(t => (
-                                <option key={t} value={t}>{t}</option>
+                                <option key={t} value={t}>{t === "standin" ? "Stand-in" : t}</option>
                             ))}
                         </select>
 
@@ -281,6 +335,16 @@ export const SlideInspector: React.FC = () => {
         );
     }
 
+    // Case 3a: the details fetch failed
+    if (loadError && !slide) {
+        return (
+            <div className="h-full flex flex-col items-center justify-center gap-2 text-slate-500 text-xs">
+                <span>Couldn't load this slide.</span>
+                <button className="text-blue-600 hover:underline" onClick={() => setReloadTick(t => t + 1)}>Retry</button>
+            </div>
+        );
+    }
+
     // Case 3: Loading Slide
     if (loading || !slide) {
         return (
@@ -290,16 +354,33 @@ export const SlideInspector: React.FC = () => {
         );
     }
 
+    // Blank text elements are dropped; Image elements stay as a placeholder
+    const shownElements = (slide.elements ?? []).filter(el => el.type === 'Image' || el.text?.trim());
+
     return (
         <div className="h-full flex flex-col bg-white">
             {/* Header */}
             <div className="p-4 border-b border-slate-100 flex justify-between items-start">
-                <div>
+                <div className="min-w-0">
                     <h2 className="font-bold text-slate-800 text-sm flex items-center gap-2">
                         <FileText size={16} className="text-teal-600" />
                         Slide Inspector
                     </h2>
-                    <p className="text-xs text-slate-500 mt-1 font-mono">{slide.id}</p>
+                    <div className="flex items-center gap-1 mt-1 text-xs text-slate-500">
+                        <span className="truncate" title={slide.id}>
+                            {slide.course_title ? `${slide.course_title} · ` : ''}{slideLabel(slide.id, slide.number)}
+                        </span>
+                        <button
+                            type="button"
+                            data-testid="copy-slide-id"
+                            aria-label="Copy slide id"
+                            title="Copy slide id"
+                            onClick={copyId}
+                            className="p-0.5 rounded text-slate-400 hover:text-slate-600 hover:bg-slate-100 flex-shrink-0"
+                        >
+                            {copied ? <Check size={12} className="text-teal-600" /> : <Copy size={12} />}
+                        </button>
+                    </div>
                 </div>
             </div>
 
@@ -307,16 +388,88 @@ export const SlideInspector: React.FC = () => {
             <div className="flex-1 bg-slate-100 relative overflow-hidden flex items-center justify-center border-b border-slate-200 min-h-[40%]">
                 {slide.s3_url ? (
                     <img src={slide.s3_url} className="max-w-full max-h-full object-contain shadow-lg" alt="Slide Full" />
+                ) : embedded.length > 0 ? (
+                    <>
+                        <img src={assetSrc(embedded[embeddedIdx]?.url)} className="max-w-full max-h-full object-contain shadow-lg" alt="Embedded" />
+                        <span className="absolute top-3 left-3 text-[10px] text-slate-500 bg-white/80 rounded px-1.5 py-0.5">
+                            Page render pending · embedded image {embeddedIdx + 1} of {embedded.length}
+                        </span>
+                        {embedded.length > 1 && (
+                            <div className="absolute bottom-2 left-2 right-2 flex gap-1.5 justify-center overflow-x-auto">
+                                {embedded.map((img, i) => (
+                                    <button
+                                        key={img.url}
+                                        onClick={() => setEmbeddedIdx(i)}
+                                        className={clsx(
+                                            "h-10 w-14 flex-shrink-0 rounded border-2 bg-white overflow-hidden",
+                                            i === embeddedIdx ? "border-teal-600" : "border-slate-300 opacity-70 hover:opacity-100"
+                                        )}
+                                    >
+                                        <img src={assetSrc(img.url)} className="w-full h-full object-cover" alt={`Embedded ${i + 1}`} />
+                                    </button>
+                                ))}
+                            </div>
+                        )}
+                    </>
                 ) : (
                     <div className="text-slate-400 text-xs flex flex-col items-center">
-                        <XCircle size={24} className="mb-2" />
-                        No Image Available
+                        <ImageIcon size={24} className="mb-2 opacity-40" />
+                        Page render pending
+                        {!embeddedLoading && <span className="mt-1 italic opacity-70">No embedded images on this slide</span>}
                     </div>
                 )}
-                <button className="absolute top-3 right-3 bg-black/50 text-white p-1.5 rounded hover:bg-black/70 transition-colors">
-                    <Maximize2 size={16} />
-                </button>
+                {(slide.s3_url || embedded.length > 0) && (
+                    <button
+                        aria-label="Enlarge image"
+                        onClick={() => setLightbox(true)}
+                        className="absolute top-3 right-3 bg-black/50 text-white p-1.5 rounded hover:bg-black/70 transition-colors"
+                    >
+                        <Maximize2 size={16} />
+                    </button>
+                )}
             </div>
+
+            {lightbox && (
+                <div
+                    className="fixed inset-0 z-[200] bg-black/85 flex items-center justify-center"
+                    onClick={() => setLightbox(false)}
+                >
+                    <img
+                        src={slide.s3_url || assetSrc(embedded[embeddedIdx]?.url)}
+                        className="max-w-[90vw] max-h-[90vh] object-contain"
+                        alt="Slide enlarged"
+                        data-testid="lightbox-image"
+                        onClick={e => e.stopPropagation()}
+                    />
+                    <button
+                        aria-label="Close"
+                        onClick={() => setLightbox(false)}
+                        className="absolute top-4 right-4 text-white bg-black/50 p-2 rounded hover:bg-black/70"
+                    >
+                        <X size={20} />
+                    </button>
+                    {!slide.s3_url && embedded.length > 1 && (
+                        <>
+                            <button
+                                aria-label="Previous image"
+                                disabled={embeddedIdx === 0}
+                                onClick={e => { e.stopPropagation(); setEmbeddedIdx(i => Math.max(0, i - 1)); }}
+                                className="absolute left-4 top-1/2 -translate-y-1/2 text-white bg-black/50 p-2 rounded hover:bg-black/70 disabled:opacity-30"
+                            >
+                                <ChevronLeft size={24} />
+                            </button>
+                            <button
+                                aria-label="Next image"
+                                disabled={embeddedIdx === embedded.length - 1}
+                                onClick={e => { e.stopPropagation(); setEmbeddedIdx(i => Math.min(embedded.length - 1, i + 1)); }}
+                                className="absolute right-4 top-1/2 -translate-y-1/2 text-white bg-black/50 p-2 rounded hover:bg-black/70 disabled:opacity-30"
+                            >
+                                <ChevronRight size={24} />
+                            </button>
+                        </>
+                    )}
+                </div>
+            )}
 
             {/* Text & Metadata (Bottom Half) */}
             <div className="flex-1 overflow-y-auto p-4">
@@ -324,7 +477,7 @@ export const SlideInspector: React.FC = () => {
                 <div className="mb-6">
                     <h3 className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-2">Detected Concepts</h3>
                     <div className="flex flex-wrap gap-2">
-                        {([...slide.concepts])
+                        {mergeByCase(slide.concepts)
                             .sort((a, b) => (b.salience || 0) - (a.salience || 0))
                             .map((c, i) => {
                                 // Heatmap Logic
@@ -335,19 +488,19 @@ export const SlideInspector: React.FC = () => {
                                     <span key={i} className={clsx(
                                         "text-xs px-2 py-1 rounded-md flex items-center gap-2 border transition-colors",
                                         // Heatmap Logic: Highlight concept tag if it likely matches the search
-                                        (heatmapMode && intensity > 0 && searchQuery && c.name.toLowerCase().includes(searchQuery.toLowerCase()))
+                                        (heatmapMode && intensity > 0 && searchQuery && conceptKey(c.name).includes(conceptKey(searchQuery)))
                                             ? ((c.salience || 0) > 0.7
                                                 ? "bg-red-100 text-red-700 border-red-300 font-medium ring-1 ring-red-200"
                                                 : "bg-orange-100 text-orange-700 border-orange-300 font-medium ring-1 ring-orange-200")
                                             : "bg-teal-50 text-teal-600 border-teal-100"
                                     )}>
                                         <span>{c.name}</span>
-                                        {c.salience !== undefined && (
+                                        {c.salience != null && (
                                             <span className={clsx(
                                                 "font-mono text-[10px] px-1 rounded",
                                                 // Heatmap Mode: Only color red if this specific concept is a match
                                                 heatmapMode && intensity > 0
-                                                    ? (searchQuery && c.name.toLowerCase().includes(searchQuery.toLowerCase())
+                                                    ? (searchQuery && conceptKey(c.name).includes(conceptKey(searchQuery))
                                                         ? (c.salience > 0.7 ? "text-red-600 font-bold" : "text-orange-500 font-medium")
                                                         : "text-slate-500")
                                                     : (c.salience > 0.7 ? "bg-teal-100 text-teal-700 font-bold border border-teal-200" : "bg-slate-100 text-slate-500 border border-slate-200")
@@ -365,8 +518,14 @@ export const SlideInspector: React.FC = () => {
                 <div>
                     <h3 className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-2">Extracted Text</h3>
                     <div className="bg-slate-50 p-3 rounded border border-slate-100 text-xs text-slate-600 font-mono whitespace-pre-wrap leading-relaxed space-y-3">
-                        {slide.elements && slide.elements.length > 0 ? (
-                            slide.elements.map((el, i) => (
+                        {shownElements.length > 0 ? (
+                            shownElements.map((el, i) => el.type === 'Image' ? (
+                                <div key={i} className="flex items-center gap-2 text-[10px] font-sans text-slate-400">
+                                    <ImageIcon size={12} />
+                                    <span className="font-bold uppercase tracking-wide">Image</span>
+                                    {(el.metadata?.filename || el.metadata?.alt_text || el.metadata?.alt) && <span className="truncate">{el.metadata.filename || el.metadata.alt_text || el.metadata.alt}</span>}
+                                </div>
+                            ) : (
                                 <div key={i} className="group hover:bg-slate-100 p-1 -m-1 rounded transition-colors">
                                     <div className="flex items-center gap-2 mb-1 opacity-50 text-[10px] font-sans font-bold uppercase tracking-wide">
                                         <span className={clsx(
@@ -384,7 +543,7 @@ export const SlideInspector: React.FC = () => {
                                 </div>
                             ))
                         ) : (
-                            slide.text_preview || <span className="italic opacity-50">No text content extracted.</span>
+                            slide.text_preview?.trim() || <span className="italic opacity-50">No text content extracted.</span>
                         )}
                     </div>
                 </div>

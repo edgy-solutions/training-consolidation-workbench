@@ -1,11 +1,42 @@
+import json
 import os
+import posixpath
 import dspy
 from typing import List, Dict, Any
 from src.storage.neo4j import Neo4jClient
 from src.storage.weaviate import WeaviateClient
 from src.dspy_modules.synthesizer import ContentSynthesizer
 from src.dspy_modules.config import shared_lm as lm
-import dspy
+from src.publishing.image_ids import qualify, qualify_placeholders
+
+
+def asset_menu(rows) -> Dict[str, List[Dict[str, Any]]]:
+    """{slide_id: image assets} from content rows (id, elements JSON, course_id).
+
+    Asset ids are '<deck>--<name>'; a row without a course_id offers none."""
+    menu: Dict[str, List[Dict[str, Any]]] = {}
+    for row in rows:
+        course_id = row.get("course_id")
+        if not course_id:
+            continue
+        elements = row.get("elements")
+        if isinstance(elements, str):
+            try:
+                elements = json.loads(elements)
+            except ValueError:
+                elements = []
+        found: Dict[str, Dict[str, Any]] = {}
+        for el in elements or []:
+            path = (el.get("metadata") or {}).get("image_path")
+            if not path:
+                continue
+            base = posixpath.basename(path.replace("\\", "/"))
+            asset_id = qualify(course_id, base)
+            if asset_id not in found:
+                found[asset_id] = {"asset_id": asset_id, "slide_id": row["id"], "type": "image",
+                                   "description": (el.get("text") or "").strip() or base}
+        menu[row["id"]] = list(found.values())
+    return menu
 
 # DSPy configuration is handled in src.dspy_modules.config
 
@@ -55,11 +86,12 @@ class SynthesisService:
             content_query = """
             UNWIND $slide_ids as sid
             MATCH (s:Slide {id: sid})
-            RETURN s.id as id, s.elements as elements, s.text as text
+            OPTIONAL MATCH (c:Course)-[:HAS_SLIDE]->(s)
+            RETURN s.id as id, s.elements as elements, s.text as text, c.id as course_id
             """
             content_results = self.neo4j_client.execute_query(content_query, {"slide_ids": slide_ids})
             
-            import json
+            menu = asset_menu(content_results)
             for row in content_results:
                 s_id = row['id']
                 elements_json = row.get('elements')
@@ -86,7 +118,7 @@ class SynthesisService:
                     formatted_text = text_fallback
 
                 if formatted_text:
-                    slides_content.append({"id": s_id, "text": formatted_text})
+                    slides_content.append({"id": s_id, "text": formatted_text, "assets": menu.get(s_id, [])})
                 else:
                     print(f"Warning: No text found for slide {s_id}")
 
@@ -143,6 +175,10 @@ class SynthesisService:
                 assets = []
                 callouts = []
             
+            # a bare {{x}} becomes the deck-prefixed id it stands for; the export refuses what stays bare
+            offered = [a["asset_id"] for s in slides_content for a in s["assets"]]
+            markdown = qualify_placeholders(markdown, offered)
+
             # 4. Update Neo4j
             self._update_result(target_node_id, markdown)
             print(f"Synthesis complete for node {target_node_id}")

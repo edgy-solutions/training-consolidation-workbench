@@ -1,0 +1,9 @@
+apiVersion: v2
+name: training-workbench
+description: Training consolidation workbench, API (FastAPI) and UI (React on nginx)
+type: application
+# Bump version and appVersion together for each release; tag the GitHub release v<version>.
+# release-chart.yml publishes it to ghcr as oci://<registry>/training-workbench with the image
+# digests set in its values. In the repo the digests stay empty, so a lane roll must name its own.
+version: 0.1.0
+appVersion: "0.1.0"

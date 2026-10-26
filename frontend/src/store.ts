@@ -1,11 +1,17 @@
 import { create } from 'zustand';
 import { api } from './api';
 import type { TargetDraftNode } from './api';
+import { AUTH_DISABLED } from './auth/config';
+
+// 'empty': no project could be loaded and auth is off, so show an empty outline.
+// 'error': no project could be loaded with auth on.
+export type ProjectStatus = 'loading' | 'ready' | 'empty' | 'error';
 
 interface AppState {
     discipline: string;
     projectId: string | null;
     structure: TargetDraftNode[];
+    projectStatus: ProjectStatus;
     activeNodeId: string | null; // The node currently being edited/viewed in Right Pane
     activeSlideId: string | null; // The source slide currently being inspected
     newlyAddedNodeId: string | null; // Track the most recently added node for auto-focus
@@ -33,16 +39,24 @@ interface AppState {
     // Staging State
     stagingMode: boolean;
     setStagingMode: (mode: boolean) => void;
+    outlineNotice: string | null; // shown in the consolidation view after Generate Outline
+    setOutlineNotice: (notice: string | null) => void;
 }
 
 import { persist } from 'zustand/middleware';
 
+// One draft project per discipline, found again by this exact title. '' is "All".
+export function projectTitle(discipline: string): string {
+    return `Unified ${discipline || 'All'} Standard`;
+}
+
 export const useAppStore = create<AppState>()(
     persist(
         (set, get) => ({
-            discipline: 'Mechanical',
+            discipline: '',
             projectId: null,
             structure: [],
+            projectStatus: 'loading',
             activeNodeId: null,
             activeSlideId: null,
             newlyAddedNodeId: null,
@@ -55,8 +69,9 @@ export const useAppStore = create<AppState>()(
 
             // Staging State
             stagingMode: false,
+            outlineNotice: null,
 
-            setDiscipline: (d) => set({ discipline: d, projectId: null, structure: [] }),
+            setDiscipline: (d) => set({ discipline: d, projectId: null, structure: [], projectStatus: 'loading' }),
             setProjectId: (id) => set({ projectId: id }),
             setActiveNodeId: (id) => set({ activeNodeId: id }),
             setActiveSlideId: (id) => set({ activeSlideId: id }),
@@ -66,6 +81,7 @@ export const useAppStore = create<AppState>()(
             setSearchQuery: (query) => set({ searchQuery: query }),
             setHeatmapData: (data) => set({ heatmapData: data }),
             setStagingMode: (mode) => set({ stagingMode: mode }),
+            setOutlineNotice: (notice) => set({ outlineNotice: notice }),
 
             updateNodeContentJson: (nodeId, json) => {
                 set((state) => ({
@@ -78,9 +94,10 @@ export const useAppStore = create<AppState>()(
                 if (!projectId) return;
                 try {
                     const nodes = await api.getDraftStructure(projectId);
-                    set({ structure: nodes });
+                    set({ structure: nodes, projectStatus: 'ready' });
                 } catch (e) {
                     console.error("Failed to fetch structure", e);
+                    if (get().projectStatus === 'loading') projectLoadFailed(set);
                 }
             },
 
@@ -101,15 +118,15 @@ export const useAppStore = create<AppState>()(
                     // Find most recent project for this discipline
                     // We reverse the list assuming the backend returns them in some order, or we just take the first match
                     // Ideally backend should sort by created_at desc
-                    const matchingProject = existingProjects.find(p => p.title.includes(discipline));
+                    const matchingProject = existingProjects.find(p => p.title === projectTitle(discipline));
 
                     if (matchingProject) {
                         console.log(`[Store] Found existing project: ${matchingProject.title}`);
                         set({ projectId: matchingProject.id });
                         get().fetchStructure();
                     } else {
-                        console.log(`[Store] Creating new project for ${discipline}`);
-                        const p = await api.createDraftProject(`Unified ${discipline} Standard`);
+                        console.log(`[Store] Creating new project for ${discipline || 'all disciplines'}`);
+                        const p = await api.createDraftProject(projectTitle(discipline));
                         set({ projectId: p.id });
 
                         // Create initial default node
@@ -118,6 +135,7 @@ export const useAppStore = create<AppState>()(
                     }
                 } catch (e) {
                     console.error("Failed to create/load project", e);
+                    projectLoadFailed(set);
                 }
             },
 
@@ -174,9 +192,20 @@ export const useAppStore = create<AppState>()(
                 discipline: state.discipline,
                 projectId: state.projectId
             }), // Only persist these fields
+            // Version 0 persisted the old hardcoded default, Mechanical, whether or not anyone
+            // chose it. Start those stores on "All", with no project, rather than hide courses.
+            version: 1,
+            migrate: (persisted, version) => {
+                const state = persisted as { discipline: string; projectId: string | null };
+                return version < 1 ? { ...state, discipline: '', projectId: null } : state;
+            },
         }
     )
 );
+
+function projectLoadFailed(set: (s: Partial<AppState>) => void) {
+    set({ projectStatus: AUTH_DISABLED ? 'empty' : 'error' });
+}
 
 // Keep track of timeouts outside the store to avoid state churn
 const saveTimeouts: Record<string, ReturnType<typeof setTimeout>> = {};

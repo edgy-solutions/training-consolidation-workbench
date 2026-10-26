@@ -1,0 +1,132 @@
+{{- if .Values.api.enabled }}
+{{- $sel := dict "ctx" $ "component" "api" }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "tw.fullname" . }}-api
+  labels:
+    {{- include "tw.labels" . | nindent 4 }}
+    app.kubernetes.io/component: api
+spec:
+  replicas: {{ .Values.api.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "tw.selectorLabels" $sel | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "tw.labels" . | nindent 8 }}
+        app.kubernetes.io/component: api
+    spec:
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+        runAsUser: 10001
+        runAsGroup: 10001
+      containers:
+        - name: api
+          image: {{ include "tw.image" (dict "ctx" $ "values" .Values.api "component" "api") }}
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          ports:
+            - name: http
+              containerPort: 8000
+          env:
+            - name: SOURCE_READER
+              value: {{ .Values.api.sourceReader | quote }}
+            # Read-only root: caches (dspy, nltk, matplotlib) go under the writable /tmp
+            - name: HOME
+              value: /tmp
+            {{- $env := .Values.api.env | default dict }}
+            # Accepted tokens are the UI's: aud = its client, iss = its realm (api.env may override).
+            {{- if and .Values.ui.keycloak.clientId (not (hasKey $env "KEYCLOAK_AUDIENCE")) }}
+            - name: KEYCLOAK_AUDIENCE
+              value: {{ .Values.ui.keycloak.clientId | quote }}
+            {{- end }}
+            # The deck template: the .pptx's object-store URI and the mapping yaml's mounted path.
+            {{- if and .Values.api.deckTemplate.uri (not (hasKey $env "DECK_TEMPLATE_URI")) }}
+            - name: DECK_TEMPLATE_URI
+              value: {{ .Values.api.deckTemplate.uri | quote }}
+            {{- end }}
+            {{- if and .Values.api.deckTemplate.mappingConfigMap (not (hasKey $env "DECK_TEMPLATE")) }}
+            - name: DECK_TEMPLATE
+              value: /etc/wb/template/deck-template.yaml
+            {{- end }}
+            {{- if and .Values.ui.keycloak.realmUrl (not (hasKey $env "KEYCLOAK_ISSUER")) }}
+            - name: KEYCLOAK_ISSUER
+              value: {{ .Values.ui.keycloak.realmUrl | quote }}
+            {{- end }}
+            {{- range $k, $v := .Values.api.env }}
+            - name: {{ $k }}
+              value: {{ $v | quote }}
+            {{- end }}
+          {{- with .Values.api.existingSecret }}
+          envFrom:
+            - secretRef:
+                name: {{ . }}
+          {{- end }}
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 20
+          resources:
+            {{- toYaml .Values.api.resources | nindent 12 }}
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+            {{- if .Values.api.deckTemplate.mappingConfigMap }}
+            - name: deck-template
+              mountPath: /etc/wb/template
+              readOnly: true
+            {{- end }}
+      volumes:
+        - name: tmp
+          emptyDir: {}
+        {{- if .Values.api.deckTemplate.mappingConfigMap }}
+        - name: deck-template
+          configMap:
+            name: {{ .Values.api.deckTemplate.mappingConfigMap | quote }}
+            items:
+              - key: deck-template.yaml
+                path: deck-template.yaml
+        {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "tw.fullname" . }}-api
+  labels:
+    {{- include "tw.labels" . | nindent 4 }}
+    app.kubernetes.io/component: api
+spec:
+  type: {{ .Values.api.service.type }}
+  ports:
+    - name: http
+      port: {{ .Values.api.service.port }}
+      targetPort: http
+  selector:
+    {{- include "tw.selectorLabels" $sel | nindent 4 }}
+{{- end }}

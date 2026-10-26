@@ -1,11 +1,25 @@
 import axios from 'axios';
+import { runtimeEnv } from './runtimeConfig';
+import { LOGIN_CONFIGURED, OIDC_AUTHORITY, OIDC_CLIENT_ID } from './auth/config';
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+export const API_URL = runtimeEnv('VITE_API_URL') || 'http://localhost:8000';
+
+// Fixture assets come back as backend-relative paths
+export const assetSrc = (url?: string) => (url?.startsWith('/') ? `${API_URL}${url}` : url);
+// The deck's own number when the API sent it; else the id's `_pN` suffix; else the id itself.
+export const slideLabel = (id: string, number?: number) => `Slide ${number ?? id.match(/_p(\d+)$/)?.[1] ?? id}`;
+
+// Same-titled courses differ by file and version: "deck.pptx · v2.0", or null when neither is known
+export const courseSubtitle = (c: { filename?: string | null; version?: string | null }) =>
+    [c.filename, c.version ? `v${c.version}` : null].filter(Boolean).join(' · ') || null;
+
+// Row tooltip: the full title, then the short id (first 12 hex after "sha256:")
+export const courseTooltip = (title: string, id: string) => `${title}\n${id.replace(/^sha256:/, '').slice(0, 12)}`;
 
 export interface ConceptNode {
     name: string;
     domain: string;
-    salience?: number;
+    salience?: number | null; // null until ingest step d writes TEACHES salience
 }
 
 export interface SourceSlide {
@@ -14,6 +28,9 @@ export interface SourceSlide {
     text_preview: string;
     concepts: ConceptNode[];
     elements?: { type: string; text: string; metadata?: any }[]; // Structured unstructured elements
+    number?: number; // Position in the deck
+    course_id?: string;
+    course_title?: string;
 }
 
 export interface TargetDraftNode {
@@ -34,7 +51,7 @@ export interface TargetDraftNode {
     suggested_source_ids?: string[];
     rationale?: string;
     order?: number;
-    level?: number; // Hierarchy level: 0 = top-level, 1+ = subsections
+    level?: number; // Hierarchy depth; the decks send top-level as 1, so the UI indents relative to each course's shallowest
 }
 
 export interface CourseNode {
@@ -42,6 +59,8 @@ export interface CourseNode {
     name: string;
     type: 'BusinessUnit' | 'Course';
     engineering_discipline?: string;
+    filename?: string | null;
+    version?: string | null;
     children?: CourseNode[];
     has_children?: boolean;
 }
@@ -50,6 +69,9 @@ export interface CourseSection {
     id: string;
     title: string;
     level?: number;
+    parent_id?: string | null; // HAS_SECTION parent; null for a top-level section
+    slide_count?: number; // Slides under this section; missing on an older API
+    concepts_inherited?: boolean; // True when concepts are the course fallback, not the section's own
     concepts: string[];
 }
 
@@ -68,10 +90,9 @@ export interface RenderEventCallbacks {
 
 // Add interceptor to attach Bearer token
 axios.interceptors.request.use(config => {
-    const authority = import.meta.env.VITE_KEYCLOAK_REALM_URL || "http://localhost:8080/realms/workbench";
-    const clientId = import.meta.env.VITE_KEYCLOAK_CLIENT_ID || "workbench-app";
+    if (!LOGIN_CONFIGURED) return config;
 
-    const storageKey = `oidc.user:${authority}:${clientId}`;
+    const storageKey = `oidc.user:${OIDC_AUTHORITY}:${OIDC_CLIENT_ID}`;
     const oidcStorage = sessionStorage.getItem(storageKey);
     if (oidcStorage) {
         const user = JSON.parse(oidcStorage);
@@ -89,6 +110,16 @@ axios.interceptors.request.use(config => {
     return Promise.reject(error);
 });
 
+export interface GenerateJob {
+    job_id: string;
+    status: 'QUEUED' | 'RUNNING' | 'SUCCESS' | 'FAILURE' | 'LOST';
+    step: string | null;
+    elapsed?: number;
+    result: { project_id: string; section_count: number; unassigned_count: number } | null;
+    error: string | null;
+    steps: Array<{ key: string; label: string }>;
+}
+
 export const api = {
     getSourceTree: async (discipline?: string) => {
         const params = discipline ? { engineering_discipline: discipline } : {};
@@ -96,7 +127,7 @@ export const api = {
         return res.data;
     },
     getCourseSlides: async (courseId: string) => {
-        const res = await axios.get<{ id: string, number: number, text: string }[]>(`${API_URL}/source/course/${courseId}/slides`);
+        const res = await axios.get<(SourceSlide & { number: number; text: string })[]>(`${API_URL}/source/course/${courseId}/slides`);
         return res.data;
     },
     getCourseSections: async (courseId: string) => {
@@ -154,7 +185,11 @@ export const api = {
         master_course_id?: string | null;
         template_name?: string;
     }) => {
-        const res = await axios.post(`${API_URL}/project/generate_skeleton`, request);
+        const res = await axios.post<GenerateJob>(`${API_URL}/project/generate_skeleton`, request);
+        return res.data;
+    },
+    getGenerateJob: async (jobId: string) => {
+        const res = await axios.get<GenerateJob>(`${API_URL}/project/generate_skeleton/${jobId}`);
         return res.data;
     },
     getTemplates: async () => {
@@ -173,7 +208,7 @@ export const api = {
         });
         return res.data;
     },
-    triggerRender: async (projectId: string, format: string = "pptx", templateName: string = "standard"): Promise<TriggerRenderResponse> => {
+    triggerRender: async (projectId: string, format: string = "pptx", templateName: string = "standin"): Promise<TriggerRenderResponse> => {
         const res = await axios.post<TriggerRenderResponse>(`${API_URL}/render/trigger`, { project_id: projectId, format, template_name: templateName });
         return res.data;
     },
@@ -203,7 +238,7 @@ export const api = {
         });
         return res.data;
     },
-    getEmbeddedImagesForSlides: async (slideIds: string[]): Promise<{ images: { filename: string; url: string; size: number }[] }> => {
+    getEmbeddedImagesForSlides: async (slideIds: string[]): Promise<{ images: { filename: string; url: string; size: number; page_number?: number }[] }> => {
         const res = await axios.post(`${API_URL}/source/embedded-images-for-slides`, slideIds);
         return res.data;
     },
@@ -239,14 +274,6 @@ export const api = {
         });
 
         return eventSource;
-    },
-
-    /**
-     * Get a presigned download URL for a rendered file.
-     */
-    getDownloadUrl: async (filename: string): Promise<{ download_url: string; filename: string }> => {
-        const res = await axios.get<{ download_url: string; filename: string }>(`${API_URL}/render/download/${filename}`);
-        return res.data;
     },
 
     /**

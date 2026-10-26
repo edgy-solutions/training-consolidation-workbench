@@ -7,6 +7,7 @@ Supports iterative pairwise merging for large inputs to avoid context overflow.
 import dspy
 import yaml
 import os
+from src.llm_settings import llm_settings, reasoning_kwargs
 import json
 from typing import List, Dict, Any, Optional
 from pydantic import BaseModel, Field
@@ -149,14 +150,19 @@ class OutlineHarmonizer(dspy.Module):
         self.template_modules = load_curriculum_template(template_name)
         print(f"[DEBUG] Loaded {len(self.template_modules)} template modules for '{template_name}'")
         signature_class = create_signature_class(self.template_modules)
+        # Measured 2026-10-26 on one deck pair: answer-only at low effort gave 11 sections titled
+        # "Module N" against ChainOfThought's 21, with no reliable time saved. Generate runs as a
+        # background job, so quality wins. OUTLINE_REASONING_EFFORT sends an effort when set.
         self.generate = dspy.ChainOfThought(signature_class)
+        effort = os.getenv("OUTLINE_REASONING_EFFORT", "").strip()
+        self.call_config = reasoning_kwargs(effort) if effort else {}
         
         # Calculate max sections per merge based on context
         self.max_sections_per_merge = self._calculate_max_sections()
     
     def _calculate_max_sections(self) -> int:
         """Calculate maximum sections that fit in context window."""
-        context_size = int(os.getenv("OLLAMA_NUM_CTX", "8192"))
+        context_size = llm_settings().num_ctx
         usable_tokens = context_size - RESERVED_PROMPT_TOKENS - RESERVED_RESPONSE_TOKENS
         max_sections = max(10, usable_tokens // TOKENS_PER_SECTION)  # Minimum 10 sections
         print(f"[OutlineHarmonizer] Context: {context_size}, Max sections per merge: {max_sections}")
@@ -188,7 +194,7 @@ class OutlineHarmonizer(dspy.Module):
         
         # Call LLM to merge
         source_json_str = json.dumps(combined, indent=2)
-        prediction = self.generate(source_outlines=source_json_str)
+        prediction = self.generate(source_outlines=source_json_str, config=self.call_config)
         
         # Parse output and convert back to outline format
         try:
@@ -303,7 +309,7 @@ class OutlineHarmonizer(dspy.Module):
         source_json_str = json.dumps(source_outlines, indent=2)
         
         # 2. Call DSPy
-        prediction = self.generate(source_outlines=source_json_str)
+        prediction = self.generate(source_outlines=source_json_str, config=self.call_config)
         
         print(f"\n{'='*60}")
         print("[DEBUG] Raw LLM Response:")

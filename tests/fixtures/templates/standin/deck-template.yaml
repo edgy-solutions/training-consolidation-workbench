@@ -1,0 +1,21 @@
+deck_template: 1                 # this contract's version
+template: standin.pptx           # path relative to this file
+roles:
+  title:
+    layout: title                # a layout name in the template
+    placeholders: {title: 0, body: 1}
+  section:
+    layout: section
+    placeholders: {title: 0}
+  concept:
+    layout: concept
+    placeholders: {title: 0, body: 1, citation: 2, notes: notes-page}
+  concept-with-figure:
+    layout: concept-with-figure
+    placeholders: {title: 0, body: 1, citation: 2, image: 3, notes: notes-page}
+  summary:
+    layout: summary
+    placeholders: {title: 0, body: 1}
+  sources:
+    layout: sources
+    placeholders: {title: 0, body: 1}

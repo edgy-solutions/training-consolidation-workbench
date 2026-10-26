@@ -1,0 +1,32 @@
+.git
+.github
+.venv
+venv
+**/__pycache__
+**/*.pyc
+*.egg-info
+.env
+*.log
+build/
+data/
+keycloak_data/
+extracted_media_test/
+test_docs/
+frontend/
+charts/
+sessions/
+docs/
+
+# Tests are left out, except the vendored contract fixture that SOURCE_READER=fixture serves
+tests/*
+!tests/fixtures
+tests/fixtures/*
+!tests/fixtures/training
+!tests/fixtures/templates
+
+# Files the image would carry but never runs. A chart release ships the build of the oldest
+# commit with the same context (.github/scripts/release_images.py), so editing these must not
+# make the tested build look stale.
+.dockerignore
+**/*.md
+scripts/roll.sh

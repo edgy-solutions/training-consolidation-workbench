@@ -4,12 +4,19 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from fastapi import FastAPI, HTTPException, Query, Body, Depends
-from src.auth.security import get_current_user, User
+from fastapi.responses import FileResponse
+from src.publishing import deck_template
+from src.publishing.render import FORMATS, output_filename
+from src.publishing.image_ids import list_generated_objects
+from src.publishing.render_jobs import create_job, job_file, read_job, run_job
+from src.services import outline_jobs
+from src.auth.security import get_current_user, optional_bearer, store_writes_on, User
 from fastapi.middleware.cors import CORSMiddleware
 from typing import List, Dict, Any, Optional
 import os
 import json
 import asyncio
+import time
 from datetime import timedelta
 from sse_starlette.sse import EventSourceResponse
 from dagster_graphql import DagsterGraphQLClient, DagsterGraphQLClientError
@@ -21,6 +28,16 @@ from src.workbench.models import (
     ConceptNode, SourceSlide, TargetDraftNode, SynthesisRequest, SearchRequest,
     GenerateSkeletonRequest, GenerateSkeletonResponse, SkeletonRequest, ProjectTreeResponse,
     RenderRequest
+)
+
+from src.workbench.source_reader import get_source_reader
+from src.workbench import asset_links
+from src.workbench.source_routes import (
+    get_alignment_store, _course_name, _port_source_tree, _port_source_filters, _port_course_slides,
+    _port_course_sections, _port_slide_details, _port_embedded_images,
+    _port_embedded_images_for_slides, _port_resolve_image_urls, _port_resolve_image_url,
+    _port_search_concepts, _port_slides_by_concept, _port_heatmap, _port_search_source_tree,
+    _course_tree,
 )
 
 BUCKET_NAME = os.getenv("BUCKET_NAME", "training-content")
@@ -36,24 +53,68 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
+
+def fixture_mode() -> bool:
+    return os.getenv("SOURCE_READER", "").strip().lower() == "fixture"
+
+
+def require_platform_reader(token: Optional[str] = Depends(optional_bearer)) -> Optional[User]:
+    """Live reads of platform data (decks, slides, concepts, pages) need a signed-in user of the realm
+    (architect, b4). Fixture reads serve committed test data and stay open (local dev, route_diff)."""
+    if fixture_mode():
+        return None
+    if not token:
+        raise HTTPException(status_code=401, detail="Not authenticated", headers={"WWW-Authenticate": "Bearer"})
+    return get_current_user(token)
+
+
+@app.on_event("startup")
+def _warm_deck_template():
+    deck_template.warm()
+
+
+@app.get("/healthz")
+def healthz():
+    """Liveness and readiness for the chart's probes; touches no store."""
+    return {"status": "ok"}
+
+
 # Initialize Clients
 # In a real app, use dependency injection or lifespan events
-neo4j_client = Neo4jClient()
-weaviate_client = WeaviateClient()
-minio_client = MinioClient()
+class _LazyClient:
+    """Builds the wrapped client on first attribute access (weaviate v3 connects in its constructor)."""
+    def __init__(self, factory):
+        object.__setattr__(self, '_factory', factory)
+        object.__setattr__(self, '_inst', None)
+
+    def __getattr__(self, name):
+        inst = object.__getattribute__(self, '_inst')
+        if inst is None:
+            inst = object.__getattribute__(self, '_factory')()
+            object.__setattr__(self, '_inst', inst)
+        return getattr(inst, name)
+
+
+neo4j_client = _LazyClient(Neo4jClient)
+weaviate_client = _LazyClient(WeaviateClient)
+minio_client = _LazyClient(MinioClient)
 # Dagster client - assuming default port or env var
 DAGSTER_HOST = os.getenv("DAGSTER_HOST", "localhost")
 DAGSTER_PORT = int(os.getenv("DAGSTER_PORT", 3000))
-dagster_client = DagsterGraphQLClient(DAGSTER_HOST, port_number=DAGSTER_PORT)
+dagster_client = _LazyClient(lambda: DagsterGraphQLClient(DAGSTER_HOST, port_number=DAGSTER_PORT))
 
 # --- A. The Explorer Module ---
 
-@app.get("/source/tree", response_model=List[Dict[str, Any]])
+@app.get("/source/tree", response_model=List[Dict[str, Any]], dependencies=[Depends(require_platform_reader)])
 def get_source_tree(engineering_discipline: Optional[str] = None):
     """
     Returns the hierarchy of Business Units -> Courses.
     Optional: Filter by engineering discipline.
     """
+    reader = get_source_reader()
+    if reader is not None:
+        return _port_source_tree(reader, engineering_discipline)
     discipline = engineering_discipline
     if discipline:
         # Convert discipline to title case to match DB values (e.g. "software" -> "Software")
@@ -62,7 +123,8 @@ def get_source_tree(engineering_discipline: Optional[str] = None):
         query = """
         MATCH (c:Course)
         WHERE toLower(c.discipline) CONTAINS toLower($discipline)
-        RETURN c.business_unit as bu, c.id as id, c.title as title, c.discipline as engineering_discipline
+        RETURN c.business_unit as bu, c.id as id, c.title as title, c.discipline as engineering_discipline,
+               c.filename as filename, c.version as version
         ORDER BY bu, title
         """
         # Use simple parameter for CONTAINS check
@@ -70,50 +132,82 @@ def get_source_tree(engineering_discipline: Optional[str] = None):
     else:
         query = """
         MATCH (c:Course)
-        RETURN c.business_unit as bu, c.id as id, c.title as title, c.discipline as engineering_discipline
+        RETURN c.business_unit as bu, c.id as id, c.title as title, c.discipline as engineering_discipline,
+               c.filename as filename, c.version as version
         ORDER BY bu, title
         """
         params = {}
         
     results = neo4j_client.execute_query(query, params)
-    
-    # Group by Business Unit
-    tree = {}
-    for row in results:
-        bu = row.get("bu", "Uncategorized")
-        if bu not in tree:
-            tree[bu] = {"name": bu, "type": "BusinessUnit", "children": []}
-        
-        tree[bu]["children"].append({
-            "id": row["id"],
-            "name": row["title"],
-            "type": "Course",
-            "engineering_discipline": row.get("engineering_discipline"),
-            # We could fetch slides here or fetch on demand
-            "has_children": True 
-        })
-        
-    return list(tree.values())
 
-@app.get("/source/course/{course_id}/slides", response_model=List[Dict[str, Any]])
+    # Same grouping as the port path: BU names folded, null BU under "Uncategorized"
+    return _course_tree([
+        {"id": row["id"], "title": row["title"], "business_unit": row.get("bu"),
+         "discipline": row.get("engineering_discipline"),
+         "filename": row.get("filename"), "version": row.get("version")}
+        for row in results
+    ])
+
+@app.get("/source/course/{course_id}/slides", response_model=List[Dict[str, Any]], dependencies=[Depends(require_platform_reader)])
 def get_course_slides(course_id: str):
     """
     Returns slides for a specific course.
     """
+    reader = get_source_reader()
+    if reader is not None:
+        return _port_course_slides(reader, get_alignment_store(reader), course_id)
+    # One query for every slide (same concept normalisation as /source/slide/{id}).
     query = """
     MATCH (c:Course {id: $course_id})-[:HAS_SLIDE]->(s:Slide)
-    RETURN s.id as id, s.number as number, s.text as text
+    OPTIONAL MATCH (s)-[t:TEACHES]->(con:Concept)
+    OPTIONAL MATCH (cc:CanonicalConcept)-[:ALIGNS_TO]->(con)
+    WITH s, coalesce(cc.name, con.name) as display_name, max(t.salience) as salience
+    WITH s, collect(DISTINCT {name: display_name, salience: salience}) as concepts
+    RETURN s.id as id, s.number as number, s.text as text, s.elements as elements, concepts
     ORDER BY s.number
     """
     results = neo4j_client.execute_query(query, {"course_id": course_id})
-    return results
+    title_rows = neo4j_client.execute_query(
+        "MATCH (c:Course {id: $course_id}) RETURN c.title as title, c.filename as filename", {"course_id": course_id})
+    course_title = _course_name(title_rows[0]) if title_rows else None
+    # One MinIO listing for the course instead of one per slide.
+    pages = {}
+    prefix = f"{course_id}/generated/"
+    for obj in minio_client.list_objects(BUCKET_NAME, prefix=prefix, recursive=True):
+        name = obj.object_name
+        if "/pages/page_" in name and name.endswith(".png"):
+            pages[name.rsplit("/pages/page_", 1)[1][:-4]] = name
+    out = []
+    for row in results:
+        page_num = row["id"].rsplit("_p", 1)[-1]
+        object_name = pages.get(page_num) or f"{course_id}/generated/pages/page_{page_num}.png"
+        try:
+            elements = json.loads(row["elements"]) if row.get("elements") else []
+        except Exception:
+            elements = []
+        out.append({
+            "id": row["id"],
+            "number": row["number"],
+            "text": row["text"],
+            "s3_url": minio_client.get_presigned_url(BUCKET_NAME, object_name),
+            "text_preview": row["text"] or "",
+            "concepts": [{"name": c["name"], "domain": "General", "salience": c.get("salience")}
+                         for c in row.get("concepts", []) if c and c.get("name")],
+            "elements": elements,
+            "course_id": course_id,
+            "course_title": course_title,
+        })
+    return out
 
-@app.get("/source/course/{course_id}/sections", response_model=List[Dict[str, Any]])
+@app.get("/source/course/{course_id}/sections", response_model=List[Dict[str, Any]], dependencies=[Depends(require_platform_reader)])
 def get_course_sections(course_id: str):
     """
     Returns ALL sections (including nested subsections) for a specific course.
     Uses pre-computed concept summaries or COVERS relationships.
     """
+    reader = get_source_reader()
+    if reader is not None:
+        return _port_course_sections(reader, get_alignment_store(reader), course_id)
     query = """
     MATCH (c:Course {id: $course_id})-[:HAS_SECTION*]->(s:Section)
     
@@ -124,17 +218,19 @@ def get_course_sections(course_id: str):
     // Normalize via CanonicalConcept to collapse duplicates/synonyms
     
     OPTIONAL MATCH (s)-[:COVERS]->(con:Concept)
-    OPTIONAL MATCH (con)-[:ALIGNS_TO]->(cc1:CanonicalConcept)
+    OPTIONAL MATCH (cc1:CanonicalConcept)-[:ALIGNS_TO]->(con)
     WITH s, collect(DISTINCT coalesce(cc1.name, con.name)) as covered_concepts
     
     OPTIONAL MATCH (s)-[:HAS_SLIDE]->(sl:Slide)-[t:TEACHES]->(slide_con:Concept)
     WHERE coalesce(t.salience, 0) >= 0.5
-    OPTIONAL MATCH (slide_con)-[:ALIGNS_TO]->(cc2:CanonicalConcept)
+    OPTIONAL MATCH (cc2:CanonicalConcept)-[:ALIGNS_TO]->(slide_con)
     WITH s, covered_concepts, collect(DISTINCT coalesce(cc2.name, slide_con.name)) as slide_concepts
     
     RETURN s.id as id, 
            s.title as title, 
            s.level as level,
+           [(p:Section)-[:HAS_SECTION]->(s) | p.id][0] as parent_id,
+           size([(s)-[:HAS_SLIDE]->(x:Slide) | x]) as slide_count,
            // Priority: Property > COVERS > HAS_SLIDE > Empty
            coalesce(s.concept_summary, covered_concepts[0..10], slide_concepts[0..10], []) as concepts
     ORDER BY coalesce(s.start_page, 0), s.id
@@ -146,7 +242,7 @@ def get_course_sections(course_id: str):
     course_concepts_query = """
     MATCH (c:Course {id: $course_id})-[:HAS_SLIDE]->(sl:Slide)-[t:TEACHES]->(con:Concept)
     WHERE coalesce(t.salience, 0) >= 0.5
-    OPTIONAL MATCH (con)-[:ALIGNS_TO]->(cc:CanonicalConcept)
+    OPTIONAL MATCH (cc:CanonicalConcept)-[:ALIGNS_TO]->(con)
     RETURN collect(DISTINCT coalesce(cc.name, con.name))[0..10] as course_concepts
     """
     course_result = neo4j_client.execute_query(course_concepts_query, {"course_id": course_id})
@@ -155,32 +251,40 @@ def get_course_sections(course_id: str):
     formatted_results = []
     for row in sections:
         concepts = row["concepts"]
-        if not concepts:
+        inherited = not concepts
+        if inherited:
             concepts = course_concepts
             
         formatted_results.append({
             "id": row["id"],
             "title": row["title"],
             "level": row.get("level", 0),
-            "concepts": concepts
+            "parent_id": row.get("parent_id"),
+            "concepts": concepts,
+            "slide_count": row.get("slide_count", 0),
+            "concepts_inherited": inherited
         })
         
     return formatted_results
 
-@app.get("/source/slide/{slide_id}", response_model=SourceSlide)
+@app.get("/source/slide/{slide_id}", response_model=SourceSlide, dependencies=[Depends(require_platform_reader)])
 def get_slide_details(slide_id: str):
     """
     Returns metadata + S3 Presigned URL for the slide image.
     """
+    reader = get_source_reader()
+    if reader is not None:
+        return _port_slide_details(reader, get_alignment_store(reader), slide_id)
     # 1. Fetch Metadata and Concepts from Neo4j
     # Normalize concepts via CanonicalConcept to collapse duplicates/synonyms
     query = """
     MATCH (s:Slide {id: $id})
     OPTIONAL MATCH (s)-[t:TEACHES]->(c:Concept)
-    OPTIONAL MATCH (c)-[:ALIGNS_TO]->(cc:CanonicalConcept)
+    OPTIONAL MATCH (cc:CanonicalConcept)-[:ALIGNS_TO]->(c)
     WITH s, coalesce(cc.name, c.name) as display_name, max(t.salience) as salience
     WITH s, collect(DISTINCT {name: display_name, salience: salience}) as concepts
-    RETURN s.id as id, s.number as number, s.text as text, s.elements as elements, concepts
+    RETURN s.id as id, s.number as number, s.text as text, s.elements as elements, concepts,
+           [(co:Course)-[:HAS_SLIDE]->(s) | {id: co.id, title: co.title, filename: co.filename}][0] as course
     """
     results = neo4j_client.execute_query(query, {"id": slide_id})
     
@@ -243,22 +347,25 @@ def get_slide_details(slide_id: str):
         s3_url=s3_url,
         text_preview=row["text"] if row["text"] else "",
         concepts=concepts,
-        elements=elements
+        elements=elements,
+        number=row.get("number"),
+        course_id=(row.get("course") or {}).get("id"),
+        course_title=_course_name(row["course"]) if row.get("course") else None,
     )
 
-@app.get("/source/embedded-images/{course_id}")
+@app.get("/source/embedded-images/{course_id}", dependencies=[Depends(require_platform_reader)])
 def get_embedded_images(course_id: str):
     """
     Returns all embedded images extracted from a course's source documents.
     These are diagrams, charts, photos, etc. extracted during ingestion.
     Includes coordinates and canvas size for proper scaling.
     """
+    reader = get_source_reader()
+    if reader is not None:
+        return _port_embedded_images(reader, course_id)
     # List objects in the course's generated folder
-    prefix = f"{course_id}/generated/"
-    
     try:
-        objects = minio_client.list_objects(BUCKET_NAME, prefix=prefix, recursive=True)
-        objects_list = list(objects)
+        objects_list = list_generated_objects(minio_client, BUCKET_NAME, course_id)
         
         # First, try to load text.json to get image coordinates
         image_metadata = {}
@@ -331,12 +438,15 @@ def get_embedded_images(course_id: str):
     except Exception as e:
         return {"course_id": course_id, "images": [], "error": str(e)}
 
-@app.post("/source/embedded-images-for-slides")
+@app.post("/source/embedded-images-for-slides", dependencies=[Depends(require_platform_reader)])
 def get_embedded_images_for_slides(slide_ids: List[str]):
     """
     Given a list of slide IDs, returns all embedded images from the source courses.
     Slide ID format is {course_id}_p{page_num}.
     """
+    reader = get_source_reader()
+    if reader is not None:
+        return _port_embedded_images_for_slides(reader, slide_ids)
     # Extract course IDs and map them to set of page numbers
     # Structure: { "course_id": {1, 2, 5} }
     course_pages = {}
@@ -368,7 +478,7 @@ def get_embedded_images_for_slides(slide_ids: List[str]):
     return {"images": all_images}
 
 
-@app.post("/source/resolve-image-urls")
+@app.post("/source/resolve-image-urls", dependencies=[Depends(require_platform_reader)])
 def resolve_image_urls(urls: List[str]):
     """
     Resolve stable minio:// URLs or object paths to fresh presigned URLs.
@@ -380,6 +490,9 @@ def resolve_image_urls(urls: List[str]):
     
     Returns a map of original URL -> fresh presigned URL.
     """
+    reader = get_source_reader()
+    if reader is not None:
+        return _port_resolve_image_urls(reader, urls)
     result = {}
     
     for url in urls:
@@ -431,21 +544,27 @@ def resolve_image_urls(urls: List[str]):
     return {"urls": result}
 
 
-@app.get("/source/resolve-image-url")
+@app.get("/source/resolve-image-url", dependencies=[Depends(require_platform_reader)])
 def resolve_single_image_url(url: str):
     """
     Resolve a single stable URL to a fresh presigned URL.
     Convenience endpoint for single URL resolution.
     """
+    reader = get_source_reader()
+    if reader is not None:
+        return _port_resolve_image_url(reader, url)
     result = resolve_image_urls([url])
     resolved = result.get("urls", {}).get(url, url)
     return {"original": url, "presigned": resolved}
 
-@app.get("/search/concepts", response_model=List[str])
+@app.get("/search/concepts", response_model=List[str], dependencies=[Depends(require_platform_reader)])
 def search_concepts(q: str):
     """
     Semantic search for specific topics. Returns list of Slide IDs.
     """
+    reader = get_source_reader()
+    if reader is not None:
+        return _port_search_concepts(reader, q)
     try:
         # Weaviate NearText search
         response = weaviate_client.client.query.get(
@@ -463,11 +582,14 @@ def search_concepts(q: str):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.get("/source/graph/concept/{name}", response_model=List[str])
+@app.get("/source/graph/concept/{name}", response_model=List[str], dependencies=[Depends(require_platform_reader)])
 def get_slides_by_concept(name: str):
     """
     Returns all slides linked to this concept.
     """
+    reader = get_source_reader()
+    if reader is not None:
+        return _port_slides_by_concept(reader, name)
     query = """
     MATCH (s:Slide)-[:TEACHES]->(c:Concept {name: $name}) 
     RETURN s.id as id
@@ -475,11 +597,14 @@ def get_slides_by_concept(name: str):
     results = neo4j_client.execute_query(query, {"name": name})
     return [row["id"] for row in results]
 
-@app.get("/source/filters", response_model=Dict[str, List[str]])
+@app.get("/source/filters", response_model=Dict[str, List[str]], dependencies=[Depends(require_platform_reader)])
 def get_source_filters():
     """
     Returns distinct values for faceted filters.
     """
+    reader = get_source_reader()
+    if reader is not None:
+        return _port_source_filters(reader)
     filters = {
         "origins": [],
         "domains": [],
@@ -490,6 +615,10 @@ def get_source_filters():
     # Origins (Business Units)
     res = neo4j_client.execute_query("MATCH (c:Course) RETURN distinct c.business_unit as val ORDER BY val")
     filters["origins"] = [r["val"] for r in res if r["val"]]
+    blank = neo4j_client.execute_query(
+        "MATCH (c:Course) WHERE c.business_unit IS NULL OR trim(c.business_unit) = '' RETURN count(c) as n")
+    if blank and blank[0]["n"] and "Uncategorized" not in filters["origins"]:
+        filters["origins"].append("Uncategorized")
     
     # Domains (Mapped to Engineering Discipline)
     res = neo4j_client.execute_query("MATCH (c:Course) RETURN distinct c.discipline as val ORDER BY val")
@@ -505,7 +634,7 @@ def get_source_filters():
     
     return filters
 
-@app.get("/source/heatmap/{term}")
+@app.get("/source/heatmap/{term}", dependencies=[Depends(require_platform_reader)])
 def get_concept_heatmap(term: str):
     """
     Returns heatmap data for a concept term, using salience scores.
@@ -516,6 +645,9 @@ def get_concept_heatmap(term: str):
         }
     }
     """
+    reader = get_source_reader()
+    if reader is not None:
+        return _port_heatmap(reader, get_alignment_store(reader), term)
     query = """
     WITH toLower($term) as term
     // 1. Find matching concepts (direct & synonyms)
@@ -523,7 +655,7 @@ def get_concept_heatmap(term: str):
     WITH c as direct_hit
     
     // Find synonyms via CanonicalConcept (if any)
-    OPTIONAL MATCH (direct_hit)-[:ALIGNS_TO]->(cc:CanonicalConcept)<-[:ALIGNS_TO]-(synonym:Concept)
+    OPTIONAL MATCH (direct_hit)<-[:ALIGNS_TO]-(cc:CanonicalConcept)-[:ALIGNS_TO]->(synonym:Concept)
     
     // Aggregate all related concepts into a single list
     WITH collect(distinct direct_hit) + collect(distinct synonym) as all_concepts
@@ -562,12 +694,15 @@ def get_concept_heatmap(term: str):
         
     return heatmap
 
-@app.post("/source/search", response_model=List[Dict[str, Any]])
+@app.post("/source/search", response_model=List[Dict[str, Any]], dependencies=[Depends(require_platform_reader)])
 def search_source_tree(request: SearchRequest):
     """
     Advanced search with faceted filters.
     Returns a pruned tree structure containing only matching nodes.
     """
+    reader = get_source_reader()
+    if reader is not None:
+        return _port_search_source_tree(reader, get_alignment_store(reader), request)
     params = {}
     
     # 1. Semantic Search (if query provided)
@@ -611,7 +746,9 @@ def search_source_tree(request: SearchRequest):
     # Filter: Origin (Business Unit)
     if request.filters.get("origin"):
         # Assuming origin is the Business Unit name stored on Course
-        where_clauses.append("c.business_unit = $origin")
+        # "Uncategorized" is how the tree names a null or blank business unit
+        where_clauses.append("(c.business_unit = $origin OR ($origin = 'Uncategorized' AND "
+                             "(c.business_unit IS NULL OR trim(c.business_unit) = '')))")
         params["origin"] = request.filters["origin"]
         
     # Filter: Domain (Mapped to Course.discipline)
@@ -644,7 +781,7 @@ def search_source_tree(request: SearchRequest):
     query_parts.append("""
     WITH c, s
     OPTIONAL MATCH (s)-[t:TEACHES]->(con:Concept)
-    OPTIONAL MATCH (con)-[:ALIGNS_TO]->(cc:CanonicalConcept)
+    OPTIONAL MATCH (cc:CanonicalConcept)-[:ALIGNS_TO]->(con)
     WITH c, s, coalesce(cc.name, con.name) as display_name, con.domain as domain, max(t.salience) as salience
     WITH c, s, collect(DISTINCT {name: display_name, domain: domain, salience: salience}) as concepts
     RETURN c.business_unit as bu, 
@@ -701,7 +838,111 @@ def search_source_tree(request: SearchRequest):
 
 # --- B. The Builder Module ---
 
-@app.post("/draft/create", response_model=TargetDraftNode)
+@app.get("/source/fixture-asset/{name}")
+def get_fixture_asset(name: str, exp: Optional[str] = None, sig: Optional[str] = None):
+    """Serves image and page bytes by '<12hex>--<name>'. Only with SOURCE_READER=fixture or store.
+    <img> sends no bearer, so live assets need the signed link a guarded route handed out (b4)."""
+    from fastapi.responses import Response
+    from src.workbench.source_reader import serves_assets
+    reader = get_source_reader()
+    if not serves_assets(reader):
+        raise HTTPException(status_code=404, detail="Not found")
+    if not fixture_mode() and not asset_links.valid(name, exp, sig):
+        raise HTTPException(status_code=404, detail="Not found")
+    asset = reader.asset(name)
+    if asset is None:
+        raise HTTPException(status_code=404, detail="Not found")
+    headers = None if fixture_mode() else {"Cache-Control": "private, max-age=300", "Referrer-Policy": "no-referrer"}
+    return Response(content=asset[0], media_type=asset[1], headers=headers)
+
+
+# The api holds the shared Neo4j admin credential; these routes add edges onto the platform's Slide nodes,
+# so they are held unless enabled (ADR-0060 section 4.3 moves those edges into the workbench's own records).
+# Every POST/PUT/PATCH/DELETE carries this guard or is in READ_ONLY_POSTS (tests/test_gap_wb_store_writes.py).
+READ_ONLY_POSTS = {
+    "/source/search",  # a vector search: reads Weaviate
+    "/source/embedded-images-for-slides",  # lists and presigns source images: reads MinIO
+    "/source/resolve-image-urls",  # presigns source images: reads MinIO
+}
+
+def require_store_writes():
+    if not store_writes_on():
+        raise HTTPException(status_code=403, detail="Writes to the shared graph are held (WB_STORE_WRITES is not on).")
+
+
+def _require_owned(user_id, node_id):
+    # Not found and not yours answer the same, so ids of other users' drafts are not revealed.
+    rows = neo4j_client.execute_query(
+        """
+        MATCH (u:User {id: $uid})-[:OWNS]->(p:Project)-[:HAS_CHILD*0..]->(n)
+        WHERE n.id = $id AND (n:Project OR n:TargetNode)
+        RETURN n.id LIMIT 1
+        """,
+        {"uid": user_id, "id": node_id},
+    )
+    if not rows:
+        raise HTTPException(status_code=404, detail="Draft not found")
+
+
+def _require_readable(user_id, node_id):
+    # Reads: the owner, or an authz_id on the draft's reviewer list (architect, b4). The same 404 otherwise.
+    rows = neo4j_client.execute_query(
+        """
+        MATCH (p:Project)-[:HAS_CHILD*0..]->(n)
+        WHERE n.id = $id AND (n:Project OR n:TargetNode)
+        OPTIONAL MATCH (u:User {id: $uid})-[o:OWNS]->(p)
+        WITH n, p, o WHERE o IS NOT NULL OR $uid IN coalesce(p.reviewer_ids, [])
+        RETURN n.id LIMIT 1
+        """,
+        {"uid": user_id, "id": node_id},
+    )
+    if not rows:
+        raise HTTPException(status_code=404, detail="Draft not found")
+
+
+MAX_REVIEWERS = 50
+
+
+@app.put("/draft/reviewers", dependencies=[Depends(require_store_writes)])
+def set_draft_reviewers(project_id: str, request: dict = Body(...), current_user: User = Depends(get_current_user)):
+    """
+    Replaces the draft's reviewer list: authz_ids that may read it, but not write it. Owner only.
+    """
+    ids = request.get("reviewer_ids")
+    if not isinstance(ids, list) or not all(isinstance(i, str) and i.strip() for i in ids):
+        raise HTTPException(status_code=400, detail="reviewer_ids must be a list of authz_ids")
+    ids = sorted({i.strip() for i in ids} - {current_user.id})
+    if len(ids) > MAX_REVIEWERS:
+        raise HTTPException(status_code=400, detail=f"at most {MAX_REVIEWERS} reviewers")
+    rows = neo4j_client.execute_query(
+        """
+        MATCH (u:User {id: $uid})-[:OWNS]->(p:Project {id: $id})
+        SET p.reviewer_ids = $ids
+        RETURN p.reviewer_ids AS reviewer_ids
+        """,
+        {"uid": current_user.id, "id": project_id, "ids": ids},
+    )
+    if not rows:
+        raise HTTPException(status_code=404, detail="Draft not found")
+    return {"project_id": project_id, "reviewer_ids": rows[0]["reviewer_ids"]}
+
+
+@app.get("/draft/reviewers/{project_id}")
+def get_draft_reviewers(project_id: str, current_user: User = Depends(get_current_user)):
+    """
+    The draft's reviewer list, for its owner and its reviewers.
+    """
+    _require_readable(current_user.id, project_id)
+    rows = neo4j_client.execute_query(
+        "MATCH (p:Project {id: $id}) RETURN coalesce(p.reviewer_ids, []) AS reviewer_ids",
+        {"id": project_id},
+    )
+    if not rows:
+        raise HTTPException(status_code=404, detail="Draft not found")
+    return {"project_id": project_id, "reviewer_ids": rows[0]["reviewer_ids"]}
+
+
+@app.post("/draft/create", response_model=TargetDraftNode, dependencies=[Depends(require_store_writes)])
 def create_draft_project(title: str, current_user: User = Depends(get_current_user)):
     """
     Initializes a new empty consolidation project linked to the current user.
@@ -712,7 +953,7 @@ def create_draft_project(title: str, current_user: User = Depends(get_current_us
     
     query = """
     MATCH (u:User {id: $user_id})
-    CREATE (p:Project:TargetNode {id: $id, title: $title, status: "empty", content_markdown: "", created_at: datetime()})
+    CREATE (p:Project:TargetNode {id: $id, title: $title, status: "empty", content_markdown: "", created_at: datetime(), source_deck_ids: []})
     MERGE (u)-[:OWNS]->(p)
     RETURN p.id as id, p.title as title, p.status as status, p.created_at as created_at
     """
@@ -721,7 +962,7 @@ def create_draft_project(title: str, current_user: User = Depends(get_current_us
     # Fallback if user node doesn't exist (shouldn't happen due to sync, but safety first)
     if not results:
         query_fallback = """
-        CREATE (p:Project:TargetNode {id: $id, title: $title, status: "empty", content_markdown: "", created_at: datetime()})
+        CREATE (p:Project:TargetNode {id: $id, title: $title, status: "empty", content_markdown: "", created_at: datetime(), source_deck_ids: []})
         RETURN p.id as id, p.title as title, p.status as status, p.created_at as created_at
         """
         results = neo4j_client.execute_query(query_fallback, {"id": project_id, "title": title})
@@ -741,12 +982,15 @@ def create_draft_project(title: str, current_user: User = Depends(get_current_us
 @app.get("/draft/list", response_model=List[TargetDraftNode])
 def list_user_projects(current_user: User = Depends(get_current_user)):
     """
-    Returns a list of projects owned by the current user.
+    Returns the projects the current user owns or reviews, each with the user's role on it.
     """
     user_id = current_user.id
     query = """
-    MATCH (u:User {id: $user_id})-[:OWNS]->(p:Project)
-    RETURN p.id as id, p.title as title, p.status as status, p.created_at as created_at
+    MATCH (p:Project)
+    OPTIONAL MATCH (u:User {id: $user_id})-[o:OWNS]->(p)
+    WITH p, o WHERE o IS NOT NULL OR $user_id IN coalesce(p.reviewer_ids, [])
+    RETURN p.id as id, p.title as title, p.status as status, p.created_at as created_at,
+           CASE WHEN o IS NULL THEN "reviewer" ELSE "owner" END as role
     ORDER BY coalesce(p.created_at, datetime('1970-01-01T00:00:00Z')) DESC
     """
     results = neo4j_client.execute_query(query, {"user_id": user_id})
@@ -761,21 +1005,23 @@ def list_user_projects(current_user: User = Depends(get_current_user)):
             id=row["id"],
             title=row["title"],
             status=row["status"],
-            created_at=created_at
+            created_at=created_at,
+            role=row.get("role"),
         ))
     return projects
 
-@app.post("/draft/node/add", response_model=TargetDraftNode)
-def add_draft_node(parent_id: str, title: str):
+@app.post("/draft/node/add", response_model=TargetDraftNode, dependencies=[Depends(require_store_writes)])
+def add_draft_node(parent_id: str, title: str, current_user: User = Depends(get_current_user)):
     """
     Adds a new Section/Module to the new outline.
     Defaults to 'technical' section type.
     """
+    _require_owned(current_user.id, parent_id)
     import uuid
     node_id = str(uuid.uuid4())
     
     query = """
-    MATCH (parent {id: $parent_id})
+    MATCH (parent:Project|TargetNode {id: $parent_id})
     CREATE (child:TargetNode {
         id: $id, 
         title: $title, 
@@ -802,8 +1048,25 @@ def add_draft_node(parent_id: str, title: str):
         section_type=row.get("section_type", "technical")
     )
 
-@app.put("/draft/node/map")
-def map_slides_to_node(node_id: str, slide_ids: List[str]):
+def slide_decks(slide_ids) -> Dict[str, str]:
+    """{slide_id: course_id} for the slides that sit in a deck; ids it cannot place are left out."""
+    reader = get_source_reader()
+    if reader is not None:
+        out = {}
+        for sid in slide_ids:
+            s = reader.slide(sid)
+            if s and s.get("course_id"):
+                out[sid] = s["course_id"]
+        return out
+    rows = neo4j_client.execute_query(
+        "MATCH (c:Course)-[:HAS_SLIDE]->(s:Slide) WHERE s.id IN $ids RETURN s.id AS id, c.id AS course_id",
+        {"ids": list(slide_ids)},
+    )
+    return {r["id"]: r["course_id"] for r in rows}
+
+
+@app.put("/draft/node/map", dependencies=[Depends(require_store_writes)])
+def map_slides_to_node(node_id: str, slide_ids: List[str], current_user: User = Depends(get_current_user)):
     """
     Links "Source Slides" to a "Target Node" (Drag & Drop action).
     Now performs a full sync: removes existing links and adds new ones.
@@ -813,6 +1076,12 @@ def map_slides_to_node(node_id: str, slide_ids: List[str]):
     - Calculates the majority layout
     - Sets 'suggested_layout' and 'target_layout' to the majority
     """
+    _require_owned(current_user.id, node_id)
+    decks = slide_decks(slide_ids)
+    unknown = [sid for sid in dict.fromkeys(slide_ids) if sid not in decks]
+    if unknown:
+        raise HTTPException(status_code=400, detail=f"unknown source slides: {', '.join(unknown)}")
+    deck_ids = list(dict.fromkeys(decks[sid] for sid in slide_ids))
     # 1. Get layouts of selected slides
     layout_query = """
     UNWIND $slide_ids as sid
@@ -848,8 +1117,16 @@ def map_slides_to_node(node_id: str, slide_ids: List[str]):
     // Update layouts AND Status (Suggestion -> Draft if modified)
     SET t.target_layout = $layout,
         t.suggested_layout = $layout,
+        t.source_slide_ids = $slide_ids,
         t.status = CASE WHEN t.status = 'suggestion' THEN 'draft' ELSE t.status END
-    
+
+    // The course records the decks its sources come from
+    WITH t
+    OPTIONAL MATCH (p:Project)-[:HAS_CHILD*]->(t)
+    FOREACH (_ IN CASE WHEN p IS NULL THEN [] ELSE [1] END |
+        SET p.source_deck_ids = coalesce(p.source_deck_ids, [])
+            + [d IN $deck_ids WHERE NOT d IN coalesce(p.source_deck_ids, [])])
+
     // Clear old links
     WITH t
     OPTIONAL MATCH (t)-[r:DERIVED_FROM]->(:Slide)
@@ -866,15 +1143,16 @@ def map_slides_to_node(node_id: str, slide_ids: List[str]):
     MATCH (s:Slide {id: sid})
     MERGE (t)-[:DERIVED_FROM]->(s)
     """
-    neo4j_client.execute_query(query, {"node_id": node_id, "slide_ids": slide_ids, "layout": new_layout})
+    neo4j_client.execute_query(query, {"node_id": node_id, "slide_ids": slide_ids, "layout": new_layout, "deck_ids": deck_ids})
     return {"status": "success", "mapped_slides": len(slide_ids), "auto_layout": new_layout}
 
-@app.put("/draft/node/content")
-def update_node_content(node_id: str, request: dict = Body(...)):
+@app.put("/draft/node/content", dependencies=[Depends(require_store_writes)])
+def update_node_content(node_id: str, request: dict = Body(...), current_user: User = Depends(get_current_user)):
     """
     Updates the content_markdown property of a TargetNode.
     Used for auto-saving edited synthesis content from the TipTap editor.
     """
+    _require_owned(current_user.id, node_id)
     content_markdown = request.get("content_markdown", "")
     
     query = """
@@ -889,12 +1167,13 @@ def update_node_content(node_id: str, request: dict = Body(...)):
     
     return {"status": "success", "node_id": node_id}
 
-@app.put("/draft/node/layout")
-def update_node_layout(node_id: str, request: dict = Body(...)):
+@app.put("/draft/node/layout", dependencies=[Depends(require_store_writes)])
+def update_node_layout(node_id: str, request: dict = Body(...), current_user: User = Depends(get_current_user)):
     """
     Updates the target_layout property of a TargetNode.
     Used for selecting specific slide layouts (e.g. split, grid, hero).
     """
+    _require_owned(current_user.id, node_id)
     target_layout = request.get("target_layout", "documentary")
     
     query = """
@@ -909,12 +1188,13 @@ def update_node_layout(node_id: str, request: dict = Body(...)):
     
     return {"status": "success", "node_id": node_id, "layout": target_layout}
 
-@app.put("/draft/node/title")
-def update_node_title(node_id: str, request: dict = Body(...)):
+@app.put("/draft/node/title", dependencies=[Depends(require_store_writes)])
+def update_node_title(node_id: str, request: dict = Body(...), current_user: User = Depends(get_current_user)):
     """
     Updates the title of a TargetNode.
     Only allowed for non-mandatory sections (technical).
     """
+    _require_owned(current_user.id, node_id)
     title = request.get("title", "")
     
     if not title.strip():
@@ -945,10 +1225,11 @@ def update_node_title(node_id: str, request: dict = Body(...)):
     return {"status": "success", "node_id": node_id, "title": title}
 
 @app.get("/draft/structure/{project_id}", response_model=List[TargetDraftNode])
-def get_draft_structure(project_id: str):
+def get_draft_structure(project_id: str, current_user: User = Depends(get_current_user)):
     """
     Returns the current "New" outline tree.
     """
+    _require_readable(current_user.id, project_id)
     # This is a simplified traversal. Recursion might be needed for full tree.
     # For now, let's return flat list with parent_ids
     query = """
@@ -1028,11 +1309,12 @@ def get_draft_structure(project_id: str):
 from fastapi import BackgroundTasks
 from src.services.synthesis_service import SynthesisService
 
-@app.post("/synthesis/trigger")
-def trigger_synthesis(request: SynthesisRequest, background_tasks: BackgroundTasks):
+@app.post("/synthesis/trigger", dependencies=[Depends(require_store_writes)])
+def trigger_synthesis(request: SynthesisRequest, background_tasks: BackgroundTasks, current_user: User = Depends(get_current_user)):
     """
     Triggers the DSPy generation logic via background task.
     """
+    _require_owned(current_user.id, request.target_node_id)
     # 1. Gather Context - Verify node exists
     query = """
     MATCH (t:TargetNode {id: $id})
@@ -1051,23 +1333,31 @@ def trigger_synthesis(request: SynthesisRequest, background_tasks: BackgroundTas
     service = SynthesisService()
     background_tasks.add_task(service.synthesize_node, request.target_node_id, request.tone_instruction)
     
-    return {"status": "queued", "run_id": "background_task"}
+    return {"status": "queued", "run_id": request.target_node_id}
+
+SYNTHESIS_STATUS = {"drafting": "RUNNING", "complete": "SUCCESS", "error": "FAILURE"}
+
 
 @app.get("/synthesis/status/{run_id}")
-def get_synthesis_status(run_id: str):
+def get_synthesis_status(run_id: str, current_user: User = Depends(get_current_user)):
     """
-    Polls the status of the generation.
+    Polls the generation: run_id is the target node id; the node's status is the truth.
     """
-    try:
-        status = dagster_client.get_run_status(run_id)
-        return {"run_id": run_id, "status": status}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    _require_readable(current_user.id, run_id)
+    rows = neo4j_client.execute_query(
+        "MATCH (n:TargetNode {id: $id}) RETURN n.status AS status", {"id": run_id})
+    if not rows:
+        raise HTTPException(status_code=404, detail="Node not found")
+    node_status = rows[0]["status"]
+    return {"run_id": run_id, "status": SYNTHESIS_STATUS.get(node_status, node_status), "node_status": node_status}
+
+
 @app.get("/synthesis/preview/{node_id}")
-def get_synthesis_preview(node_id: str):
+def get_synthesis_preview(node_id: str, current_user: User = Depends(get_current_user)):
     """
     Fetches the generated text (once Dagster is done).
     """
+    _require_readable(current_user.id, node_id)
     query = """
     MATCH (n:TargetNode {id: $id})
     RETURN n.content_markdown as content, n.status as status
@@ -1122,7 +1412,7 @@ def list_templates():
         traceback.print_exc()
         return {"templates": [{"name": "standard", "display_name": "Standard"}]}
 
-@app.post("/curriculum/generate", response_model=GenerateSkeletonResponse)
+@app.post("/curriculum/generate", response_model=GenerateSkeletonResponse, dependencies=[Depends(require_store_writes)])
 def generate_curriculum(request: GenerateSkeletonRequest, current_user: User = Depends(get_current_user)):
     """
     Generate a consolidated curriculum skeleton from selected source sections.
@@ -1137,7 +1427,7 @@ def generate_curriculum(request: GenerateSkeletonRequest, current_user: User = D
     """
     from src.services.generator_service import GeneratorService
     
-    service = GeneratorService()
+    service = GeneratorService(reader=get_source_reader())
     try:
         result = service.generate_skeleton(
             request.source_ids, 
@@ -1153,71 +1443,38 @@ def generate_curriculum(request: GenerateSkeletonRequest, current_user: User = D
         service.close()
 
 
-@app.post("/project/generate_skeleton", response_model=ProjectTreeResponse)
-def generate_project_skeleton(request: SkeletonRequest, current_user: User = Depends(get_current_user)):
+@app.post("/project/generate_skeleton", dependencies=[Depends(require_store_writes)])
+def generate_project_skeleton(request: SkeletonRequest, background_tasks: BackgroundTasks, current_user: User = Depends(get_current_user)):
     """
-    Generate a new curriculum project with AI-suggested sections.
-    
-    This creates a Project with TargetNodes in 'suggestion' status.
-    User can review and accept/reject each suggested section.
+    Starts the outline generation as a background job; poll GET /project/generate_skeleton/{job_id}.
+
+    The job creates a Project with TargetNodes in 'suggestion' status.
     """
-    from src.services.generator_service import GeneratorService
-    
-    service = GeneratorService()
-    try:
-        # Generate skeleton
-        result = service.generate_skeleton(
-            request.selected_source_ids, 
-            title=request.title,
-            master_course_id=request.master_course_id,
-            template_name=request.template_name or "standard",
-            user_id=current_user.id
-        )
-        
-        # Fetch full project tree
-        project_id = result['project_id']
-        query = """
-        MATCH (p:Project {id: $project_id})
-        OPTIONAL MATCH (p)-[:HAS_CHILD]->(t:TargetNode)
-        OPTIONAL MATCH (t)-[:SUGGESTED_SOURCE]->(s:Slide)
-        WITH p, t, collect(s.id) as suggested_ids
-        ORDER BY t.order
-        RETURN p.id as project_id, p.title as title, p.status as project_status,
-               collect({
-                   id: t.id,
-                   title: t.title,
-                   rationale: t.rationale,
-                   status: t.status,
-                   order: t.order,
-                   is_suggestion: true,
-                   is_unassigned: coalesce(t.is_unassigned, false),
-                   is_placeholder: coalesce(t.is_placeholder, false),
-                   suggested_source_ids: suggested_ids,
-                   source_refs: [],
-                   parent_id: p.id,
-                   content_markdown: null
-               }) as nodes
-        """
-        
-        tree_result = neo4j_client.execute_query(query, {"project_id": project_id})
-        
-        if not tree_result:
-            raise HTTPException(status_code=500, detail="Failed to fetch generated project")
-        
-        return {
-            "project_id": project_id,
-            "title": tree_result[0]["title"],
-            "status": tree_result[0]["project_status"],
-            "nodes": tree_result[0]["nodes"]
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-    finally:
-        service.close()
+    job = outline_jobs.create_job(current_user.id)
+    background_tasks.add_task(
+        outline_jobs.run_job, job["job_id"], reader=get_source_reader(),
+        selected_source_ids=request.selected_source_ids,
+        title=request.title,
+        master_course_id=request.master_course_id,
+        template_name=request.template_name or "standard",
+        user_id=current_user.id,
+    )
+    return {"job_id": job["job_id"], "status": "QUEUED", "steps": outline_jobs.STEPS}
 
 
-@app.post("/draft/node/accept")
-def accept_suggested_node(node_id: str):
+@app.get("/project/generate_skeleton/{job_id}")
+def get_generate_skeleton_job(job_id: str, current_user: User = Depends(get_current_user)):
+    job = outline_jobs.read_job(job_id, current_user.id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    public = {k: v for k, v in job.items() if k not in ("owner", "boot")}
+    start = job.get("started") or job["created"]
+    elapsed = (job.get("finished") or time.time()) - start
+    return {**public, "steps": outline_jobs.STEPS, "elapsed": round(max(elapsed, 0), 1)}
+
+
+@app.post("/draft/node/accept", dependencies=[Depends(require_store_writes)])
+def accept_suggested_node(node_id: str, current_user: User = Depends(get_current_user)):
     """
     Accept an AI-suggested node, converting it to a permanent draft.
     
@@ -1226,6 +1483,7 @@ def accept_suggested_node(node_id: str):
     2. Converts SUGGESTED_SOURCE relationships to DERIVED_FROM
     3. Makes the suggestion permanent
     """
+    _require_owned(current_user.id, node_id)
     query = """
     MATCH (t:TargetNode {id: $node_id})
     WHERE t.status = 'suggestion'
@@ -1236,9 +1494,18 @@ def accept_suggested_node(node_id: str):
     // Convert relationships
     WITH t
     OPTIONAL MATCH (t)-[r:SUGGESTED_SOURCE]->(s:Slide)
+    OPTIONAL MATCH (c:Course)-[:HAS_SLIDE]->(s)
     DELETE r
-    WITH t, collect(s) as slides
+    WITH t, collect(DISTINCT s) as slides, collect(DISTINCT c.id) as deck_ids
     FOREACH (slide IN slides | CREATE (t)-[:DERIVED_FROM]->(slide))
+    SET t.source_slide_ids = [x IN slides | x.id]
+
+    // The course records the decks its sources come from
+    WITH t, slides, deck_ids
+    OPTIONAL MATCH (p:Project)-[:HAS_CHILD*]->(t)
+    FOREACH (_ IN CASE WHEN p IS NULL THEN [] ELSE [1] END |
+        SET p.source_deck_ids = coalesce(p.source_deck_ids, [])
+            + [d IN deck_ids WHERE NOT d IN coalesce(p.source_deck_ids, [])])
     
     RETURN t.id as id, t.status as status, size(slides) as sources_accepted
     """
@@ -1255,8 +1522,8 @@ def accept_suggested_node(node_id: str):
         "sources_linked": results[0]["sources_accepted"]
     }
 
-@app.delete("/draft/node/reject")
-def reject_suggested_node(node_id: str):
+@app.delete("/draft/node/reject", dependencies=[Depends(require_store_writes)])
+def reject_suggested_node(node_id: str, current_user: User = Depends(get_current_user)):
     """
     Reject an AI-suggested node.
     
@@ -1267,6 +1534,7 @@ def reject_suggested_node(node_id: str):
     For technical sections:
     - Delete the node entirely
     """
+    _require_owned(current_user.id, node_id)
     # First check the section type
     check_query = """
     MATCH (t:TargetNode {id: $node_id})
@@ -1325,62 +1593,55 @@ def reject_suggested_node(node_id: str):
 @app.get("/render/templates")
 def list_templates():
     """
-    Lists available Template Configs from MinIO (cib-sources/templates).
-    Returns list of names (e.g. 'master_engineering') for .yaml files.
+    The deck template in use: "standin" when none is configured, else "configured".
     """
-    try:
-        # Assuming buckets are defined in assets or env
-        BUCKET_NAME = "cib-sources" 
-        prefix = "templates/"
-        
-        objects = minio_client.list_objects(BUCKET_NAME, prefix=prefix, recursive=True)
-        
-        templates = []
-        for obj in objects:
-            print(f"DEBUG: Found object {obj.object_name}")
-            if obj.object_name.endswith(".yaml") or obj.object_name.endswith(".yml"):
-                # Clean name: remove prefix and extension
-                name = obj.object_name.replace(prefix, "").rsplit('.', 1)[0]
-                templates.append(name)
-                
-        # Always include standard
-        if "standard" not in templates:
-            templates.insert(0, "standard")
-            
-        return {"templates": sorted(templates)}
-    except Exception as e:
-        print(f"Error listing templates: {e}")
-        return {"templates": ["standard"]}
+    return {"templates": [deck_template.template_label()]}
 
-@app.post("/render/trigger")
-def trigger_render(request: RenderRequest, background_tasks: BackgroundTasks):
+RENDER_POLL_SECONDS = 1.0
+PPTX_TYPE = "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+
+
+def render_runner() -> str:
+    """local (in the api process) or dagster; unset means dagster only when DAGSTER_HOST is set."""
+    value = os.getenv("RENDER_RUNNER")
+    if not value:
+        return "dagster" if os.getenv("DAGSTER_HOST") else "local"
+    if value not in ("local", "dagster"):
+        raise HTTPException(status_code=500, detail="RENDER_RUNNER must be local or dagster")
+    return value
+
+
+@app.post("/render/trigger", dependencies=[Depends(require_store_writes)])
+def trigger_render(request: RenderRequest, background_tasks: BackgroundTasks, current_user: User = Depends(get_current_user)):
     """
-    Triggers the Dagster pipeline to render the project to PPTX/DOCX/PDF.
+    Renders (in process, or via Dagster when configured) the project to PPTX/DOCX/PDF.
     """
+    _require_owned(current_user.id, request.project_id)
     # 1. Verify Project
     query = """
     MATCH (p:Project {id: $id})
-    RETURN p.id, p.title
+    RETURN p.title AS title
     """
     results = neo4j_client.execute_query(query, {"id": request.project_id})
     if not results:
         raise HTTPException(status_code=404, detail="Project not found")
-    
-    project_title = results[0].get("title", "Untitled_Project")
-    
-    # Generate Filename
-    import re
-    # Sanitize title
-    safe_title = re.sub(r'[^a-zA-Z0-9_\-]', '_', project_title)
-    
-    # Default to PPTX for now, as that's the primary desired output
-    # In the future, we can add a format parameter to the RenderRequest
+
+    project_title = results[0].get("title") or "Untitled_Project"
+
     file_extension = request.format.lower()
-    if file_extension not in ["pptx", "typ"]:
-        file_extension = "pptx"
-        
-    filename = f"{safe_title}_{request.project_id[:8]}.{file_extension}"
-    
+    if file_extension not in FORMATS:
+        raise HTTPException(status_code=400, detail="format must be one of pptx, typ")
+
+    filename = output_filename(project_title, request.project_id, file_extension)
+
+    if render_runner() == "local":
+        job = create_job(request.project_id, filename, file_extension, current_user.id)
+        background_tasks.add_task(
+            run_job, job["run_id"], request.template_name or "standin",
+            neo4j_client=neo4j_client, minio_client=minio_client, reader=get_source_reader(),
+        )
+        return {"status": "triggered", "filename": filename, "job": "render_local", "run_id": job["run_id"]}
+
     print(f"Triggering render for project {request.project_id} -> {filename} (Template: {request.template_name})")
     
     # 2. Add Dynamic Partition
@@ -1443,7 +1704,7 @@ def trigger_render(request: RenderRequest, background_tasks: BackgroundTasks):
                 "rendered_course_file": {
                     "config": {
                         "project_id": request.project_id,
-                        "template_name": request.template_name
+                        "template_name": request.template_name or "standin"
                     }
                 }
             }
@@ -1460,6 +1721,35 @@ async def render_events(run_id: str):
     SSE endpoint to stream render job status updates.
     The client subscribes to this after triggering a render.
     """
+    if run_id.startswith("local-"):
+        if read_job(run_id) is None:
+            raise HTTPException(status_code=404, detail="Render job not found")
+
+        async def local_events():
+            last = None
+            while True:
+                job = read_job(run_id)
+                if job is None:
+                    yield {"event": "error", "data": json.dumps({"run_id": run_id, "status": "FAILURE", "error": "job vanished", "problems": []})}
+                    return
+                status = job["status"]
+                if status != last:
+                    last = status
+                    yield {"event": "status", "data": json.dumps({"run_id": run_id, "status": status})}
+                if status == "SUCCESS":
+                    yield {"event": "complete", "data": json.dumps({
+                        "run_id": run_id, "status": "SUCCESS", "filename": job["filename"],
+                        "download_url": f"/render/file/{run_id}"})}
+                    return
+                if status == "FAILURE":
+                    problems = job.get("problems") or []
+                    yield {"event": "error", "data": json.dumps({
+                        "run_id": run_id, "status": "FAILURE", "error": "; ".join(problems), "problems": problems})}
+                    return
+                await asyncio.sleep(RENDER_POLL_SECONDS)
+
+        return EventSourceResponse(local_events())
+
     async def event_generator():
         while True:
             try:
@@ -1549,16 +1839,20 @@ async def render_events(run_id: str):
     return EventSourceResponse(event_generator())
 
 
-@app.get("/render/download/{filename}")
-def get_download_url(filename: str):
-    """
-    Returns a presigned URL for downloading the rendered file.
-    """
-    try:
-        url = minio_client.get_presigned_url("published", filename)
-        return {"download_url": url, "filename": filename}
-    except Exception as e:
-        raise HTTPException(status_code=404, detail=f"File not found: {str(e)}")
+@app.get("/render/file/{run_id}")
+def get_render_file(run_id: str):
+    # No auth dependency: the UI opens this with window.open, which cannot send the bearer
+    # token. The URL is a presigned-style capability (architect ruling): the run id is 128
+    # CSPRNG bits, the file is found only through its own run's record, and the link answers
+    # 404 once LINK_TTL_SECONDS have passed since the export finished.
+    job = read_job(run_id)
+    path = job_file(run_id) if job else None
+    if path is None:
+        raise HTTPException(status_code=404, detail="Render file not found")
+    media = PPTX_TYPE if job["format"] == "pptx" else "text/plain"
+    return FileResponse(path, filename=job["filename"], media_type=media,
+                        headers={"Cache-Control": "no-store", "Referrer-Policy": "no-referrer"})
+
 
 if __name__ == "__main__":
     import uvicorn

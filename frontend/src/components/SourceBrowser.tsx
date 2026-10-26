@@ -1,11 +1,13 @@
-import React, { useEffect, useState, useMemo } from 'react';
+import React, { useEffect, useLayoutEffect, useRef, useState, useMemo } from 'react';
 import { Search, Folder, ChevronDown, FileText, Image, ChevronRight, CheckCircle2, Filter, X } from 'lucide-react';
-import { api } from '../api';
+import { api, assetSrc, slideLabel, courseSubtitle, courseTooltip } from '../api';
 import type { CourseNode, SourceSlide } from '../api';
 import { useDraggable } from '@dnd-kit/core';
+import { useVirtualizer } from '@tanstack/react-virtual';
 import { useAppStore } from '../store';
 import { useSelectionStore } from '../stores/selectionStore';
 import { SidebarActionPanel } from './SidebarActionPanel';
+import { conceptKey, mergeByCase } from '../conceptCase';
 import clsx from 'clsx';
 
 interface SourceBrowserProps {
@@ -287,13 +289,73 @@ const BusinessUnitNode: React.FC<{ node: CourseNode, heatmapData?: Record<string
     );
 };
 
+// Courses longer than this mount only the rows near the viewport.
+const VIRTUALIZE_ABOVE = 40;
+
+const nearestScroller = (el: HTMLElement): HTMLElement | null => {
+    for (let p = el.parentElement; p; p = p.parentElement) {
+        const oy = getComputedStyle(p).overflowY;
+        if (oy === 'auto' || oy === 'scroll') return p;
+    }
+    return null;
+};
+
+// The panel's scroller is an ancestor shared by every expanded course, so the list
+// virtualizes against it (window-style) with scrollMargin = the list's offset inside it.
+const VirtualSlideList: React.FC<{ slides: SourceSlide[], thumbs: Record<string, string>, heatmapData?: Record<string, { score: number, type: string }>, heatmapMode?: boolean, searchQuery?: string }> = ({ slides, thumbs, heatmapData, heatmapMode, searchQuery }) => {
+    const listRef = useRef<HTMLDivElement>(null);
+    const [scroller, setScroller] = useState<HTMLElement | null>(null);
+    const [margin, setMargin] = useState(0);
+
+    useLayoutEffect(() => {
+        const list = listRef.current;
+        const sc = list && nearestScroller(list);
+        if (!list || !sc) return;
+        setScroller(sc);
+        const measure = () => setMargin(
+            list.getBoundingClientRect().top - sc.getBoundingClientRect().top + sc.scrollTop);
+        measure();
+        // Content above the list (other courses expanding) resizes every ancestor up to the scroller.
+        const ro = new ResizeObserver(measure);
+        for (let p: HTMLElement | null = list.parentElement; p && p !== sc; p = p.parentElement) ro.observe(p);
+        ro.observe(sc);
+        return () => ro.disconnect();
+    }, []);
+
+    const virt = useVirtualizer({
+        count: slides.length,
+        getScrollElement: () => scroller,
+        estimateSize: () => 96,
+        overscan: 8,
+        scrollMargin: margin,
+        getItemKey: i => slides[i].id,
+    });
+
+    return (
+        <div ref={listRef} style={{ height: virt.getTotalSize(), position: 'relative' }}>
+            {virt.getVirtualItems().map(v => (
+                <div
+                    key={v.key}
+                    data-index={v.index}
+                    ref={virt.measureElement}
+                    style={{ position: 'absolute', top: 0, left: 0, right: 0, transform: `translateY(${v.start - margin}px)`, paddingBottom: 8 }}
+                >
+                    <SlideRow slide={slides[v.index]} thumb={thumbs[slides[v.index].id]} isHighlighted={false} heatmapData={heatmapData} heatmapMode={heatmapMode} searchQuery={searchQuery} />
+                </div>
+            ))}
+        </div>
+    );
+};
+
 const CourseItem: React.FC<{ course: CourseNode, heatmapData?: Record<string, { score: number, type: string }>, heatmapMode?: boolean, searchQuery?: string }> = ({ course, heatmapData, heatmapMode, searchQuery }) => {
     const { selectedSourceIds, toggleSelection } = useSelectionStore();
     // If course has pre-loaded slides (from search), expand by default
     const preloadedSlides = (course as any).slides as SourceSlide[] | undefined;
     const [expanded, setExpanded] = useState(!!preloadedSlides);
     const [slides, setSlides] = useState<SourceSlide[]>(preloadedSlides || []);
+    const [thumbs, setThumbs] = useState<Record<string, string>>({}); // slide id -> first embedded image
     const [loading, setLoading] = useState(false);
+    const [loadError, setLoadError] = useState(false);
 
     const isSelected = selectedSourceIds.has(course.id);
 
@@ -319,6 +381,7 @@ const CourseItem: React.FC<{ course: CourseNode, heatmapData?: Record<string, { 
         // In search mode, course.slides is populated. In default mode, it's undefined.
         if (preloadedSlides) {
             setSlides(preloadedSlides);
+            loadThumbs(preloadedSlides);
             setExpanded(true);
         } else {
             // Switching to default view.
@@ -334,22 +397,41 @@ const CourseItem: React.FC<{ course: CourseNode, heatmapData?: Record<string, { 
         }
     }, [preloadedSlides, course.id]); // Add course.id to force reset if course identity changes logically but not physically (React key)
 
+    // One request per course: first embedded image of each slide, for slides without a page render
+    const loadThumbs = async (courseSlides: SourceSlide[]) => {
+        if (courseSlides.length === 0) return;
+        try {
+            const res = await api.getEmbeddedImagesForSlides(courseSlides.map(s => s.id));
+            const first: Record<string, string> = {};
+            for (const img of res.images || []) {
+                const id = `${course.id}_p${img.page_number}`;
+                if (img.page_number != null && !first[id]) first[id] = img.url;
+            }
+            setThumbs(first);
+        } catch (e) {
+            console.error(e);
+        }
+    };
+
+    const load = async () => {
+        setLoading(true);
+        setLoadError(false);
+        try {
+            // One call returns row-ready slides (concepts, preview, image url).
+            const rows = await api.getCourseSlides(course.id);
+            setSlides(rows);
+            loadThumbs(rows);
+        } catch (e) {
+            console.error(e);
+            setLoadError(true);
+        } finally {
+            setLoading(false);
+        }
+    };
+
     const toggle = async () => {
         if (!expanded && slides.length === 0) {
-            setLoading(true);
-            try {
-                const refs = await api.getCourseSlides(course.id);
-                // In default view, we need to fetch details. 
-                // Optimization: The search endpoint returns details. 
-                // The default endpoint returns {id, number, text}.
-                // We need to fetch details for drag preview.
-                const details = await Promise.all(refs.map(s => api.getSlideDetails(s.id)));
-                setSlides(details);
-            } catch (e) {
-                console.error(e);
-            } finally {
-                setLoading(false);
-            }
+            await load();
         }
         setExpanded(!expanded);
     };
@@ -362,6 +444,7 @@ const CourseItem: React.FC<{ course: CourseNode, heatmapData?: Record<string, { 
     return (
         <div>
             <div
+                title={courseTooltip(course.name, course.id)}
                 className={clsx(
                     "flex items-center gap-2 p-2 rounded cursor-pointer text-xs transition-colors select-none",
                     // Override or merge classes
@@ -378,7 +461,10 @@ const CourseItem: React.FC<{ course: CourseNode, heatmapData?: Record<string, { 
                 />
                 <div className="flex items-center gap-2 flex-1" onClick={toggle}>
                     <FileText size={14} className="opacity-70" />
-                    <span className="truncate flex-1">{course.name}</span>
+                    <div className="flex-1 min-w-0">
+                        <div className="truncate">{course.name?.trim() || <span className="italic text-slate-400">Untitled course</span>}</div>
+                        {courseSubtitle(course) && <div className="text-[10px] text-slate-400 truncate font-normal">{courseSubtitle(course)}</div>}
+                    </div>
                     {loading && <span className="animate-spin">⟳</span>}
                     {preloadedSlides && <span className="text-[9px] bg-brand-teal/10 px-1 rounded text-brand-teal">{preloadedSlides.length}</span>}
                 </div>
@@ -386,9 +472,17 @@ const CourseItem: React.FC<{ course: CourseNode, heatmapData?: Record<string, { 
 
             {expanded && (
                 <div className="pl-4 py-1 space-y-2">
-                    {slides.length === 0 && !loading && <div className="text-[10px] text-slate-400 pl-2">No slides found.</div>}
-                    {slides.map(slide => (
-                        <SlideRow key={slide.id} slide={slide} isHighlighted={false} heatmapData={heatmapData} heatmapMode={heatmapMode} searchQuery={searchQuery} />
+                    {slides.length === 0 && !loading && loadError && (
+                        <div className="text-[10px] text-slate-400 pl-2">
+                            Couldn't load slides.{' '}
+                            <button className="text-blue-600 hover:underline" onClick={load}>Retry</button>
+                        </div>
+                    )}
+                    {slides.length === 0 && !loading && !loadError && <div className="text-[10px] text-slate-400 pl-2">No slides found.</div>}
+                    {slides.length > VIRTUALIZE_ABOVE ? (
+                        <VirtualSlideList slides={slides} thumbs={thumbs} heatmapData={heatmapData} heatmapMode={heatmapMode} searchQuery={searchQuery} />
+                    ) : slides.map(slide => (
+                        <SlideRow key={slide.id} slide={slide} thumb={thumbs[slide.id]} isHighlighted={false} heatmapData={heatmapData} heatmapMode={heatmapMode} searchQuery={searchQuery} />
                     ))}
                 </div>
             )}
@@ -396,7 +490,7 @@ const CourseItem: React.FC<{ course: CourseNode, heatmapData?: Record<string, { 
     );
 };
 
-const SlideRow: React.FC<{ slide: SourceSlide, isHighlighted: boolean, heatmapData?: Record<string, { score: number, type: string }>, heatmapMode?: boolean, searchQuery?: string }> = ({ slide, isHighlighted, heatmapData, heatmapMode, searchQuery }) => {
+const SlideRow: React.FC<{ slide: SourceSlide, thumb?: string, isHighlighted: boolean, heatmapData?: Record<string, { score: number, type: string }>, heatmapMode?: boolean, searchQuery?: string }> = ({ slide, thumb, isHighlighted, heatmapData, heatmapMode, searchQuery }) => {
     const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({
         id: `source-${slide.id}`,
         data: { slide }
@@ -405,6 +499,7 @@ const SlideRow: React.FC<{ slide: SourceSlide, isHighlighted: boolean, heatmapDa
     // Heatmap Logic
     const heat = heatmapData ? heatmapData[slide.id] : undefined;
     const intensity = heat?.score || 0;
+    const merged = mergeByCase(slide.concepts || []);
 
     const heatmapClass = useMemo(() => {
         if (!heatmapMode) return "";
@@ -464,6 +559,8 @@ const SlideRow: React.FC<{ slide: SourceSlide, isHighlighted: boolean, heatmapDa
             )}>
                 {slide.s3_url ? (
                     <img src={slide.s3_url} className="w-full h-full object-cover" alt="slide" />
+                ) : thumb ? (
+                    <img src={assetSrc(thumb)} className="w-full h-full object-cover" alt="embedded" />
                 ) : (
                     <Image size={12} className="text-slate-300 absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2" />
                 )}
@@ -478,14 +575,17 @@ const SlideRow: React.FC<{ slide: SourceSlide, isHighlighted: boolean, heatmapDa
             <div className="flex-1 min-w-0 flex flex-col justify-center">
                 <div className="flex items-center justify-between">
                     <span className="text-[10px] font-bold text-slate-700 truncate">
-                        Slide {slide.id.split('_p')[1] || slide.id}
+                        {slideLabel(slide.id, slide.number)}
                     </span>
+                    {thumb && !slide.text_preview?.trim() && !(slide.elements ?? []).some(e => e.text?.trim()) && (
+                        <span className="text-[9px] text-slate-400 border border-slate-200 rounded px-1">image-only</span>
+                    )}
                     {isUsed && <span className="text-[9px] text-brand-teal font-medium">Used</span>}
                 </div>
 
                 {/* Concepts Tags */}
                 <div className={clsx("flex flex-wrap gap-1 mt-1", heatmapMode && intensity === 0 && "grayscale")}>
-                    {([...(slide.concepts || [])])
+                    {[...merged]
                         .sort((a, b) => (b.salience || 0) - (a.salience || 0))
                         .slice(0, 6)
                         .map((c, i) => (
@@ -493,20 +593,20 @@ const SlideRow: React.FC<{ slide: SourceSlide, isHighlighted: boolean, heatmapDa
                                 "text-[9px] px-1.5 py-0.5 rounded truncate max-w-[100px] border flex items-center gap-1",
                                 // Heatmap Logic: Highlight concept tag if it likely matches the search
                                 // Simple heuristic: Check if search query is part of concept name
-                                (heatmapMode && intensity > 0 && searchQuery && c.name.toLowerCase().includes(searchQuery.toLowerCase()))
+                                (heatmapMode && intensity > 0 && searchQuery && conceptKey(c.name).includes(conceptKey(searchQuery)))
                                     ? ((c.salience || 0) > 0.7
                                         ? "bg-red-100 text-red-700 border-red-300 font-medium ring-1 ring-red-200"
                                         : "bg-orange-100 text-orange-700 border-orange-300 font-medium ring-1 ring-orange-200")
                                     : "bg-slate-100 text-slate-500 border-slate-200"
                             )}>
                                 <span className="truncate">{c.name}</span>
-                                {c.salience !== undefined && (
+                                {c.salience != null && (
                                     <span className={clsx(
                                         "font-mono text-[8px]",
                                         // Heatmap Mode: Only color red if this specific concept is a match
                                         // Otherwise default to slate (grayscale parent handles opacity)
                                         heatmapMode && intensity > 0
-                                            ? (searchQuery && c.name.toLowerCase().includes(searchQuery.toLowerCase())
+                                            ? (searchQuery && conceptKey(c.name).includes(conceptKey(searchQuery))
                                                 ? (c.salience > 0.7 ? "text-red-600 font-bold" : "text-orange-500 font-medium") // Match: Red if high, Orange if low
                                                 : "text-slate-500") // Non-Match: Force Slate
                                             : (c.salience > 0.7 ? "text-green-600 font-bold" : "text-slate-400")
@@ -516,9 +616,9 @@ const SlideRow: React.FC<{ slide: SourceSlide, isHighlighted: boolean, heatmapDa
                                 )}
                             </span>
                         ))}
-                    {(slide.concepts || []).length > 6 && (
+                    {merged.length > 6 && (
                         <span className="text-[9px] text-slate-400 self-center pl-1">
-                            +{(slide.concepts || []).length - 6}
+                            +{merged.length - 6}
                         </span>
                     )}
                 </div>

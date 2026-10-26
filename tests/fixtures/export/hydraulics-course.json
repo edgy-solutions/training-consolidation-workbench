@@ -1,0 +1,95 @@
+{
+  "project": {
+    "id": "proj-hydraulics",
+    "title": "Hydraulic Systems (consolidated)",
+    "deck_ids": [
+      "sha256:895392accf240f84d20c095c97384eee337541266ac21b31f9e09d1781597ebc"
+    ]
+  },
+  "nodes": [
+    {
+      "id": "n-principles",
+      "parent_id": "proj-hydraulics",
+      "title": "Hydraulic Principles",
+      "order": 0,
+      "content_markdown": "",
+      "key_concepts": [],
+      "source_refs": [],
+      "is_unassigned": false
+    },
+    {
+      "id": "n-pascal",
+      "parent_id": "n-principles",
+      "title": "Pascal's Law",
+      "order": 1,
+      "content_markdown": "- Pressure applied to a confined fluid is transmitted equally in all directions\n- Force equals pressure multiplied by piston area",
+      "key_concepts": [
+        "Pascal's law",
+        "Hydraulic pressure"
+      ],
+      "source_refs": [
+        "sha256:895392accf240f84d20c095c97384eee337541266ac21b31f9e09d1781597ebc_p2",
+        "sha256:895392accf240f84d20c095c97384eee337541266ac21b31f9e09d1781597ebc_p1"
+      ],
+      "is_unassigned": false
+    },
+    {
+      "id": "n-pumps",
+      "parent_id": "n-principles",
+      "title": "Hydraulic Pumps",
+      "order": null,
+      "content_markdown": "- Gear pumps are simple and tolerant of contamination\n- Vane pumps run quietly at moderate pressure\n- Piston pumps deliver the highest pressure",
+      "key_concepts": [],
+      "source_refs": [
+        "sha256:895392accf240f84d20c095c97384eee337541266ac21b31f9e09d1781597ebc_p3"
+      ],
+      "is_unassigned": false
+    },
+    {
+      "id": "n-components",
+      "parent_id": "proj-hydraulics",
+      "title": "System Components",
+      "order": 3,
+      "content_markdown": "",
+      "key_concepts": [],
+      "source_refs": [],
+      "is_unassigned": false
+    },
+    {
+      "id": "n-reservoir",
+      "parent_id": "n-components",
+      "title": "Reservoir Schematic",
+      "order": 4,
+      "content_markdown": "Figure 1: reservoir, filter and pump in series\n\n![895392accf24--slide_4_img_0.png](fixture://images/895392accf24--slide_4_img_0.png)",
+      "key_concepts": [
+        "Hydraulic reservoir"
+      ],
+      "source_refs": [
+        "sha256:895392accf240f84d20c095c97384eee337541266ac21b31f9e09d1781597ebc_p4"
+      ],
+      "is_unassigned": false
+    },
+    {
+      "id": "n-unassigned",
+      "parent_id": "proj-hydraulics",
+      "title": "Unassigned / For Review",
+      "order": 5,
+      "content_markdown": "",
+      "key_concepts": [],
+      "source_refs": [],
+      "is_unassigned": true
+    },
+    {
+      "id": "n-stray",
+      "parent_id": "n-unassigned",
+      "title": "Stray note",
+      "order": 6,
+      "content_markdown": "stray",
+      "key_concepts": [
+        "Stray concept"
+      ],
+      "source_refs": [],
+      "is_unassigned": false
+    }
+  ]
+}

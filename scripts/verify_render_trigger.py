@@ -5,7 +5,7 @@ def main():
     url = "http://localhost:8000/render/trigger"
     payload = {
         "project_id": "3355b422-4afe-4d35-8320-48699d7bfd0f",
-        "template_name": "master_engineering",
+        "template_name": "standin",
         "format": "pptx"
     }
     

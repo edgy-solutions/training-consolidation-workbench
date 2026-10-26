@@ -1,6 +1,7 @@
 """
 Service for generating consolidated curricula from source materials.
 """
+import re
 import uuid
 import os
 import yaml
@@ -32,6 +33,24 @@ def load_curriculum_template() -> List[Dict]:
 
 TEMPLATE_MODULES = load_curriculum_template()
 
+# The harmonizer's input tags each concept with its weight, "Voltage (Primary)", and the LLM
+# copies the tag into its key_concepts; dash variants (U+2011 and kin) come back as well.
+_WEIGHT_LABEL = re.compile(r"\s*\((?:primary|secondary|mention)\)\s*$", re.IGNORECASE)
+_DASHES = str.maketrans({c: "-" for c in "\u2010\u2011\u2012\u2013\u2014\u2212"})
+
+
+def clean_concepts(concepts) -> List[str]:
+    """Concept names without the weight label, one per term: case, spacing, dashes and a plural
+    s do not make a new term. Keeps the first spelling and the order."""
+    out, seen = [], set()
+    for c in concepts or []:
+        name = " ".join(_WEIGHT_LABEL.sub("", str(c)).translate(_DASHES).split())
+        key = " ".join(w[:-1] if len(w) > 3 and w.endswith("s") else w for w in name.casefold().split())
+        if name and key not in seen:
+            seen.add(key)
+            out.append(name)
+    return out
+
 # Configure DSPy using shared configuration
 # load_dotenv() and dspy.configure() are handled in src.dspy_modules.config
 
@@ -39,7 +58,8 @@ TEMPLATE_MODULES = load_curriculum_template()
 class GeneratorService:
     """Service for generating consolidated curricula"""
     
-    def __init__(self):
+    def __init__(self, reader=None):
+        self.reader = reader  # the api's SourceReader; None keeps the legacy SlideText search
         self.neo4j_client = Neo4jClient()
         self.weaviate_client = WeaviateClient()
         self.harmonizer = OutlineHarmonizer()
@@ -55,7 +75,7 @@ class GeneratorService:
         query = """
         UNWIND $concepts as concept_name
         MATCH (c:Concept {name: concept_name})
-        OPTIONAL MATCH (c)-[:ALIGNS_TO]->(cc:CanonicalConcept)
+        OPTIONAL MATCH (cc:CanonicalConcept)-[:ALIGNS_TO]->(c)
         RETURN concept_name, coalesce(cc.name, c.name) as display_name
         """
         results = self.neo4j_client.execute_query(query, {"concepts": concepts})
@@ -74,7 +94,7 @@ class GeneratorService:
         
         return normalized
     
-    def generate_skeleton(self, selected_source_ids: List[str], title: str = "New Curriculum", master_course_id: Optional[str] = None, template_name: str = "standard", user_id: Optional[str] = None) -> Dict[str, Any]:
+    def generate_skeleton(self, selected_source_ids: List[str], title: str = "New Curriculum", master_course_id: Optional[str] = None, template_name: str = "standard", user_id: Optional[str] = None, progress=None) -> Dict[str, Any]:
         """
         Generate a curriculum skeleton from selected source sections/courses.
         
@@ -86,7 +106,9 @@ class GeneratorService:
         Returns:
             Dictionary with project_id and generated structure
         """
+        progress = progress or (lambda step: None)
         # Step 1: Fetch source outlines from Neo4j
+        progress("sources")
         source_outlines, source_course_ids, known_source_concepts = self._fetch_source_outlines(selected_source_ids)
         
         if not source_outlines:
@@ -95,6 +117,7 @@ class GeneratorService:
         print(f"DEBUG: Found {len(source_course_ids)} source course IDs: {source_course_ids}")
         
         # Step 2: Generate consolidated plan
+        progress("llm")
         if master_course_id:
             # Use the master course's outline as the structure
             print(f"DEBUG: Using master outline from course: {master_course_id}")
@@ -117,7 +140,11 @@ class GeneratorService:
                 section_type = s.get('type', 'technical')
                 print(f"DEBUG: Section '{s['title']}' (type: {section_type}) has concepts: {s.get('key_concepts')}")
         
+        for section in consolidated_sections:
+            section['key_concepts'] = clean_concepts(section.get('key_concepts'))
+
         # Step 3: For each target section, find matching slides (FILTERED by source courses)
+        progress("slides")
         enriched_sections = []
         for section in consolidated_sections:
             
@@ -170,11 +197,14 @@ class GeneratorService:
             })
 
         # Step 5: Persist
-        project_id = self._persist_project(enriched_sections, title=title, user_id=user_id)
+        progress("save")
+        project_id = self._persist_project(enriched_sections, title=title, user_id=user_id,
+                                           source_deck_ids=list(dict.fromkeys(source_course_ids)))
         
         return {
             'project_id': project_id,
-            'sections': enriched_sections
+            'sections': enriched_sections,
+            'unassigned_count': len(unassigned_ids)
         }
 
     def _fetch_all_slides_for_courses(self, course_ids: List[str]) -> List[Dict]:
@@ -303,7 +333,9 @@ class GeneratorService:
         WITH n, target, level, bu, course_id, parent.id as parent_section_id
         
         // Get Concepts WITH MAX SCORE (Aggregation)
-        OPTIONAL MATCH (target)-[:HAS_SLIDE]->(slide:Slide)-[t:TEACHES]->(con:Concept)
+        // HAS_CHILD is the generic Section -> Slide edge (contract §4); the sandbox graph has no
+        // Section HAS_SLIDE overlay, so either one counts (as in store_reader).
+        OPTIONAL MATCH (target)-[:HAS_SLIDE|HAS_CHILD]->(slide:Slide)-[t:TEACHES]->(con:Concept)
         WITH target, level, bu, course_id, parent_section_id, 
              con.name as c_name, max(coalesce(t.salience, 0)) as max_score
         WHERE c_name IS NOT NULL
@@ -378,8 +410,11 @@ class GeneratorService:
         Iterative Search: Queries each concept individually to ensure specific coverage.
         Deduplicates results.
         """
+        key_concepts = clean_concepts(key_concepts)
         if not key_concepts:
             return []
+        if self.reader is not None:
+            return self._find_matching_slides_via_reader(key_concepts[:5], allowed_course_ids)
         
         unique_slides = {} # Map slide_id -> slide_data
         
@@ -437,7 +472,22 @@ class GeneratorService:
         # Return list (limit to reasonable number, e.g. 6 slides max per section)
         return list(unique_slides.values())[:6]
     
-    def _persist_project(self, sections: List[Dict], title: str = "New Curriculum", user_id: Optional[str] = None) -> str:
+    def _find_matching_slides_via_reader(self, concepts: List[str], allowed_course_ids: List[str] = None) -> List[Dict]:
+        """The reader's search (live: BM25 on DocumentChunk, contract §6), one concept at a time, deduplicated."""
+        unique_slides = {}
+        for concept in concepts:
+            try:
+                ids = self.reader.search(concept, allowed_course_ids or None, 5)
+            except Exception as e:
+                print(f"Search failed for concept '{concept}': {e}")
+                continue
+            print(f"DEBUG: Concept '{concept}' found {len(ids)} hits")
+            for sid in ids:
+                unique_slides.setdefault(sid, {'slide_id': sid, 'text_preview': '', 'match_reason': concept})
+        return list(unique_slides.values())[:6]
+
+    def _persist_project(self, sections: List[Dict], title: str = "New Curriculum", user_id: Optional[str] = None,
+                         source_deck_ids: Optional[List[str]] = None) -> str:
         """Create Project and TargetNode entries in Neo4j with hierarchy support"""
         project_id = str(uuid.uuid4())
         
@@ -448,10 +498,11 @@ class GeneratorService:
                 id: $project_id,
                 title: $title,
                 created_at: datetime(),
-                status: 'draft'
+                status: 'draft',
+                source_deck_ids: $source_deck_ids
             })
             """,
-            {"project_id": project_id, "title": title}
+            {"project_id": project_id, "title": title, "source_deck_ids": list(source_deck_ids or [])}
         )
 
         # Link to User if provided
@@ -481,7 +532,7 @@ class GeneratorService:
             # Create TargetNode linked to parent (Project or another TargetNode)
             self.neo4j_client.execute_query(
                 """
-                MATCH (parent {id: $parent_id})
+                MATCH (parent:Project|TargetNode {id: $parent_id})
                 CREATE (t:TargetNode {
                     id: $target_id,
                     title: $title,
