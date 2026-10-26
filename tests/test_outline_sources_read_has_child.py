@@ -1,6 +1,6 @@
 """Generate Outline on the live graph: sections reach slides over HAS_CHILD, and slides are matched
 through the source reader's search (the legacy SlideText class does not exist live)."""
-from src.services.generator_service import GeneratorService
+from src.services.generator_service import GeneratorService, clean_concepts
 
 
 class Graph:
@@ -50,3 +50,19 @@ def test_a_failing_search_leaves_the_section_without_slides():
     svc = GeneratorService.__new__(GeneratorService)
     svc.reader = Down()
     assert svc._find_matching_slides_iterative(["Seal face"], allowed_course_ids=["sha256:c1"]) == []
+
+
+def test_weight_labels_and_repeats_leave_the_concepts():
+    # As the live harmonizer returned them, 2026-10-26
+    got = clean_concepts(["Torque wrench (Primary)", "Torque Wrench (Primary)", "Torque wrench use (Primary)",
+                          "Fuel Quantity Probe (Primary)", "Fuel Quantity Probes (Secondary)",
+                          "Pitot\u2011Static System (Primary)", "Pitot-Static Systems (Mention)", "  Glass  "])
+    assert got == ["Torque wrench", "Torque wrench use", "Fuel Quantity Probe", "Pitot-Static System", "Glass"]
+    assert clean_concepts(None) == [] and clean_concepts(["(Primary)"]) == []
+
+
+def test_the_search_gets_each_term_once_without_its_label():
+    svc = GeneratorService.__new__(GeneratorService)
+    svc.reader = Reader({"Seal face": ["s1"], "O-ring": ["s2"]})
+    svc._find_matching_slides_iterative(["Seal face (Primary)", "seal face (Secondary)", "O-rings (Mention)", "O-ring"])
+    assert [c[0] for c in svc.reader.calls] == ["Seal face", "O-rings"]

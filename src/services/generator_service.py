@@ -1,6 +1,7 @@
 """
 Service for generating consolidated curricula from source materials.
 """
+import re
 import uuid
 import os
 import yaml
@@ -31,6 +32,24 @@ def load_curriculum_template() -> List[Dict]:
         return []
 
 TEMPLATE_MODULES = load_curriculum_template()
+
+# The harmonizer's input tags each concept with its weight, "Voltage (Primary)", and the LLM
+# copies the tag into its key_concepts; dash variants (U+2011 and kin) come back as well.
+_WEIGHT_LABEL = re.compile(r"\s*\((?:primary|secondary|mention)\)\s*$", re.IGNORECASE)
+_DASHES = str.maketrans({c: "-" for c in "\u2010\u2011\u2012\u2013\u2014\u2212"})
+
+
+def clean_concepts(concepts) -> List[str]:
+    """Concept names without the weight label, one per term: case, spacing, dashes and a plural
+    s do not make a new term. Keeps the first spelling and the order."""
+    out, seen = [], set()
+    for c in concepts or []:
+        name = " ".join(_WEIGHT_LABEL.sub("", str(c)).translate(_DASHES).split())
+        key = " ".join(w[:-1] if len(w) > 3 and w.endswith("s") else w for w in name.casefold().split())
+        if name and key not in seen:
+            seen.add(key)
+            out.append(name)
+    return out
 
 # Configure DSPy using shared configuration
 # load_dotenv() and dspy.configure() are handled in src.dspy_modules.config
@@ -118,6 +137,9 @@ class GeneratorService:
                 section_type = s.get('type', 'technical')
                 print(f"DEBUG: Section '{s['title']}' (type: {section_type}) has concepts: {s.get('key_concepts')}")
         
+        for section in consolidated_sections:
+            section['key_concepts'] = clean_concepts(section.get('key_concepts'))
+
         # Step 3: For each target section, find matching slides (FILTERED by source courses)
         enriched_sections = []
         for section in consolidated_sections:
@@ -382,6 +404,7 @@ class GeneratorService:
         Iterative Search: Queries each concept individually to ensure specific coverage.
         Deduplicates results.
         """
+        key_concepts = clean_concepts(key_concepts)
         if not key_concepts:
             return []
         if self.reader is not None:
