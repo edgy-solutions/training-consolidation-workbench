@@ -2,7 +2,7 @@ import React, { useEffect, useState, useMemo, useRef, useCallback } from 'react'
 import { ArrowRight, ChevronDown, ChevronRight, Layers, Zap } from 'lucide-react';
 import { api, courseSubtitle, courseTooltip } from '../api';
 import { conceptKey, displayCasing } from '../conceptCase';
-import type { CourseSection } from '../api';
+import type { CourseSection, GenerateJob } from '../api';
 import { useSelectionStore } from '../stores/selectionStore';
 import { useAppStore, projectTitle } from '../store';
 import clsx from 'clsx';
@@ -163,6 +163,20 @@ export const StagingArea: React.FC = () => {
     const [templates, setTemplates] = useState<Array<{ name: string; display_name: string }>>([]);
     const [selectedTemplate, setSelectedTemplate] = useState<string>("standard");
     const [generating, setGenerating] = useState(false);
+    const [job, setJob] = useState<GenerateJob | null>(null);
+    const [genError, setGenError] = useState<string | null>(null);
+    const [lost, setLost] = useState(false);
+    const lastPayload = useRef<any>(null);
+    const pollTimer = useRef<number | null>(null);
+    const unmounted = useRef(false);
+
+    useEffect(() => {
+        unmounted.current = false;
+        return () => {
+            unmounted.current = true;
+            if (pollTimer.current) window.clearTimeout(pollTimer.current);
+        };
+    }, []);
 
     // New state for similarity features
     const [hoveredSectionId, setHoveredSectionId] = useState<string | null>(null);
@@ -446,37 +460,76 @@ export const StagingArea: React.FC = () => {
         fetchTemplates();
     }, []);
 
-    const handleGenerate = async () => {
-        if (generating) return;
-        setGenerating(true);
+    const poll = async (jobId: string) => {
+        if (unmounted.current) return;
         try {
-            // Build the payload
-            const { discipline } = useAppStore.getState();
-            const payload: any = {
-                title: projectTitle(discipline), // Must match createProjectIfNeeded logic
-                domain: null,
-                selected_source_ids: Array.from(selectedSourceIds)
-            };
-
-            // Add master_course_id if in master outline mode
-            if (strategy === 'master_outline' && masterCourseId) {
-                payload.master_course_id = masterCourseId;
+            const j = await api.getGenerateJob(jobId);
+            if (unmounted.current) return;
+            setJob(j);
+            if (j.status === 'SUCCESS' && j.result) {
+                const r = j.result;
+                useAppStore.getState().setOutlineNotice(
+                    `Outline ready: ${r.section_count} sections. ${r.unassigned_count} source slides were not assigned; they are under "Unassigned / For Review".`
+                );
+                setGenerating(false);
+                setStagingMode(false);
+                setProjectId(r.project_id);
+            } else if (j.status === 'FAILURE') {
+                setGenError(j.error || 'Outline generation failed.');
+                setGenerating(false);
+            } else if (j.status === 'LOST') {
+                setLost(true);
+                setGenerating(false);
+            } else {
+                pollTimer.current = window.setTimeout(() => poll(jobId), 3000);
             }
+        } catch (error: any) {
+            if (unmounted.current) return;
+            if (error?.response?.status === 404) {
+                setLost(true);
+                setGenerating(false);
+            } else {
+                // transient network error: keep polling
+                pollTimer.current = window.setTimeout(() => poll(jobId), 3000);
+            }
+        }
+    };
 
-            // Add selected template
-            payload.template_name = selectedTemplate;
-
-            const result = await api.generateProjectSkeleton(payload);
-
-            // Switch back to consolidation view and load the new project
-            setStagingMode(false);
-            setProjectId(result.project_id);
-        } catch (error) {
+    const startJob = async (payload: any) => {
+        setGenerating(true);
+        setGenError(null);
+        setLost(false);
+        setJob(null);
+        try {
+            lastPayload.current = payload;
+            const started = await api.generateProjectSkeleton(payload);
+            setJob(started);
+            pollTimer.current = window.setTimeout(() => poll(started.job_id), 3000);
+        } catch (error: any) {
             console.error('Failed to generate outline:', error);
-        } finally {
+            setGenError(error?.response?.data?.detail || error?.message || 'Could not start outline generation.');
             setGenerating(false);
         }
     };
+
+    const handleGenerate = () => {
+        if (generating) return;
+        const { discipline } = useAppStore.getState();
+        const payload: any = {
+            title: projectTitle(discipline), // Must match createProjectIfNeeded logic
+            domain: null,
+            selected_source_ids: Array.from(selectedSourceIds)
+        };
+        // Add master_course_id if in master outline mode
+        if (strategy === 'master_outline' && masterCourseId) {
+            payload.master_course_id = masterCourseId;
+        }
+        payload.template_name = selectedTemplate;
+        startJob(payload);
+    };
+
+    const stepLabel = job?.steps?.find(s => s.key === job.step)?.label ?? 'Starting';
+    const elapsed = job?.elapsed != null ? ` (${Math.round(job.elapsed)}s)` : '';
 
     if (loading) {
         return (
@@ -531,7 +584,7 @@ export const StagingArea: React.FC = () => {
                             {generating ? (
                                 <>
                                     <div className="animate-spin h-4 w-4 border-2 border-slate-500 border-t-transparent rounded-full" />
-                                    Generating...
+                                    {stepLabel}{elapsed}...
                                 </>
                             ) : (
                                 <>
@@ -542,6 +595,20 @@ export const StagingArea: React.FC = () => {
                         </button>
                     </div>
                 </div>
+
+                {(genError || lost) && (
+                    <div className="flex items-center justify-between gap-3 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">
+                        <span>{lost ? 'The api restarted while generating; nothing was saved.' : genError}</span>
+                        {lost && (
+                            <button
+                                onClick={() => lastPayload.current && startJob(lastPayload.current)}
+                                className="px-3 py-1 rounded bg-red-600 text-white hover:bg-red-700"
+                            >
+                                Retry
+                            </button>
+                        )}
+                    </div>
+                )}
 
                 {/* Strategy Toggle */}
                 <div className="flex items-center gap-4">

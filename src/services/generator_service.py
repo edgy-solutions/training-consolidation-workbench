@@ -94,7 +94,7 @@ class GeneratorService:
         
         return normalized
     
-    def generate_skeleton(self, selected_source_ids: List[str], title: str = "New Curriculum", master_course_id: Optional[str] = None, template_name: str = "standard", user_id: Optional[str] = None) -> Dict[str, Any]:
+    def generate_skeleton(self, selected_source_ids: List[str], title: str = "New Curriculum", master_course_id: Optional[str] = None, template_name: str = "standard", user_id: Optional[str] = None, progress=None) -> Dict[str, Any]:
         """
         Generate a curriculum skeleton from selected source sections/courses.
         
@@ -106,7 +106,9 @@ class GeneratorService:
         Returns:
             Dictionary with project_id and generated structure
         """
+        progress = progress or (lambda step: None)
         # Step 1: Fetch source outlines from Neo4j
+        progress("sources")
         source_outlines, source_course_ids, known_source_concepts = self._fetch_source_outlines(selected_source_ids)
         
         if not source_outlines:
@@ -115,6 +117,7 @@ class GeneratorService:
         print(f"DEBUG: Found {len(source_course_ids)} source course IDs: {source_course_ids}")
         
         # Step 2: Generate consolidated plan
+        progress("llm")
         if master_course_id:
             # Use the master course's outline as the structure
             print(f"DEBUG: Using master outline from course: {master_course_id}")
@@ -141,6 +144,7 @@ class GeneratorService:
             section['key_concepts'] = clean_concepts(section.get('key_concepts'))
 
         # Step 3: For each target section, find matching slides (FILTERED by source courses)
+        progress("slides")
         enriched_sections = []
         for section in consolidated_sections:
             
@@ -193,12 +197,14 @@ class GeneratorService:
             })
 
         # Step 5: Persist
+        progress("save")
         project_id = self._persist_project(enriched_sections, title=title, user_id=user_id,
                                            source_deck_ids=list(dict.fromkeys(source_course_ids)))
         
         return {
             'project_id': project_id,
-            'sections': enriched_sections
+            'sections': enriched_sections,
+            'unassigned_count': len(unassigned_ids)
         }
 
     def _fetch_all_slides_for_courses(self, course_ids: List[str]) -> List[Dict]:

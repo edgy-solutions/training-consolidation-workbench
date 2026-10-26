@@ -110,6 +110,16 @@ axios.interceptors.request.use(config => {
     return Promise.reject(error);
 });
 
+export interface GenerateJob {
+    job_id: string;
+    status: 'QUEUED' | 'RUNNING' | 'SUCCESS' | 'FAILURE' | 'LOST';
+    step: string | null;
+    elapsed?: number;
+    result: { project_id: string; section_count: number; unassigned_count: number } | null;
+    error: string | null;
+    steps: Array<{ key: string; label: string }>;
+}
+
 export const api = {
     getSourceTree: async (discipline?: string) => {
         const params = discipline ? { engineering_discipline: discipline } : {};
@@ -175,7 +185,11 @@ export const api = {
         master_course_id?: string | null;
         template_name?: string;
     }) => {
-        const res = await axios.post(`${API_URL}/project/generate_skeleton`, request);
+        const res = await axios.post<GenerateJob>(`${API_URL}/project/generate_skeleton`, request);
+        return res.data;
+    },
+    getGenerateJob: async (jobId: string) => {
+        const res = await axios.get<GenerateJob>(`${API_URL}/project/generate_skeleton/${jobId}`);
         return res.data;
     },
     getTemplates: async () => {

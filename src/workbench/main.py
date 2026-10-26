@@ -8,12 +8,14 @@ from fastapi.responses import FileResponse
 from src.publishing.render import FORMATS, output_filename
 from src.publishing.image_ids import list_generated_objects
 from src.publishing.render_jobs import create_job, job_file, read_job, run_job
+from src.services import outline_jobs
 from src.auth.security import get_current_user, optional_bearer, store_writes_on, User
 from fastapi.middleware.cors import CORSMiddleware
 from typing import List, Dict, Any, Optional
 import os
 import json
 import asyncio
+import time
 from datetime import timedelta
 from sse_starlette.sse import EventSourceResponse
 from dagster_graphql import DagsterGraphQLClient, DagsterGraphQLClientError
@@ -1325,18 +1327,25 @@ def trigger_synthesis(request: SynthesisRequest, background_tasks: BackgroundTas
     service = SynthesisService()
     background_tasks.add_task(service.synthesize_node, request.target_node_id, request.tone_instruction)
     
-    return {"status": "queued", "run_id": "background_task"}
+    return {"status": "queued", "run_id": request.target_node_id}
+
+SYNTHESIS_STATUS = {"drafting": "RUNNING", "complete": "SUCCESS", "error": "FAILURE"}
+
 
 @app.get("/synthesis/status/{run_id}")
 def get_synthesis_status(run_id: str, current_user: User = Depends(get_current_user)):
     """
-    Polls the status of the generation.
+    Polls the generation: run_id is the target node id; the node's status is the truth.
     """
-    try:
-        status = dagster_client.get_run_status(run_id)
-        return {"run_id": run_id, "status": status}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    _require_readable(current_user.id, run_id)
+    rows = neo4j_client.execute_query(
+        "MATCH (n:TargetNode {id: $id}) RETURN n.status AS status", {"id": run_id})
+    if not rows:
+        raise HTTPException(status_code=404, detail="Node not found")
+    node_status = rows[0]["status"]
+    return {"run_id": run_id, "status": SYNTHESIS_STATUS.get(node_status, node_status), "node_status": node_status}
+
+
 @app.get("/synthesis/preview/{node_id}")
 def get_synthesis_preview(node_id: str, current_user: User = Depends(get_current_user)):
     """
@@ -1428,67 +1437,34 @@ def generate_curriculum(request: GenerateSkeletonRequest, current_user: User = D
         service.close()
 
 
-@app.post("/project/generate_skeleton", response_model=ProjectTreeResponse, dependencies=[Depends(require_store_writes)])
-def generate_project_skeleton(request: SkeletonRequest, current_user: User = Depends(get_current_user)):
+@app.post("/project/generate_skeleton", dependencies=[Depends(require_store_writes)])
+def generate_project_skeleton(request: SkeletonRequest, background_tasks: BackgroundTasks, current_user: User = Depends(get_current_user)):
     """
-    Generate a new curriculum project with AI-suggested sections.
-    
-    This creates a Project with TargetNodes in 'suggestion' status.
-    User can review and accept/reject each suggested section.
+    Starts the outline generation as a background job; poll GET /project/generate_skeleton/{job_id}.
+
+    The job creates a Project with TargetNodes in 'suggestion' status.
     """
-    from src.services.generator_service import GeneratorService
-    
-    service = GeneratorService(reader=get_source_reader())
-    try:
-        # Generate skeleton
-        result = service.generate_skeleton(
-            request.selected_source_ids, 
-            title=request.title,
-            master_course_id=request.master_course_id,
-            template_name=request.template_name or "standard",
-            user_id=current_user.id
-        )
-        
-        # Fetch full project tree
-        project_id = result['project_id']
-        query = """
-        MATCH (p:Project {id: $project_id})
-        OPTIONAL MATCH (p)-[:HAS_CHILD]->(t:TargetNode)
-        OPTIONAL MATCH (t)-[:SUGGESTED_SOURCE]->(s:Slide)
-        WITH p, t, collect(s.id) as suggested_ids
-        ORDER BY t.order
-        RETURN p.id as project_id, p.title as title, p.status as project_status,
-               collect({
-                   id: t.id,
-                   title: t.title,
-                   rationale: t.rationale,
-                   status: t.status,
-                   order: t.order,
-                   is_suggestion: true,
-                   is_unassigned: coalesce(t.is_unassigned, false),
-                   is_placeholder: coalesce(t.is_placeholder, false),
-                   suggested_source_ids: suggested_ids,
-                   source_refs: [],
-                   parent_id: p.id,
-                   content_markdown: null
-               }) as nodes
-        """
-        
-        tree_result = neo4j_client.execute_query(query, {"project_id": project_id})
-        
-        if not tree_result:
-            raise HTTPException(status_code=500, detail="Failed to fetch generated project")
-        
-        return {
-            "project_id": project_id,
-            "title": tree_result[0]["title"],
-            "status": tree_result[0]["project_status"],
-            "nodes": tree_result[0]["nodes"]
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-    finally:
-        service.close()
+    job = outline_jobs.create_job(current_user.id)
+    background_tasks.add_task(
+        outline_jobs.run_job, job["job_id"], reader=get_source_reader(),
+        selected_source_ids=request.selected_source_ids,
+        title=request.title,
+        master_course_id=request.master_course_id,
+        template_name=request.template_name or "standard",
+        user_id=current_user.id,
+    )
+    return {"job_id": job["job_id"], "status": "QUEUED", "steps": outline_jobs.STEPS}
+
+
+@app.get("/project/generate_skeleton/{job_id}")
+def get_generate_skeleton_job(job_id: str, current_user: User = Depends(get_current_user)):
+    job = outline_jobs.read_job(job_id, current_user.id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    public = {k: v for k, v in job.items() if k not in ("owner", "boot")}
+    start = job.get("started") or job["created"]
+    elapsed = (job.get("finished") or time.time()) - start
+    return {**public, "steps": outline_jobs.STEPS, "elapsed": round(max(elapsed, 0), 1)}
 
 
 @app.post("/draft/node/accept", dependencies=[Depends(require_store_writes)])

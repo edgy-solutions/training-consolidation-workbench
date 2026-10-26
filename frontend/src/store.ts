@@ -39,6 +39,8 @@ interface AppState {
     // Staging State
     stagingMode: boolean;
     setStagingMode: (mode: boolean) => void;
+    outlineNotice: string | null; // shown in the consolidation view after Generate Outline
+    setOutlineNotice: (notice: string | null) => void;
 }
 
 import { persist } from 'zustand/middleware';
@@ -67,6 +69,7 @@ export const useAppStore = create<AppState>()(
 
             // Staging State
             stagingMode: false,
+            outlineNotice: null,
 
             setDiscipline: (d) => set({ discipline: d, projectId: null, structure: [], projectStatus: 'loading' }),
             setProjectId: (id) => set({ projectId: id }),
@@ -78,6 +81,7 @@ export const useAppStore = create<AppState>()(
             setSearchQuery: (query) => set({ searchQuery: query }),
             setHeatmapData: (data) => set({ heatmapData: data }),
             setStagingMode: (mode) => set({ stagingMode: mode }),
+            setOutlineNotice: (notice) => set({ outlineNotice: notice }),
 
             updateNodeContentJson: (nodeId, json) => {
                 set((state) => ({

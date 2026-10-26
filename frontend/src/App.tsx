@@ -23,7 +23,7 @@ const ProjectLoader = () => {
 };
 
 function App() {
-  const { discipline, setDiscipline, projectId, setProjectId, mapSlideToNode, stagingMode } = useAppStore();
+  const { discipline, setDiscipline, projectId, setProjectId, mapSlideToNode, stagingMode, outlineNotice, setOutlineNotice } = useAppStore();
   const [activeDragSlide, setActiveDragSlide] = useState<SourceSlide | null>(null);
 
   const sensors = useSensors(
@@ -122,11 +122,21 @@ function App() {
                   {stagingMode ? (
                     <StagingArea />
                   ) : (
-                    <ConsolidationCanvas
-                      projectId={projectId}
-                      setProjectId={setProjectId}
-                      discipline={discipline}
-                    />
+                    <div className="flex flex-col h-full">
+                      {outlineNotice && (
+                        <div className="flex items-start justify-between gap-3 bg-emerald-50 border-b border-emerald-200 px-4 py-2 text-sm text-emerald-900">
+                          <span>{outlineNotice}</span>
+                          <button onClick={() => setOutlineNotice(null)} className="text-emerald-700 hover:text-emerald-900" aria-label="Dismiss">x</button>
+                        </div>
+                      )}
+                      <div className="flex-1 min-h-0">
+                        <ConsolidationCanvas
+                          projectId={projectId}
+                          setProjectId={setProjectId}
+                          discipline={discipline}
+                        />
+                      </div>
+                    </div>
                   )}
                 </Panel>
 
