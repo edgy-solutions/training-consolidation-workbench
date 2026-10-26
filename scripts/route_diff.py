@@ -3,6 +3,10 @@
 usage: uv run --no-project python -I scripts/route_diff.py BASE_A BASE_B OUT_DIR
 Writes OUT_DIR/summary.md (one row per route) and OUT_DIR/<n>.json (A, B, diffs) per differing route.
 URLs are compared by presence only (hosts and presigned queries differ by design).
+
+Live platform reads need a realm user (b4), and direct grants are off, so B can be answered in the
+api pod instead: BASE_B = routes:FILE writes the route list and stops; a pod script answers it into
+a dump ({"METHOD path body": [status, json]}); BASE_B = dump:FILE then diffs A against that dump.
 """
 import json, ssl, sys, urllib.parse, urllib.request
 from pathlib import Path
@@ -13,7 +17,16 @@ CTX = ssl.create_default_context(); CTX.check_hostname = False; CTX.verify_mode 
 URL_KEYS = {"s3_url", "url", "presigned"}
 
 
+DUMP = json.loads(Path(B[5:]).read_text(encoding="utf-8")) if B.startswith("dump:") else None
+
+
+def key(method, path, body):
+    return f"{method} {path} {json.dumps(body)}"
+
+
 def call(base, method, path, body=None):
+    if base == B and DUMP is not None:
+        return DUMP.get(key(method, path, body), [-1, "not in dump"])
     data = json.dumps(body).encode() if body is not None else None
     req = urllib.request.Request(base + path, data=data, method=method,
                                  headers={"Content-Type": "application/json"} if data else {})
@@ -86,6 +99,10 @@ searches = [{"query": "", "filters": {}}] + [{"query": n, "filters": {}} for n i
 for o in (filt.get("origins", []) if st == 200 else []):
     searches.append({"query": "", "filters": {"origin": o}})
 routes += [("POST", "/source/search", s) for s in searches]
+
+if B.startswith("routes:"):
+    Path(B[7:]).write_text(json.dumps(routes), encoding="utf-8")
+    sys.exit(print(f"{len(routes)} routes -> {B[7:]}"))
 
 rows, same = [], 0
 for i, (m, p, body) in enumerate(routes):
