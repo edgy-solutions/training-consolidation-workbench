@@ -1412,7 +1412,7 @@ def generate_curriculum(request: GenerateSkeletonRequest, current_user: User = D
     """
     from src.services.generator_service import GeneratorService
     
-    service = GeneratorService()
+    service = GeneratorService(reader=get_source_reader())
     try:
         result = service.generate_skeleton(
             request.source_ids, 
@@ -1438,7 +1438,7 @@ def generate_project_skeleton(request: SkeletonRequest, current_user: User = Dep
     """
     from src.services.generator_service import GeneratorService
     
-    service = GeneratorService()
+    service = GeneratorService(reader=get_source_reader())
     try:
         # Generate skeleton
         result = service.generate_skeleton(

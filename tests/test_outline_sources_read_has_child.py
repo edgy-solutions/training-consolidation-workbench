@@ -1,4 +1,5 @@
-"""Generate Outline reads a section's slides over HAS_CHILD too: the live graph has no Section HAS_SLIDE."""
+"""Generate Outline on the live graph: sections reach slides over HAS_CHILD, and slides are matched
+through the source reader's search (the legacy SlideText class does not exist live)."""
 from src.services.generator_service import GeneratorService
 
 
@@ -22,3 +23,30 @@ def test_sections_reached_over_has_child_give_an_outline():
     assert list(course_ids) == ["sha256:c1"]
     assert set(concepts) == {"Seal face", "O-ring"}
     assert len(outlines) == 1
+
+
+class Reader:
+    def __init__(self, hits):
+        self.hits, self.calls = hits, []
+
+    def search(self, query, course_ids, limit):
+        self.calls.append((query, course_ids, limit))
+        return self.hits.get(query, [])
+
+
+def test_section_slides_come_from_the_reader_search():
+    svc = GeneratorService.__new__(GeneratorService)
+    svc.reader = Reader({"Seal face": ["s1", "s2"], "O-ring": ["s2", "s3"]})
+    got = svc._find_matching_slides_iterative(["Seal face", "O-ring"], allowed_course_ids=["sha256:c1"])
+    assert [s["slide_id"] for s in got] == ["s1", "s2", "s3"]
+    assert got[2]["match_reason"] == "O-ring"
+    assert svc.reader.calls == [("Seal face", ["sha256:c1"], 5), ("O-ring", ["sha256:c1"], 5)]
+
+
+def test_a_failing_search_leaves_the_section_without_slides():
+    class Down:
+        def search(self, *a):
+            raise ConnectionError("weaviate down")
+    svc = GeneratorService.__new__(GeneratorService)
+    svc.reader = Down()
+    assert svc._find_matching_slides_iterative(["Seal face"], allowed_course_ids=["sha256:c1"]) == []

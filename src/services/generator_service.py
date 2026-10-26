@@ -39,7 +39,8 @@ TEMPLATE_MODULES = load_curriculum_template()
 class GeneratorService:
     """Service for generating consolidated curricula"""
     
-    def __init__(self):
+    def __init__(self, reader=None):
+        self.reader = reader  # the api's SourceReader; None keeps the legacy SlideText search
         self.neo4j_client = Neo4jClient()
         self.weaviate_client = WeaviateClient()
         self.harmonizer = OutlineHarmonizer()
@@ -383,6 +384,8 @@ class GeneratorService:
         """
         if not key_concepts:
             return []
+        if self.reader is not None:
+            return self._find_matching_slides_via_reader(key_concepts[:5], allowed_course_ids)
         
         unique_slides = {} # Map slide_id -> slide_data
         
@@ -440,6 +443,20 @@ class GeneratorService:
         # Return list (limit to reasonable number, e.g. 6 slides max per section)
         return list(unique_slides.values())[:6]
     
+    def _find_matching_slides_via_reader(self, concepts: List[str], allowed_course_ids: List[str] = None) -> List[Dict]:
+        """The reader's search (live: BM25 on DocumentChunk, contract §6), one concept at a time, deduplicated."""
+        unique_slides = {}
+        for concept in concepts:
+            try:
+                ids = self.reader.search(concept, allowed_course_ids or None, 5)
+            except Exception as e:
+                print(f"Search failed for concept '{concept}': {e}")
+                continue
+            print(f"DEBUG: Concept '{concept}' found {len(ids)} hits")
+            for sid in ids:
+                unique_slides.setdefault(sid, {'slide_id': sid, 'text_preview': '', 'match_reason': concept})
+        return list(unique_slides.values())[:6]
+
     def _persist_project(self, sections: List[Dict], title: str = "New Curriculum", user_id: Optional[str] = None,
                          source_deck_ids: Optional[List[str]] = None) -> str:
         """Create Project and TargetNode entries in Neo4j with hierarchy support"""
