@@ -55,7 +55,7 @@ def user_from_claims(payload: dict) -> User:
     return User(id=user_id, email=payload.get("email"), roles=roles)
 
 def get_db_driver():
-    return GraphDatabase.driver(NEO4J_URI, auth=(NEO4J_USER, NEO4J_PASSWORD))
+    return GraphDatabase.driver(NEO4J_URI, auth=(NEO4J_USER, NEO4J_PASSWORD), liveness_check_timeout=60)
 
 def get_current_user(token: str = Depends(oauth2_scheme)) -> User:
     try:
