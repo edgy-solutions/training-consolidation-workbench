@@ -55,13 +55,13 @@ def test_reasoning_kwargs_per_provider():
     assert reasoning_kwargs("low", llm_settings({"LLM_BASE_URL": "http://a/v1"})) == {"extra_body": {"reasoning_effort": "low"}}
 
 
-def test_outline_harmonizer_answers_only_at_low_effort(monkeypatch):
+def test_outline_harmonizer_reasons_and_sends_an_effort_only_when_set(monkeypatch):
     import dspy
     from src.dspy_modules.outline_harmonizer import OutlineHarmonizer
     for k in ("LLM_BASE_URL", "OPENAI_BASE_URL", "OUTLINE_REASONING_EFFORT"):
         monkeypatch.delenv(k, raising=False)
     h = OutlineHarmonizer()
-    assert type(h.generate) is dspy.Predict
-    assert h.call_config == {"reasoning_effort": "low"}
+    assert type(h.generate) is dspy.ChainOfThought
+    assert h.call_config == {}
     monkeypatch.setenv("OUTLINE_REASONING_EFFORT", "medium")
     assert OutlineHarmonizer().call_config == {"reasoning_effort": "medium"}

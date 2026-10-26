@@ -150,10 +150,12 @@ class OutlineHarmonizer(dspy.Module):
         self.template_modules = load_curriculum_template(template_name)
         print(f"[DEBUG] Loaded {len(self.template_modules)} template modules for '{template_name}'")
         signature_class = create_signature_class(self.template_modules)
-        # Answer only: gpt-oss reasons on its own, and ChainOfThought had it write that reasoning
-        # out a second time. Low effort by default; a 163-section merge took 7 minutes before.
-        self.generate = dspy.Predict(signature_class)
-        self.call_config = reasoning_kwargs(os.getenv("OUTLINE_REASONING_EFFORT", "low"))
+        # Measured 2026-10-26 on one deck pair: answer-only at low effort gave 11 sections titled
+        # "Module N" against ChainOfThought's 21, with no reliable time saved. Generate runs as a
+        # background job, so quality wins. OUTLINE_REASONING_EFFORT sends an effort when set.
+        self.generate = dspy.ChainOfThought(signature_class)
+        effort = os.getenv("OUTLINE_REASONING_EFFORT", "").strip()
+        self.call_config = reasoning_kwargs(effort) if effort else {}
         
         # Calculate max sections per merge based on context
         self.max_sections_per_merge = self._calculate_max_sections()
