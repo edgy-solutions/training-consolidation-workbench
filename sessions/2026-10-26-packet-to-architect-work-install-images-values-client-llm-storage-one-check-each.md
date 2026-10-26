@@ -7,9 +7,9 @@ the workbench, `<keycloak-host>` the realm, `<llm-host>` the LiteLLM proxy.
 
 # Work install: images, values, client, LLM, storage, one check each
 
-Chris installs from this packet. Its images (03335a8) are the sandbox's revision 18 (f99584c,
-login and Generate Outline confirmed by Chris) plus the template fetch in section 6 (480 tests
-pass). They are not rolled to the sandbox yet. The work-order items, in your order:
+Chris installs from this packet. Its images (03335a8) are the ones running on the sandbox as
+revision 19: revision 18 (f99584c, login and Generate Outline confirmed by Chris) plus the
+template fetch in section 6 (480 tests pass). The work-order items, in your order:
 
 **1. Answer-only + low reasoning: measured, and not kept (f99584c).** One dry run per mode on the
 same deck pair, in the live pod, with the DSPy cache off and nothing saved:
@@ -212,3 +212,5 @@ kubectl -n <ns> create configmap <configmap name> --from-file=deck-template.yaml
   size, not "stand-in" and not an error.
 - `curl -sk https://<work-host>/render/templates` returns `{"templates":["configured"]}`.
 - Export a draft as PPTX from the inspector, open it, and its slides use your template's layouts.
+  The draft must be synthesized first. Export refuses a section with an empty body or no source
+  slides, and that refusal is not a template fault.
