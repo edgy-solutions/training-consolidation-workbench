@@ -58,6 +58,11 @@ def reset_source_reader_cache() -> None:
     _cache.clear()
 
 
+def serves_assets(reader) -> bool:
+    """True for readers that hold image and page bytes (fixture and store)."""
+    return callable(getattr(reader, "asset", None))
+
+
 def get_source_reader() -> Optional[SourceReader]:
     """None for the legacy direct-store path (SOURCE_READER unset or 'direct')."""
     mode = os.getenv("SOURCE_READER", "").strip().lower()
@@ -69,5 +74,11 @@ def get_source_reader() -> Optional[SourceReader]:
         if key not in _cache:
             from src.workbench.fixture_reader import load_fixture_reader
             _cache[key] = load_fixture_reader(fixture_dir)
+        return _cache[key]
+    if mode == "store":
+        key = (mode,)
+        if key not in _cache:
+            from src.workbench.store_reader import build_store_reader
+            _cache[key] = build_store_reader()
         return _cache[key]
     raise ValueError(f"Unknown SOURCE_READER value: {mode!r}")

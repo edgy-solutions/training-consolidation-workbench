@@ -25,16 +25,33 @@ def _overlap(terms, text) -> int:
     return len(terms & set(re.findall(r"\w+", (text or "").lower())))
 
 
-class FixtureReader:
-    def __init__(self, fixture_dir):
-        d = Path(fixture_dir)
-        g = json.loads((d / "golden.json").read_text(encoding="utf-8"))
-        neo = g["neo4j"]
+class FileImages:
+    """Images held in memory: golden names with the bytes the pptx/docx media gave them."""
+
+    def __init__(self, names, data):
+        self._names = list(names)
+        self._data = dict(data)
+
+    def names(self) -> List[str]:
+        return list(self._names)
+
+    def load(self, name) -> Optional[bytes]:
+        return self._data.get(name)
+
+
+class CourseModel:
+    """One course read from a golden-shaped dict (the `neo4j` section is all it needs) plus an image
+    source with names() and load(name). Fixture mode builds it from golden.json, store mode from the
+    live stores."""
+
+    def __init__(self, golden: dict, images, deck_sha256=None):
+        neo = golden["neo4j"]
         nd = neo["nondeterministic"]
         edges = nd.get("edges") or {}
         self.course = dict(neo["course"]["props"])
         self.course_id = self.course["id"]
-        self.deck_sha256 = (g.get("fixture") or {}).get("deck_sha256")
+        self.deck_sha256 = deck_sha256
+        self._images = images
         # slide node entries are flat dicts in the golden (no "props" nesting)
         self._slides = {}
         for n in neo["slides"]["nodes"]:
@@ -52,24 +69,13 @@ class FixtureReader:
         for e in (edges.get("TEACHES") or []):
             self._teaches.setdefault(e["from"], []).append({"concept": e["to"], "salience": e.get("salience")})
         self._concepts = [c["name"] for c in ((nd.get("concepts") or {}).get("nodes") or [])]
-        # images: golden media keys under /images/ -> bytes from the pptx zip
-        keys = [k for k in ((g.get("minio") or {}).get("keys_required") or []) if "/images/" in k]
-        names = [os.path.basename(k) for k in keys]
-        self._image_bytes: Dict[str, bytes] = {}
-        deck = d / g["fixture"]["deck"]
-        media_dir = {".pptx": "ppt/media/", ".docx": "word/media/"}.get(deck.suffix.lower())
-        if media_dir and deck.exists():
-            with zipfile.ZipFile(deck) as z:
-                media = sorted(n for n in z.namelist() if n.startswith(media_dir))
-                by_base = {os.path.basename(m): m for m in media}
-                unmatched = [m for m in media if os.path.basename(m) not in names]
-                for name in names:
-                    if name in by_base:
-                        self._image_bytes[name] = z.read(by_base[name])
-                    elif unmatched:
-                        # golden name absent from the deck: map in order
-                        self._image_bytes[name] = z.read(unmatched.pop(0))
-        self._image_names = names
+
+    @property
+    def _image_names(self) -> List[str]:
+        return self._images.names()
+
+    def has_image(self, name) -> bool:
+        return name in self._images.names() and self._images.load(name) is not None
 
     def _slide_shape(self, s: dict) -> dict:
         el = s.get("elements")
@@ -163,12 +169,12 @@ class FixtureReader:
         return out
 
     def resolve_ref(self, ref):
-        if ref.startswith(REF_PREFIX) and ref[len(REF_PREFIX):] in self._image_bytes:
+        if ref.startswith(REF_PREFIX) and self.has_image(ref[len(REF_PREFIX):]):
             return ASSET_URL + ref[len(REF_PREFIX):]
         return None
 
     def asset(self, name: str) -> Optional[Tuple[bytes, str]]:
-        b = self._image_bytes.get(name)
+        b = self._images.load(name)
         if b is None:
             return None
         return b, mimetypes.guess_type(name)[0] or "application/octet-stream"
@@ -201,6 +207,32 @@ class FixtureReader:
             if score:
                 scored.append((-score, s["id"]))
         return sorted(scored)
+
+
+class FixtureReader(CourseModel):
+    def __init__(self, fixture_dir):
+        d = Path(fixture_dir)
+        g = json.loads((d / "golden.json").read_text(encoding="utf-8"))
+        # images: golden media keys under /images/ -> bytes from the pptx zip
+        keys = [k for k in ((g.get("minio") or {}).get("keys_required") or []) if "/images/" in k]
+        names = [os.path.basename(k) for k in keys]
+        image_bytes: Dict[str, bytes] = {}
+        deck = d / g["fixture"]["deck"]
+        media_dir = {".pptx": "ppt/media/", ".docx": "word/media/"}.get(deck.suffix.lower())
+        if media_dir and deck.exists():
+            with zipfile.ZipFile(deck) as z:
+                media = sorted(n for n in z.namelist() if n.startswith(media_dir))
+                by_base = {os.path.basename(m): m for m in media}
+                unmatched = [m for m in media if os.path.basename(m) not in names]
+                for name in names:
+                    if name in by_base:
+                        image_bytes[name] = z.read(by_base[name])
+                    elif unmatched:
+                        # golden name absent from the deck: map in order
+                        image_bytes[name] = z.read(unmatched.pop(0))
+        super().__init__(g, FileImages(names, image_bytes),
+                         deck_sha256=(g.get("fixture") or {}).get("deck_sha256"))
+        self._image_bytes = image_bytes
 
 
 _prefix = deck_prefix

@@ -8,7 +8,7 @@ from fastapi.responses import FileResponse
 from src.publishing.render import FORMATS, output_filename
 from src.publishing.image_ids import list_generated_objects
 from src.publishing.render_jobs import create_job, job_file, read_job, run_job
-from src.auth.security import get_current_user, store_writes_on, User
+from src.auth.security import get_current_user, optional_bearer, store_writes_on, User
 from fastapi.middleware.cors import CORSMiddleware
 from typing import List, Dict, Any, Optional
 import os
@@ -28,6 +28,7 @@ from src.workbench.models import (
 )
 
 from src.workbench.source_reader import get_source_reader
+from src.workbench import asset_links
 from src.workbench.source_routes import (
     get_alignment_store, _course_name, _port_source_tree, _port_source_filters, _port_course_slides,
     _port_course_sections, _port_slide_details, _port_embedded_images,
@@ -48,6 +49,21 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+
+def fixture_mode() -> bool:
+    return os.getenv("SOURCE_READER", "").strip().lower() == "fixture"
+
+
+def require_platform_reader(token: Optional[str] = Depends(optional_bearer)) -> Optional[User]:
+    """Live reads of platform data (decks, slides, concepts, pages) need a signed-in user of the realm
+    (architect, b4). Fixture reads serve committed test data and stay open (local dev, route_diff)."""
+    if fixture_mode():
+        return None
+    if not token:
+        raise HTTPException(status_code=401, detail="Not authenticated", headers={"WWW-Authenticate": "Bearer"})
+    return get_current_user(token)
 
 
 @app.get("/healthz")
@@ -82,7 +98,7 @@ dagster_client = _LazyClient(lambda: DagsterGraphQLClient(DAGSTER_HOST, port_num
 
 # --- A. The Explorer Module ---
 
-@app.get("/source/tree", response_model=List[Dict[str, Any]])
+@app.get("/source/tree", response_model=List[Dict[str, Any]], dependencies=[Depends(require_platform_reader)])
 def get_source_tree(engineering_discipline: Optional[str] = None):
     """
     Returns the hierarchy of Business Units -> Courses.
@@ -124,7 +140,7 @@ def get_source_tree(engineering_discipline: Optional[str] = None):
         for row in results
     ])
 
-@app.get("/source/course/{course_id}/slides", response_model=List[Dict[str, Any]])
+@app.get("/source/course/{course_id}/slides", response_model=List[Dict[str, Any]], dependencies=[Depends(require_platform_reader)])
 def get_course_slides(course_id: str):
     """
     Returns slides for a specific course.
@@ -175,7 +191,7 @@ def get_course_slides(course_id: str):
         })
     return out
 
-@app.get("/source/course/{course_id}/sections", response_model=List[Dict[str, Any]])
+@app.get("/source/course/{course_id}/sections", response_model=List[Dict[str, Any]], dependencies=[Depends(require_platform_reader)])
 def get_course_sections(course_id: str):
     """
     Returns ALL sections (including nested subsections) for a specific course.
@@ -243,7 +259,7 @@ def get_course_sections(course_id: str):
         
     return formatted_results
 
-@app.get("/source/slide/{slide_id}", response_model=SourceSlide)
+@app.get("/source/slide/{slide_id}", response_model=SourceSlide, dependencies=[Depends(require_platform_reader)])
 def get_slide_details(slide_id: str):
     """
     Returns metadata + S3 Presigned URL for the slide image.
@@ -329,7 +345,7 @@ def get_slide_details(slide_id: str):
         course_title=_course_name(row["course"]) if row.get("course") else None,
     )
 
-@app.get("/source/embedded-images/{course_id}")
+@app.get("/source/embedded-images/{course_id}", dependencies=[Depends(require_platform_reader)])
 def get_embedded_images(course_id: str):
     """
     Returns all embedded images extracted from a course's source documents.
@@ -414,7 +430,7 @@ def get_embedded_images(course_id: str):
     except Exception as e:
         return {"course_id": course_id, "images": [], "error": str(e)}
 
-@app.post("/source/embedded-images-for-slides")
+@app.post("/source/embedded-images-for-slides", dependencies=[Depends(require_platform_reader)])
 def get_embedded_images_for_slides(slide_ids: List[str]):
     """
     Given a list of slide IDs, returns all embedded images from the source courses.
@@ -454,7 +470,7 @@ def get_embedded_images_for_slides(slide_ids: List[str]):
     return {"images": all_images}
 
 
-@app.post("/source/resolve-image-urls")
+@app.post("/source/resolve-image-urls", dependencies=[Depends(require_platform_reader)])
 def resolve_image_urls(urls: List[str]):
     """
     Resolve stable minio:// URLs or object paths to fresh presigned URLs.
@@ -520,7 +536,7 @@ def resolve_image_urls(urls: List[str]):
     return {"urls": result}
 
 
-@app.get("/source/resolve-image-url")
+@app.get("/source/resolve-image-url", dependencies=[Depends(require_platform_reader)])
 def resolve_single_image_url(url: str):
     """
     Resolve a single stable URL to a fresh presigned URL.
@@ -533,7 +549,7 @@ def resolve_single_image_url(url: str):
     resolved = result.get("urls", {}).get(url, url)
     return {"original": url, "presigned": resolved}
 
-@app.get("/search/concepts", response_model=List[str])
+@app.get("/search/concepts", response_model=List[str], dependencies=[Depends(require_platform_reader)])
 def search_concepts(q: str):
     """
     Semantic search for specific topics. Returns list of Slide IDs.
@@ -558,7 +574,7 @@ def search_concepts(q: str):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.get("/source/graph/concept/{name}", response_model=List[str])
+@app.get("/source/graph/concept/{name}", response_model=List[str], dependencies=[Depends(require_platform_reader)])
 def get_slides_by_concept(name: str):
     """
     Returns all slides linked to this concept.
@@ -573,7 +589,7 @@ def get_slides_by_concept(name: str):
     results = neo4j_client.execute_query(query, {"name": name})
     return [row["id"] for row in results]
 
-@app.get("/source/filters", response_model=Dict[str, List[str]])
+@app.get("/source/filters", response_model=Dict[str, List[str]], dependencies=[Depends(require_platform_reader)])
 def get_source_filters():
     """
     Returns distinct values for faceted filters.
@@ -610,7 +626,7 @@ def get_source_filters():
     
     return filters
 
-@app.get("/source/heatmap/{term}")
+@app.get("/source/heatmap/{term}", dependencies=[Depends(require_platform_reader)])
 def get_concept_heatmap(term: str):
     """
     Returns heatmap data for a concept term, using salience scores.
@@ -670,7 +686,7 @@ def get_concept_heatmap(term: str):
         
     return heatmap
 
-@app.post("/source/search", response_model=List[Dict[str, Any]])
+@app.post("/source/search", response_model=List[Dict[str, Any]], dependencies=[Depends(require_platform_reader)])
 def search_source_tree(request: SearchRequest):
     """
     Advanced search with faceted filters.
@@ -815,17 +831,21 @@ def search_source_tree(request: SearchRequest):
 # --- B. The Builder Module ---
 
 @app.get("/source/fixture-asset/{name}")
-def get_fixture_asset(name: str):
-    """Serves fixture image bytes (pptx media). Only available when SOURCE_READER=fixture."""
+def get_fixture_asset(name: str, exp: Optional[str] = None, sig: Optional[str] = None):
+    """Serves image and page bytes by '<12hex>--<name>'. Only with SOURCE_READER=fixture or store.
+    <img> sends no bearer, so live assets need the signed link a guarded route handed out (b4)."""
     from fastapi.responses import Response
-    from src.workbench.fixture_reader import is_fixture_reader
+    from src.workbench.source_reader import serves_assets
     reader = get_source_reader()
-    if not is_fixture_reader(reader):
+    if not serves_assets(reader):
+        raise HTTPException(status_code=404, detail="Not found")
+    if not fixture_mode() and not asset_links.valid(name, exp, sig):
         raise HTTPException(status_code=404, detail="Not found")
     asset = reader.asset(name)
     if asset is None:
         raise HTTPException(status_code=404, detail="Not found")
-    return Response(content=asset[0], media_type=asset[1])
+    headers = None if fixture_mode() else {"Cache-Control": "private, max-age=300", "Referrer-Policy": "no-referrer"}
+    return Response(content=asset[0], media_type=asset[1], headers=headers)
 
 
 # The api holds the shared Neo4j admin credential; these routes add edges onto the platform's Slide nodes,
@@ -854,6 +874,64 @@ def _require_owned(user_id, node_id):
     )
     if not rows:
         raise HTTPException(status_code=404, detail="Draft not found")
+
+
+def _require_readable(user_id, node_id):
+    # Reads: the owner, or an authz_id on the draft's reviewer list (architect, b4). The same 404 otherwise.
+    rows = neo4j_client.execute_query(
+        """
+        MATCH (p:Project)-[:HAS_CHILD*0..]->(n)
+        WHERE n.id = $id AND (n:Project OR n:TargetNode)
+        OPTIONAL MATCH (u:User {id: $uid})-[o:OWNS]->(p)
+        WITH n, p, o WHERE o IS NOT NULL OR $uid IN coalesce(p.reviewer_ids, [])
+        RETURN n.id LIMIT 1
+        """,
+        {"uid": user_id, "id": node_id},
+    )
+    if not rows:
+        raise HTTPException(status_code=404, detail="Draft not found")
+
+
+MAX_REVIEWERS = 50
+
+
+@app.put("/draft/reviewers", dependencies=[Depends(require_store_writes)])
+def set_draft_reviewers(project_id: str, request: dict = Body(...), current_user: User = Depends(get_current_user)):
+    """
+    Replaces the draft's reviewer list: authz_ids that may read it, but not write it. Owner only.
+    """
+    ids = request.get("reviewer_ids")
+    if not isinstance(ids, list) or not all(isinstance(i, str) and i.strip() for i in ids):
+        raise HTTPException(status_code=400, detail="reviewer_ids must be a list of authz_ids")
+    ids = sorted({i.strip() for i in ids} - {current_user.id})
+    if len(ids) > MAX_REVIEWERS:
+        raise HTTPException(status_code=400, detail=f"at most {MAX_REVIEWERS} reviewers")
+    rows = neo4j_client.execute_query(
+        """
+        MATCH (u:User {id: $uid})-[:OWNS]->(p:Project {id: $id})
+        SET p.reviewer_ids = $ids
+        RETURN p.reviewer_ids AS reviewer_ids
+        """,
+        {"uid": current_user.id, "id": project_id, "ids": ids},
+    )
+    if not rows:
+        raise HTTPException(status_code=404, detail="Draft not found")
+    return {"project_id": project_id, "reviewer_ids": rows[0]["reviewer_ids"]}
+
+
+@app.get("/draft/reviewers/{project_id}")
+def get_draft_reviewers(project_id: str, current_user: User = Depends(get_current_user)):
+    """
+    The draft's reviewer list, for its owner and its reviewers.
+    """
+    _require_readable(current_user.id, project_id)
+    rows = neo4j_client.execute_query(
+        "MATCH (p:Project {id: $id}) RETURN coalesce(p.reviewer_ids, []) AS reviewer_ids",
+        {"id": project_id},
+    )
+    if not rows:
+        raise HTTPException(status_code=404, detail="Draft not found")
+    return {"project_id": project_id, "reviewer_ids": rows[0]["reviewer_ids"]}
 
 
 @app.post("/draft/create", response_model=TargetDraftNode, dependencies=[Depends(require_store_writes)])
@@ -896,12 +974,15 @@ def create_draft_project(title: str, current_user: User = Depends(get_current_us
 @app.get("/draft/list", response_model=List[TargetDraftNode])
 def list_user_projects(current_user: User = Depends(get_current_user)):
     """
-    Returns a list of projects owned by the current user.
+    Returns the projects the current user owns or reviews, each with the user's role on it.
     """
     user_id = current_user.id
     query = """
-    MATCH (u:User {id: $user_id})-[:OWNS]->(p:Project)
-    RETURN p.id as id, p.title as title, p.status as status, p.created_at as created_at
+    MATCH (p:Project)
+    OPTIONAL MATCH (u:User {id: $user_id})-[o:OWNS]->(p)
+    WITH p, o WHERE o IS NOT NULL OR $user_id IN coalesce(p.reviewer_ids, [])
+    RETURN p.id as id, p.title as title, p.status as status, p.created_at as created_at,
+           CASE WHEN o IS NULL THEN "reviewer" ELSE "owner" END as role
     ORDER BY coalesce(p.created_at, datetime('1970-01-01T00:00:00Z')) DESC
     """
     results = neo4j_client.execute_query(query, {"user_id": user_id})
@@ -916,7 +997,8 @@ def list_user_projects(current_user: User = Depends(get_current_user)):
             id=row["id"],
             title=row["title"],
             status=row["status"],
-            created_at=created_at
+            created_at=created_at,
+            role=row.get("role"),
         ))
     return projects
 
@@ -1139,7 +1221,7 @@ def get_draft_structure(project_id: str, current_user: User = Depends(get_curren
     """
     Returns the current "New" outline tree.
     """
-    _require_owned(current_user.id, project_id)
+    _require_readable(current_user.id, project_id)
     # This is a simplified traversal. Recursion might be needed for full tree.
     # For now, let's return flat list with parent_ids
     query = """
@@ -1246,7 +1328,7 @@ def trigger_synthesis(request: SynthesisRequest, background_tasks: BackgroundTas
     return {"status": "queued", "run_id": "background_task"}
 
 @app.get("/synthesis/status/{run_id}")
-def get_synthesis_status(run_id: str):
+def get_synthesis_status(run_id: str, current_user: User = Depends(get_current_user)):
     """
     Polls the status of the generation.
     """
@@ -1260,7 +1342,7 @@ def get_synthesis_preview(node_id: str, current_user: User = Depends(get_current
     """
     Fetches the generated text (once Dagster is done).
     """
-    _require_owned(current_user.id, node_id)
+    _require_readable(current_user.id, node_id)
     query = """
     MATCH (n:TargetNode {id: $id})
     RETURN n.content_markdown as content, n.status as status

@@ -68,5 +68,5 @@ def test_list_is_filtered_by_the_users_id(harness):
     client, state = harness
     assert client.get("/draft/list").status_code == 200
     query, params = state["calls"][0]
-    assert "(u:User {id: $user_id})-[:OWNS]->(p:Project)" in query
+    assert "OPTIONAL MATCH (u:User {id: $user_id})-[o:OWNS]->(p)" in query
     assert params == {"user_id": "u1"}

@@ -31,6 +31,7 @@ def test_direct_tree_route_groups_the_same_way(monkeypatch):
          "filename": None, "version": None},
     ]
     monkeypatch.setattr(main.neo4j_client, "execute_query", lambda q, p=None: rows, raising=False)
+    monkeypatch.setitem(main.app.dependency_overrides, main.require_platform_reader, lambda: None)
     tree = TestClient(main.app).get("/source/tree").json()
     assert [(g["name"], [c["id"] for c in g["children"]]) for g in tree] == [
         ("Avionics", ["a", "b"]), ("Uncategorized", ["c"]),

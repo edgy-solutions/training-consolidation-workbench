@@ -32,6 +32,7 @@ class TargetDraftNode(BaseModel):
     is_placeholder: bool = False # Flag for "NO_SOURCE_DATA" sections
     is_unassigned: bool = False # Flag for "Unassigned / For Review" section
     section_type: Optional[str] = None # Template section type (introduction, mandatory_safety, technical, mandatory_assessment)
+    role: Optional[str] = None # In /draft/list: "owner" or "reviewer" (reviewers read, never write)
     rationale: Optional[str] = None  # AI-generated rationale for this section
     suggested_source_ids: List[str] = []  # Slide IDs suggested by AI
     

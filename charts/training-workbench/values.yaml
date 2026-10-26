@@ -15,6 +15,7 @@ api:
     tag: ""
   # Where the source display reads from:
   #   fixture  the vendored contract fixture baked into the image; needs no stores
+  #   store    the contract's Neo4j, MinIO and Weaviate, read through the SourceReader port
   #   direct   Neo4j, Weaviate and MinIO directly (the interim, until ADR-0060)
   sourceReader: fixture
   # Extra plain env, e.g. NEO4J_URI, NEO4J_USER, WEAVIATE_URL, MINIO_ENDPOINT, BUCKET_NAME,

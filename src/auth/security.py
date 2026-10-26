@@ -23,6 +23,8 @@ def store_writes_on() -> bool:
 
 # OAuth2 Scheme
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl=f"{KEYCLOAK_URL}/protocol/openid-connect/token")
+# The same bearer, None when absent: for routes whose need for a token depends on the deploy
+optional_bearer = OAuth2PasswordBearer(tokenUrl=f"{KEYCLOAK_URL}/protocol/openid-connect/token", auto_error=False)
 
 class User(BaseModel):
     id: str
