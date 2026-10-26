@@ -7,9 +7,10 @@ the workbench, `<keycloak-host>` the realm, `<llm-host>` the LiteLLM proxy.
 
 # Work install: images, values, client, LLM, storage, one check each
 
-Chris installs from this packet. Its images (03335a8) are the ones running on the sandbox as
-revision 19: revision 18 (f99584c, login and Generate Outline confirmed by Chris) plus the
-template fetch in section 6 (480 tests pass). The work-order items, in your order:
+Chris installs from this packet, by chart version: training-workbench 0.1.0 from ghcr, released
+from master (section 1). Its images are the ones running on the sandbox as revision 19 (03335a8):
+revision 18 (f99584c, login and Generate Outline confirmed by Chris) plus the template fetch in
+section 6 (480 tests pass). The work-order items, in your order:
 
 **1. Answer-only + low reasoning: measured, and not kept (f99584c).** One dry run per mode on the
 same deck pair, in the live pod, with the DSPy cache off and nothing saved:
@@ -40,32 +41,42 @@ driver now checks idle connections before reusing them (a7dd719).
 **Gap note to tr:** sent (f9c537d). It turned out to be wb's own label, which no deployed writer
 fills yet. Nothing is asked of tr.
 
-## 1. Images, by digest
+## 1. The chart, by version
 
-Build of lane/wb `03335a8cb5de6ed4455e4519e2de4944bbc1d864` (CI `build-images.yml`, multi-arch amd64 + arm64, tag = full commit sha):
+Install the released chart from ghcr. Don't use a git checkout:
+
+```sh
+helm install <release> oci://ghcr.io/edgy-solutions/training-consolidation-workbench/training-workbench \
+  --version 0.1.0 -n <ns> -f <values file>
+```
+
+Release v0.1.0 is cut from master after PR #5 merges, and `release-chart.yml` publishes it. The
+chart carries its image digests in its own values, so the values file below names no image. They
+are the build of lane/wb `03335a8`, the bytes running on the sandbox as revision 19 (multi-arch
+amd64 + arm64). The images are also tagged `:0.1.0`.
 
 | image | digest |
 |---|---|
 | `ghcr.io/edgy-solutions/training-consolidation-workbench/api` | `sha256:75008de02d317707ce583d1e27d1854539f7ec37886adcb73c2c78f2e1460c57` |
 | `ghcr.io/edgy-solutions/training-consolidation-workbench/ui` | `sha256:e79bf431bc2d094b1fadaedc5cffa5307b8d8c9ec1ab913a0d6156e32be3eea0` |
 
-Set them as `api.image.digest` and `ui.image.digest`; the chart then ignores the tag.
+The release attaches `image-digests.json` (each digest and the commit it was built from) and the
+chart `.tgz`. Don't set `api.image.*` or `ui.image.*`: an override replaces the released bytes.
 
-**Check:** `kubectl get pods -l app.kubernetes.io/instance=<release> -o jsonpath='{..imageID}'`
-shows both digests above.
+**Check:**
+- `helm list -n <ns>` shows chart `training-workbench-0.1.0`, app version `0.1.0`.
+- `kubectl get pods -l app.kubernetes.io/instance=<release> -o jsonpath='{..imageID}'` shows both
+  digests above.
 
 ## 2. Chart values
 
-Chart `charts/training-workbench` at the same sha. The values that differ from the defaults:
+The values that differ from the chart's defaults:
 
 ```yaml
-global:
-  imageRegistry: ghcr.io/edgy-solutions/training-consolidation-workbench
 api:
   replicaCount: 1                 # jobs and signed links are in-process; keep one replica
   sourceReader: store             # contract reads: Neo4j + MinIO + Weaviate
   existingSecret: <api secret>    # section 4 lists its keys
-  image: {digest: "sha256:75008de02d317707ce583d1e27d1854539f7ec37886adcb73c2c78f2e1460c57"}
   env:
     KEYCLOAK_REALM_URL: <in-cluster realm URL>   # JWKS only; the keys are the same on any host
     NEO4J_URI: bolt://<neo4j service>:7687
@@ -85,7 +96,6 @@ ui:
   keycloak:
     realmUrl: https://<keycloak-host>/realms/<realm>
     clientId: training-workbench   # the chart default "workbench-app" is wrong; set it
-  image: {digest: "sha256:e79bf431bc2d094b1fadaedc5cffa5307b8d8c9ec1ab913a0d6156e32be3eea0"}
   ingress:
     enabled: true
     host: <work-host>             # same host as the api: the UI calls the api same-origin
