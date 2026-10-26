@@ -1,7 +1,7 @@
 # NOTE: This file assumes 'baml_client' is generated and available in the path.
 # If 'baml_client' is missing, you must run `baml-cli generate`.
 
-import os
+from src.llm_settings import baml_client_registry, llm_settings
 import asyncio
 from typing import List, Tuple
 
@@ -27,8 +27,9 @@ RESERVED_TOKENS = 4000  # System prompt, instructions
 
 class LLMExtractor:
     def __init__(self):
+        self.b = b.with_options(client_registry=baml_client_registry()) if hasattr(b, "with_options") else b
         # Calculate chunk size from context
-        self.context_size = int(os.getenv("OLLAMA_NUM_CTX", "8192"))
+        self.context_size = llm_settings().num_ctx
         self.max_chars = (self.context_size - RESERVED_TOKENS) * CHARS_PER_TOKEN
         # Overlap at 10% of chunk size
         self.overlap_chars = max(1000, self.max_chars // 10)
@@ -107,7 +108,7 @@ class LLMExtractor:
         # Check if chunking is needed
         if len(document_text) <= self.max_chars:
             print(f"[LLMExtractor] Document fits in context ({len(document_text)} chars)")
-            return asyncio.run(b.ExtractOutline(document_text=document_text))
+            return asyncio.run(self.b.ExtractOutline(document_text=document_text))
         
         # Chunk and process
         print(f"[LLMExtractor] Document too large ({len(document_text)} chars), chunking...")
@@ -117,7 +118,7 @@ class LLMExtractor:
         for i, (chunk_text, start_pos) in enumerate(chunks):
             print(f"[LLMExtractor] Processing chunk {i+1}/{len(chunks)} (starts at char {start_pos})")
             try:
-                partial = asyncio.run(b.ExtractOutline(document_text=chunk_text))
+                partial = asyncio.run(self.b.ExtractOutline(document_text=chunk_text))
                 partial_outlines.append(partial)
             except Exception as e:
                 print(f"[LLMExtractor] Chunk {i+1} failed: {e}")
@@ -129,4 +130,4 @@ class LLMExtractor:
         """
         Extract concepts and learning objectives from a single slide's text.
         """
-        return asyncio.run(b.ExtractConcepts(slide_text=slide_text))
+        return asyncio.run(self.b.ExtractConcepts(slide_text=slide_text))

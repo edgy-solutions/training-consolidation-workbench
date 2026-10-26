@@ -1,23 +1,26 @@
-
 import dspy
-import os
 from dotenv import load_dotenv
+
+from src.llm_settings import LlmSettings, llm_settings
 
 # Load environment variables once
 load_dotenv()
+
+
+def build_lm(s: LlmSettings) -> dspy.LM:
+    if s.provider == "openai":
+        return dspy.LM(model=f"openai/{s.model}", api_base=s.base_url, api_key=s.api_key)
+    return dspy.LM(model=f"ollama_chat/{s.model}", api_base=s.base_url, api_key="", num_ctx=s.num_ctx)
+
 
 def configure_dspy():
     """
     Configures the shared DSPy Language Model (LM) for the application.
     Returns the configured LM instance.
     """
-    ollama_base_url = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434").replace('/v1', '')
-    ollama_model = os.getenv("OLLAMA_MODEL", "gpt-oss:120b")
-    ollama_num_ctx = int(os.getenv("OLLAMA_NUM_CTX", "8192"))
-    
-    print(f"[Config] Initializing shared DSPy LM: {ollama_base_url} -> {ollama_model} (ctx={ollama_num_ctx})")
-    
-    lm = dspy.LM(model=f"ollama_chat/{ollama_model}", api_base=ollama_base_url, api_key="", num_ctx=ollama_num_ctx)
+    s = llm_settings()
+    print(f"[Config] Initializing shared DSPy LM: {s.provider} {s.base_url} -> {s.model} (ctx={s.num_ctx})")
+    lm = build_lm(s)
     dspy.configure(lm=lm)
     return lm
 

@@ -1,4 +1,5 @@
 import os
+from src.llm_settings import llm_settings
 import dspy
 from typing import List, Dict
 from pydantic import BaseModel, Field
@@ -57,7 +58,7 @@ class Harmonizer:
 
     def _calculate_batch_size(self) -> int:
         """Calculate optimal batch size based on LLM context window."""
-        context_size = int(os.getenv("OLLAMA_NUM_CTX", "8192"))
+        context_size = llm_settings().num_ctx
         usable_tokens = context_size - RESERVED_PROMPT_TOKENS - RESERVED_RESPONSE_TOKENS
         batch_size = max(50, usable_tokens // TOKENS_PER_CONCEPT)  # Minimum 50 concepts
         print(f"[Harmonizer] Context: {context_size}, Batch size: {batch_size} concepts")

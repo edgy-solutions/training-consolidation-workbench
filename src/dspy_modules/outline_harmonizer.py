@@ -7,6 +7,7 @@ Supports iterative pairwise merging for large inputs to avoid context overflow.
 import dspy
 import yaml
 import os
+from src.llm_settings import llm_settings
 import json
 from typing import List, Dict, Any, Optional
 from pydantic import BaseModel, Field
@@ -156,7 +157,7 @@ class OutlineHarmonizer(dspy.Module):
     
     def _calculate_max_sections(self) -> int:
         """Calculate maximum sections that fit in context window."""
-        context_size = int(os.getenv("OLLAMA_NUM_CTX", "8192"))
+        context_size = llm_settings().num_ctx
         usable_tokens = context_size - RESERVED_PROMPT_TOKENS - RESERVED_RESPONSE_TOKENS
         max_sections = max(10, usable_tokens // TOKENS_PER_SECTION)  # Minimum 10 sections
         print(f"[OutlineHarmonizer] Context: {context_size}, Max sections per merge: {max_sections}")
