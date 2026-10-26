@@ -23,3 +23,10 @@ tests/*
 tests/fixtures/*
 !tests/fixtures/training
 !tests/fixtures/templates
+
+# Files the image would carry but never runs. A chart release ships the build of the oldest
+# commit with the same context (.github/scripts/release_images.py), so editing these must not
+# make the tested build look stale.
+.dockerignore
+**/*.md
+scripts/roll.sh

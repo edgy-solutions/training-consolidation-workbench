@@ -1,6 +1,7 @@
 # Images come from .github/workflows/build-images.yml:
 #   <global.imageRegistry>/<component.image.name>@<digest>  or  :<tag> (the commit sha)
-# Each component needs a digest or a tag; there is no default.
+# Each component needs a digest or a tag. The repo's chart has no default; a released chart
+# (release-chart.yml) carries the digests it was released with.
 global:
   imageRegistry: ghcr.io/edgy-solutions/training-consolidation-workbench
   imagePullPolicy: IfNotPresent

@@ -3,3 +3,7 @@ node_modules
 dist
 .env*
 !.env.example
+
+# Never part of the built site; see the note in the root .dockerignore.
+.dockerignore
+**/*.md

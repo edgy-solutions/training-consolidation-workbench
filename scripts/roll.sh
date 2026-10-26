@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 # Roll the training-workbench chart, under the cluster's roll lock.
 #
+# A LANE ROLL, FOR THE SANDBOX. It installs the chart from this working tree, with the images
+# its values file names, so it can roll a lane commit that has no release. Work installs a
+# released chart by version (oci://<registry>/training-workbench --version X), never this script.
+#
 #   usage: KUBE_CONTEXT=<context> scripts/roll.sh <values file> [extra helm args ...]
 #   env:   NS (default training), RELEASE (default training-workbench),
 #          EXPECTED_MIN (default 20), the lock's expected_end from now,

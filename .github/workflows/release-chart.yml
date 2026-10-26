@@ -1,0 +1,174 @@
+name: Release Chart
+
+# A published GitHub release pushes the helm chart to ghcr as an OCI artifact.
+# NO IMAGE IS BUILT HERE. Images come from build-images.yml on master; this job only
+# finds the digests that were already built (and rolled and tested) and pins the chart
+# to them. Pushing the tag builds nothing, so a tag can never ship bytes nobody ran.
+on:
+  release:
+    types: [published]
+
+jobs:
+  release:
+    permissions:
+      # gh release upload
+      contents: write
+      # Retagging images and pushing the chart both write to ghcr. Without this the
+      # reads (digest lookup) succeed and the first push 403s, which looks like a
+      # registry problem and is a scope problem.
+      packages: write
+    runs-on: ubuntu-latest
+    env:
+      TAG: ${{ github.event.release.tag_name }}
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          # The image selection walks history, and the master guard needs origin/master.
+          fetch-depth: 0
+
+      - name: Install Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: v3.17.2
+
+      # THE TAG, THE CHART VERSION AND THE APP VERSION ARE ONE NUMBER.
+      # A tag that names one version while Chart.yaml says another publishes contents
+      # under a label that is a lie, and nothing downstream can tell.
+      - name: Guard - tag matches Chart.yaml
+        run: |
+          chart=charts/training-workbench/Chart.yaml
+          version="$(awk '/^version:/ {print $2}' "$chart" | tr -d "\"'")"
+          app="$(awk '/^appVersion:/ {print $2}' "$chart" | tr -d "\"'")"
+          if [ -z "${version}" ]; then
+            echo "::error::no version in ${chart}"
+            exit 1
+          fi
+          if [ "${TAG}" != "v${version}" ]; then
+            echo "::error::release tag ${TAG} is not v${version} (Chart.yaml version). Bump Chart.yaml or retag."
+            exit 1
+          fi
+          if [ "${app}" != "${version}" ]; then
+            echo "::error::appVersion '${app}' is not version '${version}' in ${chart}. They move together."
+            exit 1
+          fi
+          echo "VERSION=${version}" >> "$GITHUB_ENV"
+
+      # A release comes from master only: a tag on a branch commit would ship code that
+      # never went through the merge build and review.
+      - name: Guard - release commit is on master
+        run: |
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/master; then
+            echo "::error::${GITHUB_SHA} is not an ancestor of origin/master. Releases come from master only."
+            exit 1
+          fi
+
+      - name: Compute registry
+        run: |
+          echo "REGISTRY=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_ENV"
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Log in to GHCR (helm)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "${GH_TOKEN}" | helm registry login ghcr.io --username "${GITHUB_ACTOR}" --password-stdin
+
+      # A VERSION NEVER MOVES. Overwriting a published chart version makes "the chart at
+      # 0.2.0" mean two different things depending on when you pulled it, which is
+      # unfalsifiable from the outside. Bump the version instead.
+      - name: Guard - chart version is not already published
+        run: |
+          if helm show chart "oci://${REGISTRY}/training-workbench" --version "${VERSION}" >/dev/null 2>&1; then
+            echo "::error::chart ${VERSION} is already published at ${REGISTRY}/training-workbench. A version never moves; bump Chart.yaml."
+            exit 1
+          fi
+          echo "Chart ${VERSION} is unpublished - proceeding."
+
+      # Which digests ship: the api+ui PAIR built from the OLDEST ancestor commit where
+      # every component's image context equals this commit's and both images are
+      # published (see the script). The merge commit is rebuilt with new digests; the
+      # bytes rolled and tested are the earlier build of the identical code. Builds are
+      # not reproducible, so the pair comes from ONE commit: mixing commits would ship
+      # images that never ran together.
+      - name: Resolve image digests
+        run: |
+          rc=0
+          python3 .github/scripts/release_images.py --sha "$GITHUB_SHA" --out image-digests.json || rc=$?
+          if [ "${rc}" -eq 3 ]; then
+            echo "::error::no published image for this code; wait for build-images on master and re-run the release job"
+            exit 3
+          elif [ "${rc}" -ne 0 ]; then
+            echo "::error::release_images.py failed (exit ${rc})"
+            exit "${rc}"
+          fi
+          cat image-digests.json
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # Retag by digest: no pull, no rebuild, the same manifest under a readable tag.
+      - name: Tag images with the chart version
+        run: |
+          for c in api ui; do
+            image="$(jq -r ".components.${c}.image" image-digests.json)"
+            digest="$(jq -r ".components.${c}.digest" image-digests.json)"
+            docker buildx imagetools create -t "${image}:${VERSION}" "${image}@${digest}"
+          done
+
+      # The chart is packaged from a COPY so the committed values.yaml keeps its empty
+      # digests. Lint runs with no extra values on purpose: it can only pass because the
+      # digests are set, which proves the packaged chart installs without overrides.
+      - name: Package chart
+        run: |
+          work="${RUNNER_TEMP}/chart"
+          mkdir -p "${work}"
+          cp -r charts/training-workbench "${work}/"
+          copy="${work}/training-workbench"
+          API_DIGEST="$(jq -r .components.api.digest image-digests.json)" \
+            yq -i '.api.image.digest = strenv(API_DIGEST)' "${copy}/values.yaml"
+          UI_DIGEST="$(jq -r .components.ui.digest image-digests.json)" \
+            yq -i '.ui.image.digest = strenv(UI_DIGEST)' "${copy}/values.yaml"
+          helm lint "${copy}"
+          helm package "${copy}" --destination "${RUNNER_TEMP}/pkg"
+          echo "TGZ=${RUNNER_TEMP}/pkg/training-workbench-${VERSION}.tgz" >> "$GITHUB_ENV"
+
+      - name: Push chart
+        run: |
+          helm push "${TGZ}" "oci://${REGISTRY}" 2>&1 | tee push.log
+          chart_digest="$(awk '/^Digest:/ {print $2}' push.log)"
+          if [ -z "${chart_digest}" ]; then
+            echo "::error::helm push printed no Digest:"
+            exit 1
+          fi
+          echo "CHART_DIGEST=${chart_digest}" >> "$GITHUB_ENV"
+
+      - name: Attach to the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release upload "${TAG}" image-digests.json "${TGZ}" --clobber
+
+      - name: Summary
+        run: |
+          {
+            echo "## Chart ${VERSION}"
+            echo
+            echo '```'
+            echo "helm install <release> oci://${REGISTRY}/training-workbench --version ${VERSION}"
+            echo '```'
+            echo
+            echo "Chart digest: \`${CHART_DIGEST}\`"
+            echo
+            echo "| image | digest | built from |"
+            echo "| --- | --- | --- |"
+            for c in api ui; do
+              jq -r ".components.${c} | \"| \(.image) | \`\(.digest)\` | \(.built_from) |\"" image-digests.json
+            done
+          } >> "$GITHUB_STEP_SUMMARY"

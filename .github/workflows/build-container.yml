@@ -1,11 +1,10 @@
 name: Build Container Image
 
+# No tag trigger: a v* tag is a chart release (release-chart.yml), and a release builds nothing.
 on:
   push:
     branches:
       - main
-    tags:
-      - 'v*'
   pull_request:
     branches:
       - main
