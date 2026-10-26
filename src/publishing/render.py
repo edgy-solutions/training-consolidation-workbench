@@ -11,12 +11,11 @@ from src.publishing.course import (
     ReaderLookup,
     build_course,
 )
-from src.publishing.deck_export import DEFAULT_MAPPING, export_deck, load_mapping
+from src.publishing import deck_template
+from src.publishing.deck_export import export_deck
 from src.publishing.typst_generator import generate_typst_document
 
 FORMATS = {"pptx", "typ"}
-
-TEMPLATE_BUCKET = "cib-sources"
 
 COURSE_NODES_QUERY = """
 MATCH (p:Project {id: $project_id})-[:HAS_CHILD*]->(n:TargetNode)
@@ -58,29 +57,6 @@ def fetch_typst_nodes(neo4j_client, project_id):
     ]
 
 
-def _download(minio_client, key, dest):
-    obj = minio_client.get_object(TEMPLATE_BUCKET, key)
-    try:
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        dest.write_bytes(obj.read())
-    finally:
-        obj.close()
-        obj.release_conn()
-
-
-def load_template_mapping(minio_client, name, temp_dir):
-    """The mapping file for a template name: the stand-in from the repo, any other from cib-sources."""
-    if name == "standin":
-        return DEFAULT_MAPPING
-    base = f"templates/{name}/"
-    local = Path(temp_dir) / "template" / name
-    _download(minio_client, base + "deck-template.yaml", local / "deck-template.yaml")
-    mapping = load_mapping(local / "deck-template.yaml")
-    if mapping.template:
-        _download(minio_client, base + mapping.template, local / mapping.template)
-    return local / "deck-template.yaml"
-
-
 def output_filename(title, project_id, fmt) -> str:
     return re.sub(r"[^a-zA-Z0-9_\-]", "_", title) + "_" + project_id[:8] + "." + fmt
 
@@ -101,7 +77,8 @@ def render_project(project_id, fmt, template_name, out_path, *, neo4j_client, mi
         return out_path
 
     with tempfile.TemporaryDirectory() as tmpdir:
-        mapping_path = load_template_mapping(minio_client, template_name or "standin", tmpdir)
+        # One configured template applies; template_name is kept for the call signature.
+        mapping_path = deck_template.configured_mapping()
         if reader is not None:
             lookup, resolver = ReaderLookup(reader), FixtureImageResolver(reader, deck_ids)
         else:

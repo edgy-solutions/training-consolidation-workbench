@@ -23,6 +23,10 @@ api:
   # else OLLAMA_BASE_URL, OLLAMA_MODEL, OLLAMA_NUM_CTX), KEYCLOAK_REALM_URL, DAGSTER_HOST, WB_STORE_WRITES ("on" lets
   # /draft, /curriculum, /project, /synthesis write to Neo4j; held otherwise).
   env: {}
+  # The deck template export uses.
+  deckTemplate:
+    uri: ""                 # s3://<bucket>/<key> of the .pptx; empty = the stand-in
+    mappingConfigMap: ""    # ConfigMap with key deck-template.yaml
   # Name of an existing Secret loaded whole with envFrom (NEO4J_PASSWORD, MINIO_ACCESS_KEY,
   # MINIO_SECRET_KEY, LLM_API_KEY, ...). The chart never creates secrets.
   existingSecret: ""

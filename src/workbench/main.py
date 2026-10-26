@@ -5,6 +5,7 @@ load_dotenv()
 
 from fastapi import FastAPI, HTTPException, Query, Body, Depends
 from fastapi.responses import FileResponse
+from src.publishing import deck_template
 from src.publishing.render import FORMATS, output_filename
 from src.publishing.image_ids import list_generated_objects
 from src.publishing.render_jobs import create_job, job_file, read_job, run_job
@@ -66,6 +67,11 @@ def require_platform_reader(token: Optional[str] = Depends(optional_bearer)) -> 
     if not token:
         raise HTTPException(status_code=401, detail="Not authenticated", headers={"WWW-Authenticate": "Bearer"})
     return get_current_user(token)
+
+
+@app.on_event("startup")
+def _warm_deck_template():
+    deck_template.warm()
 
 
 @app.get("/healthz")
@@ -1587,17 +1593,9 @@ def reject_suggested_node(node_id: str, current_user: User = Depends(get_current
 @app.get("/render/templates")
 def list_templates():
     """
-    Lists the deck templates: "standin" plus every templates/<name>/deck-template.yaml in cib-sources.
+    The deck template in use: "standin" when none is configured, else "configured".
     """
-    names = {"standin"}
-    try:
-        for obj in minio_client.list_objects("cib-sources", prefix="templates/", recursive=True):
-            parts = obj.object_name.split("/")
-            if len(parts) == 3 and parts[2] == "deck-template.yaml":
-                names.add(parts[1])
-    except Exception as e:
-        print(f"Error listing templates: {e}")
-    return {"templates": ["standin"] + sorted(names - {"standin"})}
+    return {"templates": [deck_template.template_label()]}
 
 RENDER_POLL_SECONDS = 1.0
 PPTX_TYPE = "application/vnd.openxmlformats-officedocument.presentationml.presentation"

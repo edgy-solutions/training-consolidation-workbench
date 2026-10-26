@@ -13,6 +13,7 @@ import yaml
 from pptx import Presentation
 from pptx.enum.shapes import PP_PLACEHOLDER
 
+from src.publishing.deck_template import STANDIN_MAPPING
 from src.publishing.image_ids import ImageRefError
 from src.publishing.course import (
     Course, DeckExportError, course_concepts, decks, format_citation, format_deck_line,
@@ -22,10 +23,7 @@ from src.publishing.course import (
 DECK_TEMPLATE_VERSION = 1
 NOTES_PAGE = "notes-page"
 
-DEFAULT_MAPPING = Path(
-    os.getenv("DECK_TEMPLATE")
-    or Path(__file__).resolve().parents[2] / "tests" / "fixtures" / "templates" / "standin" / "deck-template.yaml"
-)
+DEFAULT_MAPPING = STANDIN_MAPPING
 
 ROLES = {
     "title": {"required": ["title"], "optional": ["body"]},

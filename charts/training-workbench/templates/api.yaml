@@ -47,6 +47,15 @@ spec:
             - name: KEYCLOAK_AUDIENCE
               value: {{ .Values.ui.keycloak.clientId | quote }}
             {{- end }}
+            # The deck template: the .pptx's object-store URI and the mapping yaml's mounted path.
+            {{- if and .Values.api.deckTemplate.uri (not (hasKey $env "DECK_TEMPLATE_URI")) }}
+            - name: DECK_TEMPLATE_URI
+              value: {{ .Values.api.deckTemplate.uri | quote }}
+            {{- end }}
+            {{- if and .Values.api.deckTemplate.mappingConfigMap (not (hasKey $env "DECK_TEMPLATE")) }}
+            - name: DECK_TEMPLATE
+              value: /etc/wb/template/deck-template.yaml
+            {{- end }}
             {{- if and .Values.ui.keycloak.realmUrl (not (hasKey $env "KEYCLOAK_ISSUER")) }}
             - name: KEYCLOAK_ISSUER
               value: {{ .Values.ui.keycloak.realmUrl | quote }}
@@ -76,9 +85,22 @@ spec:
           volumeMounts:
             - name: tmp
               mountPath: /tmp
+            {{- if .Values.api.deckTemplate.mappingConfigMap }}
+            - name: deck-template
+              mountPath: /etc/wb/template
+              readOnly: true
+            {{- end }}
       volumes:
         - name: tmp
           emptyDir: {}
+        {{- if .Values.api.deckTemplate.mappingConfigMap }}
+        - name: deck-template
+          configMap:
+            name: {{ .Values.api.deckTemplate.mappingConfigMap | quote }}
+            items:
+              - key: deck-template.yaml
+                path: deck-template.yaml
+        {{- end }}
       {{- with .Values.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}
