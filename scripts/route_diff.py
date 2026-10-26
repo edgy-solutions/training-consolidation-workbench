@@ -2,7 +2,8 @@
 
 usage: uv run --no-project python -I scripts/route_diff.py BASE_A BASE_B OUT_DIR
 Writes OUT_DIR/summary.md (one row per route) and OUT_DIR/<n>.json (A, B, diffs) per differing route.
-URLs are compared by presence only (hosts and presigned queries differ by design).
+URLs are compared by presence only (hosts and presigned queries differ by design). The element keys
+the goldens drop as volatile (golden.json `volatile_element_keys`) are dropped on both sides.
 
 Live platform reads need a realm user (b4), and direct grants are off, so B can be answered in the
 api pod instead: BASE_B = routes:FILE writes the route list and stops; a pod script answers it into
@@ -15,6 +16,7 @@ A, B, OUT = sys.argv[1].rstrip("/"), sys.argv[2].rstrip("/"), Path(sys.argv[3])
 OUT.mkdir(parents=True, exist_ok=True)
 CTX = ssl.create_default_context(); CTX.check_hostname = False; CTX.verify_mode = ssl.CERT_NONE
 URL_KEYS = {"s3_url", "url", "presigned"}
+VOLATILE = {None: {"element_id"}, "metadata": {"parent_id", "file_directory", "filename"}}
 
 
 DUMP = json.loads(Path(B[5:]).read_text(encoding="utf-8")) if B.startswith("dump:") else None
@@ -45,7 +47,8 @@ def norm(v, key=None):
     if isinstance(v, dict):
         if all(isinstance(k, str) and k.startswith(("http://", "https://")) for k in v) and v:
             return {"<url>": len(v)}  # resolve-image-urls map
-        return {k: norm(x, k) for k, x in v.items()}
+        drop = VOLATILE["metadata"] if key == "metadata" else VOLATILE[None] if "metadata" in v else set()
+        return {k: norm(x, k) for k, x in v.items() if k not in drop}
     if isinstance(v, list):
         return [norm(x) for x in v]
     return v
@@ -116,7 +119,7 @@ for i, (m, p, body) in enumerate(routes):
         same += 1
         continue
     label = p if body is None else f"{p} {json.dumps(body)[:60]}"
-    (OUT / f"{i}.json").write_text(json.dumps({"route": label, "A": ja, "B": jb, "diffs": d}, indent=1)[:200000])
+    (OUT / f"{i}.json").write_text(json.dumps({"route": label, "diffs": d, "A": ja, "B": jb}, indent=1)[:200000])
     rows.append(f"| {i} | `{m} {label}` | {d[0]} | {len(d)}{'+' if len(d) >= 20 else ''} |")
 
 (OUT / "summary.md").write_text(
