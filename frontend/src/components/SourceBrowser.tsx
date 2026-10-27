@@ -558,7 +558,7 @@ const SlideRow: React.FC<{ slide: SourceSlide, thumb?: string, isHighlighted: bo
                 heatmapMode && intensity === 0 && "grayscale"
             )}>
                 {slide.s3_url ? (
-                    <img src={slide.s3_url} className="w-full h-full object-cover" alt="slide" />
+                    <img src={assetSrc(slide.s3_url)} className="w-full h-full object-cover" alt="slide" />
                 ) : thumb ? (
                     <img src={assetSrc(thumb)} className="w-full h-full object-cover" alt="embedded" />
                 ) : (
