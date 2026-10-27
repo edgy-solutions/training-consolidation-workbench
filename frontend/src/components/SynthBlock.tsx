@@ -3,7 +3,7 @@ import { useDroppable } from '@dnd-kit/core';
 import { SortableContext, verticalListSortingStrategy } from '@dnd-kit/sortable';
 import { Sparkles, GripVertical, X, MessageSquare, ChevronRight, ChevronDown, LayoutTemplate } from 'lucide-react';
 import clsx from 'clsx';
-import { api, slideLabel } from '../api';
+import { api, assetSrc, slideLabel } from '../api';
 import type { TargetDraftNode } from '../api';
 import { useAppStore } from '../store';
 import { MarkdownEditor } from './MarkdownEditor';
@@ -53,7 +53,7 @@ const SortableSlideThumbnail: React.FC<{ id: string, url?: string, onRemove?: ()
             {/* Thumbnail */}
             <div className="w-16 h-10 bg-slate-100 rounded overflow-hidden flex-shrink-0 border border-slate-100">
                 {url ? (
-                    <img src={url} alt="Thumbnail" className="w-full h-full object-cover" />
+                    <img src={assetSrc(url)} alt="Thumbnail" className="w-full h-full object-cover" />
                 ) : (
                     <div className="w-full h-full flex items-center justify-center text-[8px] text-slate-400">No Img</div>
                 )}

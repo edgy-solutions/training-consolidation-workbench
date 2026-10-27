@@ -387,7 +387,7 @@ export const SlideInspector: React.FC = () => {
             {/* Image Preview (Top Half) */}
             <div className="flex-1 bg-slate-100 relative overflow-hidden flex items-center justify-center border-b border-slate-200 min-h-[40%]">
                 {slide.s3_url ? (
-                    <img src={slide.s3_url} className="max-w-full max-h-full object-contain shadow-lg" alt="Slide Full" />
+                    <img src={assetSrc(slide.s3_url)} className="max-w-full max-h-full object-contain shadow-lg" alt="Slide Full" />
                 ) : embedded.length > 0 ? (
                     <>
                         <img src={assetSrc(embedded[embeddedIdx]?.url)} className="max-w-full max-h-full object-contain shadow-lg" alt="Embedded" />
@@ -435,7 +435,7 @@ export const SlideInspector: React.FC = () => {
                     onClick={() => setLightbox(false)}
                 >
                     <img
-                        src={slide.s3_url || assetSrc(embedded[embeddedIdx]?.url)}
+                        src={assetSrc(slide.s3_url || embedded[embeddedIdx]?.url)}
                         className="max-w-[90vw] max-h-[90vh] object-contain"
                         alt="Slide enlarged"
                         data-testid="lightbox-image"
