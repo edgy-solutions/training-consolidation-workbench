@@ -26,6 +26,22 @@ spec:
         {{- toYaml .Values.podSecurityContext | nindent 8 }}
         runAsUser: 10001
         runAsGroup: 10001
+      {{- if .Values.api.extraCA.secretName }}
+      initContainers:
+        # The system roots plus the extra CA, in one file: SSL_CERT_FILE replaces the default trust.
+        - name: ca-bundle
+          image: {{ include "tw.image" (dict "ctx" $ "values" .Values.api "component" "api") }}
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          command: ["sh", "-c", "cat /etc/ssl/certs/ca-certificates.crt /etc/wb/extra-ca/ca.pem > /etc/wb/ca-bundle/ca-bundle.pem"]
+          volumeMounts:
+            - name: extra-ca
+              mountPath: /etc/wb/extra-ca
+              readOnly: true
+            - name: ca-bundle
+              mountPath: /etc/wb/ca-bundle
+      {{- end }}
       containers:
         - name: api
           image: {{ include "tw.image" (dict "ctx" $ "values" .Values.api "component" "api") }}
@@ -55,6 +71,14 @@ spec:
             {{- if and .Values.api.deckTemplate.mappingConfigMap (not (hasKey $env "DECK_TEMPLATE")) }}
             - name: DECK_TEMPLATE
               value: /etc/wb/template/deck-template.yaml
+            {{- end }}
+            {{- if .Values.api.extraCA.secretName }}
+            {{- range $name := list "SSL_CERT_FILE" "REQUESTS_CA_BUNDLE" }}
+            {{- if not (hasKey $env $name) }}
+            - name: {{ $name }}
+              value: /etc/wb/ca-bundle/ca-bundle.pem
+            {{- end }}
+            {{- end }}
             {{- end }}
             {{- if and .Values.ui.keycloak.realmUrl (not (hasKey $env "KEYCLOAK_ISSUER")) }}
             - name: KEYCLOAK_ISSUER
@@ -90,6 +114,11 @@ spec:
               mountPath: /etc/wb/template
               readOnly: true
             {{- end }}
+            {{- if .Values.api.extraCA.secretName }}
+            - name: ca-bundle
+              mountPath: /etc/wb/ca-bundle
+              readOnly: true
+            {{- end }}
       volumes:
         - name: tmp
           emptyDir: {}
@@ -100,6 +129,18 @@ spec:
             items:
               - key: deck-template.yaml
                 path: deck-template.yaml
+        {{- end }}
+        {{- with .Values.api.extraCA }}
+        {{- if .secretName }}
+        - name: extra-ca
+          secret:
+            secretName: {{ .secretName | quote }}
+            items:
+              - key: {{ .key | quote }}
+                path: ca.pem
+        - name: ca-bundle
+          emptyDir: {}
+        {{- end }}
         {{- end }}
       {{- with .Values.nodeSelector }}
       nodeSelector:

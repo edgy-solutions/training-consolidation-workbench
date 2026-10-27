@@ -224,3 +224,28 @@ kubectl -n <ns> create configmap <configmap name> --from-file=deck-template.yaml
 - Export a draft as PPTX from the inspector, open it, and its slides use your template's layouts.
   The draft must be synthesized first. Export refuses a section with an empty body or no source
   slides, and that refusal is not a template fault.
+
+## 7. Private CA (chart 0.1.1)
+
+The first install at work answered 401 on every route. The api log showed
+`PyJWT Validation Error: ... CERTIFICATE_VERIFY_FAILED ... unable to get local issuer certificate`:
+the work Keycloak's certificate is signed by a work CA that the image does not trust. Chart 0.1.1
+adds `api.extraCA`, so install `--version 0.1.1`:
+
+```yaml
+api:
+  extraCA:
+    secretName: <secret holding the work CA bundle, in the release's namespace>
+    key: ca-certificates.crt
+```
+
+An init container appends that PEM to the image's system roots in an emptyDir. `SSL_CERT_FILE`
+and `REQUESTS_CA_BUNDLE` then point at the result, and every https client in the api honours
+one of them: PyJWT (Keycloak), httpx (the LLM), minio, litellm and BAML. The two must point at a
+whole bundle, because they replace the default trust rather than add to it. So a Secret that
+holds only the work CA works too. Proved in the sandbox pod with the sandbox's self-signed
+realm: without the bundle, PyJWT and httpx fail with CERTIFICATE_VERIFY_FAILED; with it, PyJWT
+fetches the keys, and public https still answers.
+
+**Check:** the api pod's `ca-bundle` init container completed, and after a login the api log
+shows no `PyJWT Validation Error`. `/draft/list` answers 200.

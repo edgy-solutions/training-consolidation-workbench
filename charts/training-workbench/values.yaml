@@ -28,6 +28,13 @@ api:
   deckTemplate:
     uri: ""                 # s3://<bucket>/<key> of the .pptx; empty = the stand-in
     mappingConfigMap: ""    # ConfigMap with key deck-template.yaml
+  # A CA the api must trust beyond the public roots, e.g. for an https Keycloak, LLM or MinIO
+  # signed by a private CA. An init container appends it to the image's system bundle, and
+  # SSL_CERT_FILE / REQUESTS_CA_BUNDLE point at the result (it replaces, never adds to, the
+  # default trust, so the bundle must be whole). Empty = system trust only.
+  extraCA:
+    secretName: ""          # existing Secret holding PEM certificate(s)
+    key: ca-certificates.crt
   # Name of an existing Secret loaded whole with envFrom (NEO4J_PASSWORD, MINIO_ACCESS_KEY,
   # MINIO_SECRET_KEY, LLM_API_KEY, ...). The chart never creates secrets.
   existingSecret: ""
