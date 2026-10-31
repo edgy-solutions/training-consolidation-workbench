@@ -12,12 +12,13 @@ from src.publishing.render_jobs import create_job, job_file, read_job, run_job
 from src.services import outline_jobs
 from src.auth.security import get_current_user, optional_bearer, store_writes_on, User
 from fastapi.middleware.cors import CORSMiddleware
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Literal, Optional
+from pydantic import BaseModel
 import os
 import json
 import asyncio
 import time
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 from sse_starlette.sse import EventSourceResponse
 from dagster_graphql import DagsterGraphQLClient, DagsterGraphQLClientError
 
@@ -31,7 +32,7 @@ from src.workbench.models import (
 )
 
 from src.workbench.source_reader import get_source_reader
-from src.workbench import asset_links
+from src.workbench import alignment, asset_links
 from src.workbench.source_routes import (
     get_alignment_store, _course_name, _port_source_tree, _port_source_filters, _port_course_slides,
     _port_course_sections, _port_slide_details, _port_embedded_images,
@@ -160,7 +161,7 @@ def get_course_slides(course_id: str):
     query = """
     MATCH (c:Course {id: $course_id})-[:HAS_SLIDE]->(s:Slide)
     OPTIONAL MATCH (s)-[t:TEACHES]->(con:Concept)
-    OPTIONAL MATCH (cc:CanonicalConcept)-[:ALIGNS_TO]->(con)
+    OPTIONAL MATCH (con)-[:ALIGNS_TO]->(cc:CanonicalConcept)
     WITH s, coalesce(cc.name, con.name) as display_name, max(t.salience) as salience
     WITH s, collect(DISTINCT {name: display_name, salience: salience}) as concepts
     RETURN s.id as id, s.number as number, s.text as text, s.elements as elements, concepts
@@ -218,12 +219,12 @@ def get_course_sections(course_id: str):
     // Normalize via CanonicalConcept to collapse duplicates/synonyms
     
     OPTIONAL MATCH (s)-[:COVERS]->(con:Concept)
-    OPTIONAL MATCH (cc1:CanonicalConcept)-[:ALIGNS_TO]->(con)
+    OPTIONAL MATCH (con)-[:ALIGNS_TO]->(cc1:CanonicalConcept)
     WITH s, collect(DISTINCT coalesce(cc1.name, con.name)) as covered_concepts
     
     OPTIONAL MATCH (s)-[:HAS_SLIDE]->(sl:Slide)-[t:TEACHES]->(slide_con:Concept)
     WHERE coalesce(t.salience, 0) >= 0.5
-    OPTIONAL MATCH (cc2:CanonicalConcept)-[:ALIGNS_TO]->(slide_con)
+    OPTIONAL MATCH (slide_con)-[:ALIGNS_TO]->(cc2:CanonicalConcept)
     WITH s, covered_concepts, collect(DISTINCT coalesce(cc2.name, slide_con.name)) as slide_concepts
     
     RETURN s.id as id, 
@@ -242,7 +243,7 @@ def get_course_sections(course_id: str):
     course_concepts_query = """
     MATCH (c:Course {id: $course_id})-[:HAS_SLIDE]->(sl:Slide)-[t:TEACHES]->(con:Concept)
     WHERE coalesce(t.salience, 0) >= 0.5
-    OPTIONAL MATCH (cc:CanonicalConcept)-[:ALIGNS_TO]->(con)
+    OPTIONAL MATCH (con)-[:ALIGNS_TO]->(cc:CanonicalConcept)
     RETURN collect(DISTINCT coalesce(cc.name, con.name))[0..10] as course_concepts
     """
     course_result = neo4j_client.execute_query(course_concepts_query, {"course_id": course_id})
@@ -280,7 +281,7 @@ def get_slide_details(slide_id: str):
     query = """
     MATCH (s:Slide {id: $id})
     OPTIONAL MATCH (s)-[t:TEACHES]->(c:Concept)
-    OPTIONAL MATCH (cc:CanonicalConcept)-[:ALIGNS_TO]->(c)
+    OPTIONAL MATCH (c)-[:ALIGNS_TO]->(cc:CanonicalConcept)
     WITH s, coalesce(cc.name, c.name) as display_name, max(t.salience) as salience
     WITH s, collect(DISTINCT {name: display_name, salience: salience}) as concepts
     RETURN s.id as id, s.number as number, s.text as text, s.elements as elements, concepts,
@@ -655,7 +656,7 @@ def get_concept_heatmap(term: str):
     WITH c as direct_hit
     
     // Find synonyms via CanonicalConcept (if any)
-    OPTIONAL MATCH (direct_hit)<-[:ALIGNS_TO]-(cc:CanonicalConcept)-[:ALIGNS_TO]->(synonym:Concept)
+    OPTIONAL MATCH (direct_hit)-[:ALIGNS_TO]->(cc:CanonicalConcept)<-[:ALIGNS_TO]-(synonym:Concept)
     
     // Aggregate all related concepts into a single list
     WITH collect(distinct direct_hit) + collect(distinct synonym) as all_concepts
@@ -781,7 +782,7 @@ def search_source_tree(request: SearchRequest):
     query_parts.append("""
     WITH c, s
     OPTIONAL MATCH (s)-[t:TEACHES]->(con:Concept)
-    OPTIONAL MATCH (cc:CanonicalConcept)-[:ALIGNS_TO]->(con)
+    OPTIONAL MATCH (con)-[:ALIGNS_TO]->(cc:CanonicalConcept)
     WITH c, s, coalesce(cc.name, con.name) as display_name, con.domain as domain, max(t.salience) as salience
     WITH c, s, collect(DISTINCT {name: display_name, domain: domain, salience: salience}) as concepts
     RETURN c.business_unit as bu, 
@@ -868,6 +869,34 @@ READ_ONLY_POSTS = {
 def require_store_writes():
     if not store_writes_on():
         raise HTTPException(status_code=403, detail="Writes to the shared graph are held (WB_STORE_WRITES is not on).")
+
+
+@app.get("/alignment/proposals", dependencies=[Depends(require_platform_reader)])
+def list_alignment_proposals(course_id: str):
+    if fixture_mode():
+        return []
+    return neo4j_client.execute_query(alignment.PROPOSALS_QUERY, {"cid": course_id})
+
+
+class ProposalReview(BaseModel):
+    concept_id: str
+    canonical_id: str
+    decision: Literal["accept", "reject"]
+
+
+@app.post("/alignment/proposals/review", dependencies=[Depends(require_store_writes)])
+def review_alignment_proposal(review: ProposalReview, current_user: User = Depends(get_current_user)):
+    status = "accepted" if review.decision == "accept" else "rejected"
+    at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    rows = neo4j_client.execute_query(
+        alignment.REVIEW_QUERY,
+        {"concept_id": review.concept_id, "canonical_id": review.canonical_id,
+         "status": status, "uid": current_user.id, "at": at},
+    )
+    if not rows or not rows[0]["n"]:
+        raise HTTPException(status_code=404, detail="No open proposal for that pair")
+    return {"concept_id": review.concept_id, "canonical_id": review.canonical_id,
+            "status": status, "reviewed_by": current_user.id, "reviewed_at": at}
 
 
 def _require_owned(user_id, node_id):
