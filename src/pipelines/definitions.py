@@ -5,12 +5,10 @@ from dagster import Definitions, load_assets_from_modules, define_asset_job, Dyn
 # Load env vars from .env file if present
 load_dotenv()
 
-from src.semantic import assets as semantic_assets
 from src.publishing import assets as publishing_assets
-from src.semantic.sensors import unharmonized_concepts_sensor
 from src.storage.dagster_resources import MinioResource, Neo4jResource, WeaviateResource
 
-all_assets = load_assets_from_modules([semantic_assets, publishing_assets])
+all_assets = load_assets_from_modules([publishing_assets])
 
 # Define the job for rendering published files
 render_asset_job = define_asset_job(
@@ -18,11 +16,7 @@ render_asset_job = define_asset_job(
     selection=["rendered_course_file"]
 )
 
-# Define the harmonization job (manual trigger or scheduled)
-harmonize_concepts_job = define_asset_job(
-    name="harmonize_concepts_job",
-    selection="harmonize_concepts"
-)
+# Concept alignment (CanonicalConcept, ALIGNS_TO) is doc-tools' concepts.normalise pass (contract §4.7); the workbench only reviews proposals.
 
 from src.workbench.operations import synthesize_node
 from dagster import job
@@ -33,8 +27,7 @@ def synthesize_node_job():
 
 defs = Definitions(
     assets=all_assets,
-    jobs=[harmonize_concepts_job, synthesize_node_job, render_asset_job],
-    sensors=[unharmonized_concepts_sensor],
+    jobs=[synthesize_node_job, render_asset_job],
     resources={
         "minio": MinioResource(),
         "neo4j": Neo4jResource(),

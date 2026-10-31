@@ -1,8 +1,8 @@
 """The workbench's read-side port: one method per need (N1-N8).
 
 Implementations return plain JSON-able dicts/lists. Concept values are RAW
-doc-tools concept names; display names (CanonicalConcept) are the workbench's
-own business, see alignment.py.
+doc-tools concept names; display names come from doc-tools' CanonicalConcept,
+read-only (see alignment.py).
 """
 import os
 from pathlib import Path

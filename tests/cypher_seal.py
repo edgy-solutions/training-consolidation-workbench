@@ -2,13 +2,16 @@
 
 The workbench creates and changes only its own labels (OWN) and edges whose start node is one of
 those. It never sets a property on, adds or removes a label on, or deletes a platform node or edge.
+The one foreign write is the proposal review: SET of status, reviewed_by, reviewed_at on a bound
+(:Concept)-[:PROPOSED_ALIGNS_TO]->(:CanonicalConcept) edge.
 The analyzer is a simplified Cypher reader that fails closed: anything it cannot resolve is a violation.
 """
 import ast
 import re
 from pathlib import Path
 
-OWN = {"Project", "TargetNode", "User", "CanonicalConcept"}
+OWN = {"Project", "TargetNode", "User"}
+REVIEW_PROPS = {"status", "reviewed_by", "reviewed_at"}
 PLACEHOLDER = "{?}"
 _SENT = "\x00"
 
@@ -140,7 +143,7 @@ def _split_top(s):
 
 class _Scope:
     def __init__(self):
-        self.vars = {}  # name -> ("node", set(labels)) | ("rel", start_is_own) | ("value",)
+        self.vars = {}  # name -> ("node", set(labels)) | ("rel", start_is_own, is_review_edge) | ("value",)
 
     def copy(self):
         s = _Scope()
@@ -173,7 +176,7 @@ def _parse_node(content):
 def _patterns(body, scope, creating, problems, kw):
     """Binds variables from the patterns in body; when creating, checks creations and edge starts."""
     for part in _split_top(body):
-        prev = None  # (var, is_own)
+        prev = None  # (var, is_own, labels)
         pending = None  # (rel var, arrow_left, arrow_right, text)
         for tok in _PATTERN_TOKEN.finditer(part):
             if tok.group("node") is not None:
@@ -191,7 +194,7 @@ def _patterns(body, scope, creating, problems, kw):
                 is_node_var = not (bound and existing[0] != "node")
                 if var and is_node_var:
                     scope.vars[var] = ("node", labs)
-                cur = (var, bool(labs) and labs <= OWN and is_node_var)
+                cur = (var, bool(labs) and labs <= OWN and is_node_var, labs)
                 if pending is not None and prev is not None:
                     rvar, left, right, rtext = pending
                     if left == right:
@@ -204,8 +207,10 @@ def _patterns(body, scope, creating, problems, kw):
                         start_own = prev[1]
                     if creating and left != right and not start_own:
                         problems.append(f"{kw}: relationship {rtext} starts at a platform node")
+                    review = (not creating and right and not left and "PROPOSED_ALIGNS_TO" in rtext
+                              and "Concept" in prev[2] and "CanonicalConcept" in cur[2])
                     if rvar:
-                        scope.vars[rvar] = ("rel", start_own)
+                        scope.vars[rvar] = ("rel", start_own, review)
                 pending = None
                 prev = cur
             else:
@@ -226,6 +231,11 @@ def _set_items(body, scope, problems, kw, remove=False):
             problems.append(f"{kw}: cannot parse target (cannot verify): {item}")
             continue
         name = m.group(1).strip("`")
+        b = scope.vars.get(name)
+        prop = m.group(2).lstrip(".").strip().strip("`")
+        if (b and b[0] == "rel" and b[2] and m.group(2).startswith(".") and prop in REVIEW_PROPS
+                and re.match(r"\s*=(?!=)", item[m.end():])):
+            continue
         ok, why = scope.own_target(name)
         if not ok:
             problems.append(f"{kw}: {why}")

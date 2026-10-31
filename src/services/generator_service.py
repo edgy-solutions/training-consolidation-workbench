@@ -75,7 +75,7 @@ class GeneratorService:
         query = """
         UNWIND $concepts as concept_name
         MATCH (c:Concept {name: concept_name})
-        OPTIONAL MATCH (cc:CanonicalConcept)-[:ALIGNS_TO]->(c)
+        OPTIONAL MATCH (c)-[:ALIGNS_TO]->(cc:CanonicalConcept)
         RETURN concept_name, coalesce(cc.name, c.name) as display_name
         """
         results = self.neo4j_client.execute_query(query, {"concepts": concepts})

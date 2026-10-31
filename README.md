@@ -243,7 +243,6 @@ OLLAMA_NUM_CTX=131072 # Production (128K tokens)
 
 | Operation | Strategy | File |
 |-----------|----------|------|
-| **Concept Harmonization** | Two-pass batching | `src/semantic/harmonization.py` |
 | **Outline Generation** | Iterative pairwise merging | `src/dspy_modules/outline_harmonizer.py` |
 | **Document Outline Extraction** | Sliding window with overlap | `src/semantic/extraction.py` |
 
@@ -282,12 +281,11 @@ When extracting outlines from chunked documents, the LLM may generate slightly d
 
 **Mitigation**: Increase context size to reduce chunking, or manually review extracted outlines.
 
-#### Harmonization: Over-Aggressive Grouping
-If the LLM groups related (but distinct) concepts together (e.g., "Git" + "Branch" + "Commit" → "Version Control"), the prompt may need tuning.
-
-**Mitigation**: The harmonization prompt explicitly instructs the LLM to only group TRUE synonyms. If issues persist, clear harmonization data and re-run:
+#### Legacy harmonizer edges
+The workbench no longer harmonizes concepts: CanonicalConcept, ALIGNS_TO and PROPOSED_ALIGNS_TO are written only by doc-tools' `concepts.normalise` pass. Edges the old harmonizer left behind point the wrong way (`CanonicalConcept -> Concept`, no `status`) and the pass will not align a Concept while one exists. Remove them from legacy data only:
 ```powershell
-$env:PYTHONPATH = "."; py scripts/clear_harmonization.py
+$env:PYTHONPATH = "."; uv run python scripts/clear_harmonization.py          # dry run: counts only
+$env:PYTHONPATH = "."; uv run python scripts/clear_harmonization.py --apply  # delete
 ```
 
 #### Pairwise Merging: Groups Too Large to Merge
