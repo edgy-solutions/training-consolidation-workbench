@@ -249,3 +249,43 @@ fetches the keys, and public https still answers.
 
 **Check:** the api pod's `ca-bundle` init container completed, and after a login the api log
 shows no `PyJWT Validation Error`. `/draft/list` answers 200.
+
+## 8. Concept alignment and proposal review (chart 0.1.3)
+
+Install `--version 0.1.3` once v0.1.3 is released from master. Its images no longer contain the
+harmonizer, and the workbench reads ALIGNS_TO in the pass's direction. Add to the values file:
+
+```yaml
+api:
+  env:
+    TOPAZ_DIRECTORY_URL: http://topaz-svc.<iagent-namespace>:9393
+```
+
+That is the Topaz the iagent chart ships, reached across namespaces in the same cluster. It is the
+only decider for proposal review. With the URL unset, every review answers 403.
+
+**`AUTHZ_CLAIM` must name the same claim as the iagent chart's `keycloak.authzClaim`.** Topaz is
+asked about the workbench's user id, so if the two differ a granted user reads as ungranted. The
+workbench defaults to `authz_id`. If work's claim is different, stop and tell the architect before
+changing it, because draft ownership is keyed on the same claim.
+
+**Run once, after 0.1.3 is up and before `TRAINING_CONCEPT_ALIGNMENT` goes on:**
+
+```sh
+kubectl exec -n <ns> deploy/<api deployment> -- python scripts/clear_harmonization.py --apply
+```
+
+It removes only the old harmonizer's reversed ALIGNS_TO edges and the CanonicalConcepts they leave
+orphaned. Run it without `--apply` first if you want the edge count; a dry run cannot count the
+orphans. It exits non-zero on failure, and on success prints counts, which should both read 0.
+
+Reviews also need `WB_STORE_WRITES: "on"` (section 2). Until invincible-agent PR #196 is merged,
+`topaz_sync` has run for group `alignment-reviewers` and the roll carrying the row is done, Topaz
+answers no for everyone, so every review answers 403. That is expected.
+
+**Check:** in the api pod, run
+`python -c "from src.auth.security import can_review; print(can_review('<a member id>'))"`.
+It prints `True` for a member of `alignment-reviewers` and `False` for anyone else. A `WARN` line
+means a setting is missing. A `DeciderUnavailable` error means Topaz could not be read, and the
+route answers 503: check the URL, and if the iagent chart has `networkPolicy.enabled` on, note that
+its Topaz policy admits only that chart's own pods, so this call needs an admission added there.
