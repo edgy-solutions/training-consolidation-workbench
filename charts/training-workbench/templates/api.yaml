@@ -63,6 +63,11 @@ spec:
             - name: KEYCLOAK_AUDIENCE
               value: {{ .Values.ui.keycloak.clientId | quote }}
             {{- end }}
+            # The review capability asked of Topaz is can_review:<this>.
+            {{- if and .Values.api.alignmentReviewSubject (not (hasKey $env "ALIGNMENT_REVIEW_SUBJECT")) }}
+            - name: ALIGNMENT_REVIEW_SUBJECT
+              value: {{ .Values.api.alignmentReviewSubject | quote }}
+            {{- end }}
             # The deck template: the .pptx's object-store URI and the mapping yaml's mounted path.
             {{- if and .Values.api.deckTemplate.uri (not (hasKey $env "DECK_TEMPLATE_URI")) }}
             - name: DECK_TEMPLATE_URI

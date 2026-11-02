@@ -22,8 +22,11 @@ api:
   # Extra plain env, e.g. NEO4J_URI, NEO4J_USER, WEAVIATE_URL, MINIO_ENDPOINT, BUCKET_NAME,
   # LLM_BASE_URL, LLM_MODEL, LLM_NUM_CTX (an OpenAI-compatible endpoint such as a LiteLLM proxy;
   # else OLLAMA_BASE_URL, OLLAMA_MODEL, OLLAMA_NUM_CTX), KEYCLOAK_REALM_URL, DAGSTER_HOST, WB_STORE_WRITES ("on" lets
-  # /draft, /curriculum, /project, /synthesis write to Neo4j; held otherwise).
+  # /draft, /curriculum, /project, /synthesis write to Neo4j; held otherwise),
+  # TOPAZ_DIRECTORY_URL (the fleet's Topaz directory; unset, every proposal review is refused).
   env: {}
+  # The review capability asked of Topaz is can_review:<this>. Empty refuses every review.
+  alignmentReviewSubject: alignment
   # The deck template export uses.
   deckTemplate:
     uri: ""                 # s3://<bucket>/<key> of the .pptx; empty = the stand-in
