@@ -23,6 +23,7 @@ GUARDED = [
 @pytest.fixture
 def app_client(monkeypatch):
     monkeypatch.setenv("SOURCE_READER", "fixture")
+    monkeypatch.setenv("WB_DECK_TEMPLATE_UI", "on")  # the settings routes answer 404 before the write guard otherwise
     from src.workbench import main
 
     calls = []

@@ -12,7 +12,7 @@ from src.publishing.render import FORMATS, output_filename, render_readiness
 from src.publishing.image_ids import list_generated_objects
 from src.publishing.render_jobs import create_job, job_file, read_job, run_job
 from src.services import outline_jobs
-from src.auth.security import get_current_user, optional_bearer, store_writes_on, User, can_review, can_configure_templates, DeciderUnavailable
+from src.auth.security import get_current_user, optional_bearer, store_writes_on, deck_template_ui_on, User, can_review, can_configure_templates, DeciderUnavailable
 from fastapi.middleware.cors import CORSMiddleware
 from typing import List, Dict, Any, Literal, Optional
 from pydantic import BaseModel
@@ -1682,6 +1682,11 @@ def list_templates():
 MAX_TEMPLATE_BYTES = 64 * 1024 * 1024
 
 
+def require_deck_template_ui():
+    if not deck_template_ui_on():
+        raise HTTPException(status_code=404, detail="The deck template settings are off (WB_DECK_TEMPLATE_UI is not on).")
+
+
 def require_can_configure(current_user: User = Depends(get_current_user)) -> User:
     """Choosing the deck template changes every user's exports, so it is the decider's call and fails closed."""
     try:
@@ -1742,12 +1747,18 @@ def _require_store():
         raise HTTPException(status_code=409, detail="Saving a template needs DECK_TEMPLATE_STORE to be set.")
 
 
-@app.get("/settings/deck-template")
+@app.get("/settings/deck-template/enabled")
+def deck_template_enabled(user: Optional[User] = Depends(require_platform_reader)):
+    """Whether the settings screen is on, for the gear. Reads no store and no template."""
+    return {"enabled": deck_template_ui_on()}
+
+
+@app.get("/settings/deck-template", dependencies=[Depends(require_deck_template_ui)])
 def get_deck_template_settings(user: Optional[User] = Depends(require_platform_reader)):
     return _deck_template_state(user)
 
 
-@app.post("/settings/deck-template/inspect")
+@app.post("/settings/deck-template/inspect", dependencies=[Depends(require_deck_template_ui)])
 def inspect_deck_template(file: UploadFile = File(...), user: User = Depends(require_can_configure)):
     """Describes an uploaded .pptx for the mapping screen. Writes nothing."""
     try:
@@ -1756,7 +1767,7 @@ def inspect_deck_template(file: UploadFile = File(...), user: User = Depends(req
         raise HTTPException(status_code=422, detail="; ".join(e.problems))
 
 
-@app.put("/settings/deck-template", dependencies=[Depends(require_store_writes)])
+@app.put("/settings/deck-template", dependencies=[Depends(require_deck_template_ui), Depends(require_store_writes)])
 def save_deck_template(
     roles: str = Form(...),
     file: Optional[UploadFile] = File(None),
@@ -1783,7 +1794,7 @@ def save_deck_template(
     return _deck_template_state(user)
 
 
-@app.delete("/settings/deck-template", dependencies=[Depends(require_store_writes)])
+@app.delete("/settings/deck-template", dependencies=[Depends(require_deck_template_ui), Depends(require_store_writes)])
 def reset_deck_template(user: User = Depends(require_can_configure)):
     """Back to the deployment default: removes the pointer only, leaving the uploaded .pptx objects."""
     _require_store()

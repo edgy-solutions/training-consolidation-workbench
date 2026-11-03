@@ -33,6 +33,11 @@ def store_writes_on() -> bool:
     """The api holds the shared Neo4j admin credential; every write to the shared graph waits on WB_STORE_WRITES=on."""
     return os.getenv("WB_STORE_WRITES", "").strip().lower() == "on"
 
+
+def deck_template_ui_on() -> bool:
+    """The deck template settings screen and its routes wait on WB_DECK_TEMPLATE_UI=on; exports never read it."""
+    return os.getenv("WB_DECK_TEMPLATE_UI", "").strip().lower() == "on"
+
 # OAuth2 Scheme
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl=f"{KEYCLOAK_URL}/protocol/openid-connect/token")
 # The same bearer, None when absent: for routes whose need for a token depends on the deploy

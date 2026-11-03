@@ -193,6 +193,8 @@ A person holding `can_configure:deck_template` (Topaz) can upload a template and
 
 Nothing falls back past a failure: if the store holds a pointer but cannot be read, exports fail naming the store, and they do not use a lower choice. Saving from the screen is on only when `DECK_TEMPLATE_STORE=s3://<bucket>/<prefix>` is set. Unset, the store is never read and the order is just 2 then 3.
 
+**The flag.** The screen is behind `WB_DECK_TEMPLATE_UI` (chart `api.deckTemplate.ui`), default off, in addition to `can_configure:deck_template`. Off: the gear is not shown and every `/settings/deck-template` route except `/settings/deck-template/enabled` answers 404. Exports do not read the flag: a saved template stays in force, so turning the flag off does not change decks. Going back to the deployment's template means Reset before turning it off, or deleting `active.yaml`.
+
 **Store layout.**
 - `<prefix>/<sha256>.pptx`: the template, named by the hash of its bytes. The uploaded file name is never part of a key.
 - `<prefix>/active.yaml`: the one pointer. It holds `deck_template: 1`, `template: s3://…/<sha256>.pptx`, `source: {filename, saved_by, saved_at}` and `roles` (§2). The `.pptx` is written first and the pointer last, so a save either lands whole or not at all.

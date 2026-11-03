@@ -309,6 +309,10 @@ export const api = {
         const res = await axios.get<DeckTemplateSettings>(`${API_URL}/settings/deck-template`);
         return res.data;
     },
+    getDeckTemplateEnabled: async () => {
+        const res = await axios.get<{ enabled: boolean }>(`${API_URL}/settings/deck-template/enabled`);
+        return res.data.enabled;
+    },
     inspectDeckTemplate: async (file: File) => {
         const form = new FormData();
         form.append('file', file);

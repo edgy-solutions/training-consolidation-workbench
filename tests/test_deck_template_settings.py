@@ -379,6 +379,7 @@ def client(env, monkeypatch):
     monkeypatch.setattr(deck_template, "_default_minio", lambda: minio)
     monkeypatch.setenv("TOPAZ_DIRECTORY_URL", "http://topaz.test:9393")
     monkeypatch.setenv("WB_STORE_WRITES", "on")
+    monkeypatch.setenv("WB_DECK_TEMPLATE_UI", "on")
     monkeypatch.setenv("SOURCE_READER", "store")
     state = {"result": Resp(200, {"check": True}), "calls": []}
 
@@ -518,3 +519,46 @@ def test_inspect_ok_oversize_and_not_a_pptx(client, monkeypatch):
     r = client.post("/settings/deck-template/inspect", files={"file": ("a.pptx", STANDIN_PPTX)})
     assert r.status_code == 413
     assert put(client).status_code == 413
+
+
+# --- the WB_DECK_TEMPLATE_UI flag ---
+
+def off(monkeypatch, value):
+    if value is None:
+        monkeypatch.delenv("WB_DECK_TEMPLATE_UI")
+    else:
+        monkeypatch.setenv("WB_DECK_TEMPLATE_UI", value)
+
+
+@pytest.mark.parametrize("value", [None, "off", ""])
+def test_flag_off_answers_404_on_every_settings_route(client, monkeypatch, value):
+    off(monkeypatch, value)
+    assert client.get("/settings/deck-template").status_code == 404
+    assert client.post("/settings/deck-template/inspect", files={"file": ("a.pptx", STANDIN_PPTX)}).status_code == 404
+    assert put(client).status_code == 404
+    assert client.delete("/settings/deck-template").status_code == 404
+    assert client.minio.objects == {} and client.minio.puts == [] and client.minio.removed == []
+
+
+@pytest.mark.parametrize("value,expected", [(None, False), ("off", False), ("on", True), (" ON ", True)])
+def test_enabled_reports_the_flag_and_reads_no_store(client, monkeypatch, value, expected):
+    off(monkeypatch, value)
+    client.minio.fail = "get"
+    r = client.get("/settings/deck-template/enabled")
+    assert r.status_code == 200 and r.json() == {"enabled": expected}
+    assert client.minio.gets == [] and client.decider["calls"] == []
+
+
+def test_flag_on_with_the_decider_refusing_is_still_403(client):
+    client.decider["result"] = Resp(200, {"check": False})
+    assert put(client).status_code == 403
+    assert client.minio.puts == []
+
+
+def test_a_saved_template_stays_in_force_with_the_flag_off(client, monkeypatch):
+    assert put(client).json()["source"] == "saved"
+    off(monkeypatch, None)
+    assert client.get("/settings/deck-template").status_code == 404
+    cur = deck_template.current(client.minio)
+    assert cur.source == "saved"
+    assert deck_template.configured_mapping(client.minio) == cur.mapping_path
