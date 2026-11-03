@@ -38,6 +38,41 @@ def asset_menu(rows) -> Dict[str, List[Dict[str, Any]]]:
         menu[row["id"]] = list(found.values())
     return menu
 
+SECTION_NOTES_QUERY = """
+UNWIND $slide_ids AS sid
+MATCH (sec:Section)-[:HAS_SLIDE]->(:Slide {id: sid})
+WHERE coalesce(sec.summary, '') <> '' OR size(coalesce(sec.objectives, [])) > 0
+RETURN sid AS slide_id, sec.id AS id, sec.title AS title, sec.level AS level, sec.start_page AS start_page, sec.end_page AS end_page, sec.summary AS summary, sec.objectives AS objectives
+"""
+
+
+def section_notes(rows) -> List[Dict[str, Any]]:
+    """The source Section notes (summary, objectives) that speak for the slides.
+
+    A slide has many Section parents, as ranges nest; its most specific one with notes speaks
+    for it: deepest level, then narrowest span (an open end_page is widest), then smallest id."""
+    best: Dict[Any, Any] = {}
+    for row in rows:
+        summary = (row.get("summary") or "").strip()
+        objectives = [o.strip() for o in (row.get("objectives") or []) if isinstance(o, str) and o.strip()]
+        if not summary and not objectives:
+            continue
+        start = row.get("start_page") or 0
+        end = row.get("end_page")
+        span = (end - start) if end else float("inf")
+        key = (-(row.get("level") or 0), span, str(row.get("id")))
+        slide_id = row.get("slide_id")
+        if slide_id not in best or key < best[slide_id][0]:
+            best[slide_id] = (key, row, summary, objectives)
+    notes: Dict[Any, Dict[str, Any]] = {}
+    for _, row, summary, objectives in best.values():
+        notes.setdefault(row.get("id"), {"id": row.get("id"), "title": row.get("title"), "summary": summary,
+                                         "objectives": objectives, "_start": row.get("start_page") or 0})
+    ordered = sorted(notes.values(), key=lambda n: (n["_start"], str(n["id"])))
+    for n in ordered:
+        del n["_start"]
+    return ordered
+
 # DSPy configuration is handled in src.dspy_modules.config
 
 class SynthesisService:
@@ -127,6 +162,8 @@ class SynthesisService:
                 self._update_status(target_node_id, 'error', "No content found for source slides")
                 return
 
+            notes = section_notes(self.neo4j_client.execute_query(SECTION_NOTES_QUERY, {"slide_ids": slide_ids}))
+
             # 3. Call Synthesizer with Retry Logic
             print(f"Synthesizing content from {len(slides_content)} slides...")
             
@@ -143,7 +180,8 @@ class SynthesisService:
                         instruction,
                         section_title=section_title,
                         section_rationale=section_rationale,
-                        target_layout=target_layout
+                        target_layout=target_layout,
+                        section_notes=notes
                     )
                     if result:
                         break
