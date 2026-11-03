@@ -140,6 +140,17 @@ def test_store_error_raises_and_does_not_fall_back(env, monkeypatch):
     deck_template.warm()  # never raises
 
 
+def test_a_saved_pointer_with_no_version_fails_the_export(env, tmp_path):
+    minio = FakeMinio()
+    save(minio)
+    pointer = yaml.safe_load(minio.objects[("tpl", "cfg/active.yaml")])
+    del pointer["deck_template"]
+    minio.objects[("tpl", "cfg/active.yaml")] = yaml.safe_dump(pointer).encode()
+    with pytest.raises(DeckExportError) as e:
+        export_deck(golden_course(), deck_template.configured_mapping(minio), tmp_path / "out.pptx", resolver())
+    assert "deck_template is None" in str(e.value)
+
+
 def test_save_writes_pptx_before_pointer(env):
     minio = FakeMinio()
     pointer = save(minio)

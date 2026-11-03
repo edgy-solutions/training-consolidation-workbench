@@ -154,7 +154,7 @@ def _materialise_saved(raw, pointer, minio=None) -> Path:
     part = _part(pptx)
     part.write_bytes(data)
     os.replace(part, pptx)
-    body = {"deck_template": pointer.get("deck_template", DECK_TEMPLATE_VERSION), "template": pptx.name,
+    body = {"deck_template": pointer.get("deck_template"), "template": pptx.name,
             "roles": pointer["roles"]}
     _replace_text(mapping, yaml.safe_dump(body, sort_keys=False))  # lands last: it marks the dir complete
     return mapping
