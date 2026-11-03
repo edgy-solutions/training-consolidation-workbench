@@ -108,5 +108,14 @@ class MinioClient:
         try:
             return self.client.get_object(bucket_name=bucket_name, object_name=object_name)
         except S3Error as exc:
+            if exc.code != "NoSuchKey":  # a missing key is an answer for callers that probe, not an incident
+                print("error occurred.", exc)
+            raise
+
+    def remove_object(self, bucket_name: str, object_name: str):
+        """Delete one object (S3 does not error on a missing key)."""
+        try:
+            self.client.remove_object(bucket_name=bucket_name, object_name=object_name)
+        except S3Error as exc:
             print("error occurred.", exc)
             raise

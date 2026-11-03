@@ -169,3 +169,23 @@ The check reads the written `.pptx` back and compares it with the course. It run
 
 - **Adding a role or field** is a contract change: bump `deck_template` and update the stand-in and its mapping in the same commit.
 - **A new template** (the customer's included) is a data change: one `.pptx` plus one mapping file, kept wherever that template's owner keeps them.
+
+## 8. Choosing the template from the settings screen
+
+A person holding `can_configure:deck_template` (Topaz) can upload a template and map its roles in the workbench's settings screen, instead of shipping a mapping file with the deployment. The mapping format (§2) and its validation (§2.3) are unchanged, and `deck_template` stays `1`.
+
+**Which template is in force.** In this order:
+1. the template saved from the screen;
+2. the deployment's `DECK_TEMPLATE_URI` and `DECK_TEMPLATE` (§1);
+3. the repo stand-in.
+
+Nothing falls back past a failure: if the store holds a pointer but cannot be read, exports fail naming the store, and they do not use a lower choice. Saving from the screen is on only when `DECK_TEMPLATE_STORE=s3://<bucket>/<prefix>` is set. Unset, the store is never read and the order is just 2 then 3.
+
+**Store layout.**
+- `<prefix>/<sha256>.pptx`: the template, named by the hash of its bytes. The uploaded file name is never part of a key.
+- `<prefix>/active.yaml`: the one pointer. It holds `deck_template: 1`, `template: s3://…/<sha256>.pptx`, `source: {filename, saved_by, saved_at}` and `roles` (§2). The `.pptx` is written first and the pointer last, so a save either lands whole or not at all.
+- "Reset to deployment default" deletes `active.yaml` only. The `.pptx` objects stay.
+
+**What a save must meet.** All six roles must be mapped, which is stricter than §2.3's per-course rule, so a saved template can never later fail with "role not mapped". A field cannot be mapped to a date, footer or slide-number placeholder: python-pptx does not copy those onto a new slide, so they could never be filled. Layout names must be unique (§2.3). Every problem is reported together.
+
+**The trial export.** After the checks above, the workbench runs the real exporter, round-trip check included (§6), on a small built-in course with a section, a concept slide, a figure slide, a summary and a sources slide. If that fails, nothing is written to the store.

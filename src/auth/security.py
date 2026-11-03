@@ -153,20 +153,17 @@ class DeciderUnavailable(Exception):
     """Topaz gave no readable answer. That is not a no: the route answers 503, never 403."""
 
 
-def can_review(subject_id: str) -> bool:
-    """Asks the fleet's one decider whether subject_id holds can_review:<ALIGNMENT_REVIEW_SUBJECT>.
+def _capability_granted(object_id: str, subject_id: str) -> bool:
+    """Asks the fleet's one decider whether subject_id can invoke the capability object_id.
 
-    subject_id must be the fleet's entitlement key: AUTHZ_CLAIM has to name the same claim as the
-    fleet's USER_ENTITLEMENT_CLAIM, or a granted user reads as ungranted. Unconfigured is a deny."""
+    The caller has already checked that TOPAZ_DIRECTORY_URL is set. subject_id must be the fleet's entitlement key:
+    AUTHZ_CLAIM has to name the same claim as the fleet's USER_ENTITLEMENT_CLAIM, or a granted user reads as
+    ungranted."""
     url = os.getenv("TOPAZ_DIRECTORY_URL", "").strip().rstrip("/")
-    subject = os.getenv("ALIGNMENT_REVIEW_SUBJECT", "").strip()
-    if not url or not subject or not subject_id:
-        print("WARN: proposal review denied: TOPAZ_DIRECTORY_URL or ALIGNMENT_REVIEW_SUBJECT is not set")
-        return False
     try:
         r = requests.post(
             f"{url}/api/v3/directory/check",
-            json={"object_type": "capability", "object_id": f"can_review:{subject}",
+            json={"object_type": "capability", "object_id": object_id,
                   "relation": "can_invoke", "subject_type": "user", "subject_id": subject_id},
             timeout=5,
             allow_redirects=False,
@@ -187,3 +184,23 @@ def can_review(subject_id: str) -> bool:
     if not isinstance(check, bool):
         raise DeciderUnavailable("check is not a boolean")
     return check
+
+
+def can_review(subject_id: str) -> bool:
+    """Whether subject_id holds can_review:<ALIGNMENT_REVIEW_SUBJECT>. Unconfigured is a deny."""
+    url = os.getenv("TOPAZ_DIRECTORY_URL", "").strip().rstrip("/")
+    subject = os.getenv("ALIGNMENT_REVIEW_SUBJECT", "").strip()
+    if not url or not subject or not subject_id:
+        print("WARN: proposal review denied: TOPAZ_DIRECTORY_URL or ALIGNMENT_REVIEW_SUBJECT is not set")
+        return False
+    return _capability_granted(f"can_review:{subject}", subject_id)
+
+
+def can_configure_templates(subject_id: str) -> bool:
+    """Whether subject_id holds can_configure:deck_template. The setting changes every user's exports, so
+    an unset TOPAZ_DIRECTORY_URL is a deny."""
+    url = os.getenv("TOPAZ_DIRECTORY_URL", "").strip()
+    if not url or not subject_id:
+        print("WARN: deck template configuration denied: TOPAZ_DIRECTORY_URL is not set")
+        return False
+    return _capability_granted("can_configure:deck_template", subject_id)

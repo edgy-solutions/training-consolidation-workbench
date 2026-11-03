@@ -15,6 +15,8 @@ GUARDED = [
     ("POST", "/draft/node/accept", {}),
     ("DELETE", "/draft/node/reject", {}),
     ("POST", "/render/trigger", {}),
+    ("PUT", "/settings/deck-template", {}),
+    ("DELETE", "/settings/deck-template", {}),
 ]
 
 

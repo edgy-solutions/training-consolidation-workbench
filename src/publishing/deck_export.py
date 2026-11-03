@@ -14,15 +14,15 @@ from typing import Dict, List, Optional
 import yaml
 from pptx import Presentation
 from pptx.enum.shapes import PP_PLACEHOLDER
+from pptx.shapes.placeholder import PicturePlaceholder
 
-from src.publishing.deck_template import STANDIN_MAPPING
+from src.publishing.deck_template import DECK_TEMPLATE_VERSION, STANDIN_MAPPING
 from src.publishing.image_ids import ImageRefError
 from src.publishing.course import (
     Course, DeckExportError, course_concepts, decks, format_citation, format_deck_line,
     iter_leaves, iter_slides, notes_text, title_body,
 )
 
-DECK_TEMPLATE_VERSION = 1
 NOTES_PAGE = "notes-page"
 
 DEFAULT_MAPPING = STANDIN_MAPPING
@@ -74,6 +74,10 @@ def _needed_roles(course):
 
 
 def validate(mapping: Mapping, course) -> List[str]:
+    return validate_mapping(mapping, _needed_roles(course))
+
+
+def validate_mapping(mapping: Mapping, needed_roles) -> List[str]:
     problems: List[str] = []
     if mapping.version != DECK_TEMPLATE_VERSION:
         problems.append(f"deck_template is {mapping.version!r}, this exporter reads {DECK_TEMPLATE_VERSION}")
@@ -88,7 +92,7 @@ def validate(mapping: Mapping, course) -> List[str]:
         except Exception as e:
             problems.append(f"template file {mapping.template_path} could not be opened: {e}")
 
-    for role in _needed_roles(course):
+    for role in needed_roles:
         if role not in mapping.roles:
             problems.append(f"role '{role}' is not mapped")
 
@@ -254,12 +258,16 @@ def export_deck(course: Course, mapping_path, out_path, resolve_image, render_an
     for role, item in iter_slides(course):
         spec = mapping.roles[role]
         fields = dict(spec.get("placeholders") or {})
+        if "notes" in ROLES[role]["optional"]:
+            fields.setdefault("notes", NOTES_PAGE)  # contract section 2.2: omitted means the notes page
         slide = prs.slides.add_slide(layouts[spec["layout"]])
         values = _expected_fields(role, item, course)
         used = set()
         for f, idx in fields.items():
             if f == "image":
-                slide.placeholders[idx].insert_picture(io.BytesIO(images[item.id]))
+                # python-pptx gives only a picture placeholder insert_picture; an object placeholder takes it the same way.
+                ph = slide.placeholders[idx]
+                PicturePlaceholder(ph._element, ph._parent).insert_picture(io.BytesIO(images[item.id]))
                 used.add(idx)
             elif f == "notes":
                 if idx == NOTES_PAGE:

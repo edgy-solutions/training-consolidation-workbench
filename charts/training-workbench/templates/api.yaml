@@ -73,6 +73,10 @@ spec:
             - name: DECK_TEMPLATE_URI
               value: {{ .Values.api.deckTemplate.uri | quote }}
             {{- end }}
+            {{- if and .Values.api.deckTemplate.store (not (hasKey $env "DECK_TEMPLATE_STORE")) }}
+            - name: DECK_TEMPLATE_STORE
+              value: {{ .Values.api.deckTemplate.store | quote }}
+            {{- end }}
             {{- if and .Values.api.deckTemplate.mappingConfigMap (not (hasKey $env "DECK_TEMPLATE")) }}
             - name: DECK_TEMPLATE
               value: /etc/wb/template/deck-template.yaml
