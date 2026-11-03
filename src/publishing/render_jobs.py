@@ -99,7 +99,7 @@ def job_file(run_id):
     return path if path.is_file() else None
 
 
-def run_job(run_id, template_name, *, neo4j_client, minio_client, reader):
+def run_job(run_id, template_name, *, neo4j_client, minio_client, reader, override=None):
     """Runs as a background task: records the outcome, never raises."""
     job = read_job(run_id)
     if not job:
@@ -108,7 +108,7 @@ def run_job(run_id, template_name, *, neo4j_client, minio_client, reader):
     try:
         _write(run_id, {**job, "status": "STARTED"})
         render_project(job["project_id"], job["format"], template_name, out,
-                       neo4j_client=neo4j_client, minio_client=minio_client, reader=reader)
+                       neo4j_client=neo4j_client, minio_client=minio_client, reader=reader, override=override)
         _write(run_id, {**job, "status": "SUCCESS", "finished": time.time()})
     except DeckExportError as e:
         _fail(run_id, job, out, e.problems)

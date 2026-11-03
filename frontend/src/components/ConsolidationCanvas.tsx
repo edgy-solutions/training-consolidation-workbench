@@ -29,6 +29,7 @@ const SECTION_CONFIG: Record<string, { label: string; icon: React.ElementType; c
 
 export const ConsolidationCanvas: React.FC<ConsolidationCanvasProps> = ({ projectId, discipline, refreshTrigger }) => {
     const structure = useAppStore(state => state.structure);
+    const sectionConcepts = useAppStore(state => state.sectionConcepts);
     const projectStatus = useAppStore(state => state.projectStatus);
     const fetchStructure = useAppStore(state => state.fetchStructure);
     const addNode = useAppStore(state => state.addNode);
@@ -164,7 +165,7 @@ export const ConsolidationCanvas: React.FC<ConsolidationCanvasProps> = ({ projec
                                                     <span>Subsection</span>
                                                 </div>
                                             )}
-                                            <SynthBlock key={node.id} node={node} onRefresh={fetchStructure} />
+                                            <SynthBlock key={node.id} node={node} concepts={sectionConcepts[node.id]} onRefresh={fetchStructure} />
                                         </div>
                                     );
                                 })}

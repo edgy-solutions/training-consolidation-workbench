@@ -49,3 +49,63 @@ def test_golden_pictures_notes_and_round_trip(tmp_path):
 def test_no_part_file_left_behind(tmp_path):
     _export(tmp_path)
     assert sorted(p.name for p in tmp_path.iterdir()) == ["out.pptx"]
+
+
+# ---- repeated concepts, the digest and the deck's recorded properties
+
+import pytest  # noqa: E402
+
+from src.publishing.course import course_concepts, iter_leaves  # noqa: E402
+from src.publishing.deck_export import deck_digest  # noqa: E402
+
+
+def _out(tmp_path, name, course, **kw):
+    return export_deck(course, DEFAULT_MAPPING, tmp_path / name, resolver(), **kw)
+
+
+def _repeating():
+    course = golden_course()
+    a, b = list(iter_leaves(course))[:2]
+    b.concepts = list(b.concepts) + [a.concepts[0]]
+    return course
+
+
+def test_a_repeated_concept_exports_and_round_trips(tmp_path):
+    course = _repeating()
+    out = _out(tmp_path, "r.pptx", course)
+    assert check_round_trip(course, load_mapping(DEFAULT_MAPPING), out) == []
+    summary = list(Presentation(str(out)).slides)[-2]
+    body = [p.text for ph in summary.placeholders if ph.has_text_frame for p in ph.text_frame.paragraphs if p.text.strip()]
+    assert [t for t in body if t in course_concepts(course)] == course_concepts(course)
+
+
+def test_a_slide_missing_a_concept_still_fails(tmp_path):
+    course = _repeating()
+    out = _out(tmp_path, "m.pptx", course)
+    list(iter_leaves(course))[1].concepts.append("Never written")
+    assert any("'Never written'" in p for p in check_round_trip(course, load_mapping(DEFAULT_MAPPING), out))
+
+
+def test_digest_is_stable_changes_with_a_body_and_sits_on_the_deck(tmp_path):
+    c1, c2 = golden_course(), golden_course()
+    o1, o2 = _out(tmp_path, "1.pptx", c1), _out(tmp_path, "2.pptx", c2)
+    assert c1.slides_sha256 == c2.slides_sha256 and len(c1.slides_sha256) == 64
+    assert Presentation(str(o1)).core_properties.comments == f"deck_export/1 slides_sha256={c1.slides_sha256}"
+    c3 = golden_course()
+    list(iter_leaves(c3))[0].body += " changed"
+    _out(tmp_path, "3.pptx", c3)
+    assert c3.slides_sha256 != c1.slides_sha256
+
+
+def test_digest_covers_the_picture_bytes():
+    course = golden_course()
+    fig = next(l for l in iter_leaves(course) if l.figure)
+    assert deck_digest(course, {fig.id: b"a"}) != deck_digest(course, {fig.id: b"b"})
+
+
+def test_render_anyway_is_marked_only_when_set(tmp_path):
+    c = golden_course()
+    plain = Presentation(str(_out(tmp_path, "p.pptx", c))).core_properties.comments
+    marked = Presentation(str(_out(tmp_path, "q.pptx", golden_course(), render_anyway=True))).core_properties.comments
+    assert "render_anyway" not in plain
+    assert marked == plain + " render_anyway=yes" and len(marked) < 255

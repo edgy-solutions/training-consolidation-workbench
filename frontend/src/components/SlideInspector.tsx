@@ -1,8 +1,9 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { FileText, Copy, Check, Image as ImageIcon, Maximize2, X, ChevronLeft, ChevronRight, Sparkles, Download, Layout } from 'lucide-react';
 import { useAppStore } from '../store';
-import { api, assetSrc, slideLabel, API_URL } from '../api';
-import type { SourceSlide } from '../api';
+import { api, assetSrc, httpError, slideLabel, API_URL } from '../api';
+import type { RenderGateDetail, SourceSlide } from '../api';
+import { goToSection } from '../sectionNav';
 import { conceptKey, mergeByCase } from '../conceptCase';
 import clsx from 'clsx';
 import { marked } from 'marked';
@@ -23,6 +24,8 @@ export const SlideInspector: React.FC = () => {
     const [slide, setSlide] = useState<SourceSlide | null>(null);
     const [loading, setLoading] = useState(false);
     const [rendering, setRendering] = useState(false);
+    const [overlap, setOverlap] = useState<Extract<RenderGateDetail, { kind: 'concept_overlap' }> | null>(null);
+    const [renderReason, setRenderReason] = useState("");
     const [copied, setCopied] = useState(false);
     const [loadError, setLoadError] = useState(false);
     const [reloadTick, setReloadTick] = useState(0); // Retry bumps this to refetch
@@ -112,12 +115,14 @@ export const SlideInspector: React.FC = () => {
         }
     }, [activeNodeId, activeSlideId]);
 
-    const handleRender = async () => {
+    const handleRender = () => startRender();
+
+    const startRender = async (reason?: string) => {
         if (!projectId) return;
         setRendering(true);
 
         try {
-            const result = await api.triggerRender(projectId, renderFormat, selectedTemplate);
+            const result = await api.triggerRender(projectId, renderFormat, selectedTemplate, reason);
             const { run_id, filename } = result;
 
             // Show loading toast
@@ -152,7 +157,18 @@ export const SlideInspector: React.FC = () => {
 
         } catch (e) {
             console.error(e);
-            toast.error('Failed to start render job');
+            const { status, detail } = httpError(e);
+            const gate = status === 409 && detail && typeof detail === 'object' ? (detail as RenderGateDetail) : null;
+            if (gate?.kind === 'unfinished') {
+                toast.error(gate.message, { description: gate.sections.map(s => s.title).join(', ') });
+            } else if (gate?.kind === 'problems') {
+                toast.error(gate.message, { description: gate.problems.join('; ') });
+            } else if (gate?.kind === 'concept_overlap') {
+                setRenderReason("");
+                setOverlap(gate);
+            } else {
+                toast.error('Failed to start render job');
+            }
         } finally {
             setRendering(false);
         }
@@ -321,6 +337,67 @@ export const SlideInspector: React.FC = () => {
                         </button>
                     </div>
                 </div>
+
+                {overlap && (
+                    <div
+                        className="fixed inset-0 z-[200] bg-black/50 flex items-center justify-center"
+                        onClick={() => setOverlap(null)}
+                    >
+                        <div
+                            role="dialog"
+                            aria-label="Concepts taught in more than one section"
+                            className="bg-white rounded-xl shadow-xl w-[28rem] max-w-[90vw] max-h-[85vh] overflow-y-auto p-5"
+                            onClick={e => e.stopPropagation()}
+                        >
+                            <h3 className="font-bold text-slate-800 text-sm mb-2">{overlap.message}</h3>
+                            <ul className="space-y-1 mb-4 text-xs text-slate-600">
+                                {overlap.overlaps.map(o => (
+                                    <li key={o.concept}>
+                                        <span className="font-medium text-slate-800">{o.concept}</span>
+                                        {' in '}
+                                        {o.sections.map((s, i) => (
+                                            <React.Fragment key={s.id}>
+                                                {i > 0 && ', '}
+                                                <button
+                                                    onClick={() => { setOverlap(null); goToSection(s.id); }}
+                                                    className="text-teal-700 hover:underline"
+                                                >
+                                                    {s.title}
+                                                </button>
+                                            </React.Fragment>
+                                        ))}
+                                    </li>
+                                ))}
+                            </ul>
+                            <label className="block text-xs font-medium text-slate-700 mb-1" htmlFor="render-anyway-reason">
+                                Reason for rendering anyway
+                            </label>
+                            <textarea
+                                id="render-anyway-reason"
+                                value={renderReason}
+                                maxLength={500}
+                                onChange={e => setRenderReason(e.target.value)}
+                                rows={3}
+                                className="w-full text-xs border border-slate-300 rounded p-2 focus:outline-none focus:ring-1 focus:ring-teal-500"
+                            />
+                            <div className="flex justify-end gap-2 mt-4">
+                                <button
+                                    onClick={() => setOverlap(null)}
+                                    className="text-xs px-3 py-2 rounded-md border border-slate-300 text-slate-600 hover:bg-slate-50"
+                                >
+                                    Cancel
+                                </button>
+                                <button
+                                    onClick={() => { const r = renderReason.trim(); setOverlap(null); startRender(r); }}
+                                    disabled={!renderReason.trim()}
+                                    className="bg-teal-600 text-white text-xs font-medium px-4 py-2 rounded-md hover:bg-teal-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                                >
+                                    Render anyway
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                )}
             </div>
         );
     }

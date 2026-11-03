@@ -37,6 +37,7 @@ class Leaf:
     notes: str
     figure: Optional[Figure]
     sources: List[SourceRef]
+    role: str = "technical"
 
 
 @dataclass
@@ -50,7 +51,10 @@ class Section:
 class Course:
     title: str
     children: list = field(default_factory=list)
+    slides_sha256: Optional[str] = None
 
+
+REVISITING_ROLES = {"introduction", "mandatory_assessment"}
 
 MARKDOWN_IMAGE = re.compile(r"!\[[^\]]*\]\(\s*([^)\s]+)[^)]*\)")
 ASSET_REF = re.compile(r"\{\{\s*([^{}\s]+)\s*\}\}")
@@ -83,7 +87,19 @@ def iter_slides(course):
 
 
 def course_concepts(course) -> List[str]:
-    return [c for leaf in iter_leaves(course) for c in leaf.concepts]
+    """Each concept once, in order of first appearance."""
+    return list(dict.fromkeys(c for leaf in iter_leaves(course) for c in leaf.concepts))
+
+
+def concept_overlaps(course) -> List[Dict]:
+    """Concepts named by two or more concept-role leaves (introduction and assessment leaves are not counted)."""
+    where: Dict[str, List[dict]] = {}
+    for leaf in iter_leaves(course):
+        if leaf.role in REVISITING_ROLES:
+            continue
+        for c in leaf.concepts:
+            where.setdefault(c, []).append({"id": leaf.id, "title": leaf.title})
+    return [{"concept": c, "sections": secs} for c, secs in where.items() if len(secs) > 1]
 
 
 def _decks_of(sources):
@@ -146,8 +162,8 @@ def _order_key(n):
     return (o is None, o if o is not None else 0, n["id"])
 
 
-def build_course(project, nodes, lookup) -> Course:
-    problems: List[str] = []
+def outline(project, nodes):
+    """children_of(parent_id) for the outline: ordered, unassigned nodes dropped. None is the top level."""
     by_parent: Dict[Optional[str], List[dict]] = {}
     ids = {n["id"] for n in nodes}
     for n in nodes:
@@ -155,6 +171,49 @@ def build_course(project, nodes, lookup) -> Course:
         if p == project["id"] or p not in ids:
             p = None
         by_parent.setdefault(p, []).append(n)
+
+    def children_of(pid):
+        return [n for n in sorted(by_parent.get(pid, []), key=_order_key) if not n.get("is_unassigned")]
+
+    return children_of
+
+
+def iter_leaf_nodes(project, nodes):
+    """(node, role) for each leaf in outline order. The role is the top-level ancestor's section_type."""
+    children_of = outline(project, nodes)
+
+    def walk(pid, role):
+        for n in children_of(pid):
+            r = role or n.get("section_type") or "technical"
+            if children_of(n["id"]):
+                yield from walk(n["id"], r)
+            else:
+                yield n, r
+
+    yield from walk(None, None)
+
+
+def unfinished_sections(project, nodes):
+    """([{id, title}] of leaves with no source slides or an empty body, number of leaves)."""
+    leaves = list(iter_leaf_nodes(project, nodes))
+    out = [{"id": n["id"], "title": n.get("title") or ""} for n, _ in leaves
+           if not n.get("source_refs") or not split_body_and_figure(n.get("content_markdown"))[0]]
+    return out, len(leaves)
+
+
+def effective_concepts(node, slides):
+    """(concepts, inherited): key_concepts, else the slides' teaches by descending salience."""
+    concepts = list(dict.fromkeys(c for c in (node.get("key_concepts") or []) if c))
+    if concepts:
+        return concepts, False
+    teaches = [t for s in slides for t in (s.get("teaches") or [])]
+    ranked = sorted(teaches, key=lambda t: -(t["salience"] if t.get("salience") is not None else float("-inf")))
+    return list(dict.fromkeys(t["name"] for t in ranked if t.get("name"))), True
+
+
+def build_course(project, nodes, lookup) -> Course:
+    problems: List[str] = []
+    children_of = outline(project, nodes)
 
     deck_ids = list(project.get("deck_ids") or [])
     slide_index: Dict[str, dict] = {}
@@ -168,34 +227,26 @@ def build_course(project, nodes, lookup) -> Course:
         for sl in found:
             slide_index.setdefault(sl["id"], sl)
 
-    seen_concepts: Dict[str, str] = {}
-
-    def children_of(pid):
-        return [n for n in sorted(by_parent.get(pid, []), key=_order_key) if not n.get("is_unassigned")]
-
-    def convert(n):
+    def convert(n, role):
         kids = children_of(n["id"])
         if kids:
-            return Section(n["id"], n.get("title") or "", [convert(k) for k in kids])
-        return make_leaf(n)
+            return Section(n["id"], n.get("title") or "", [convert(k, role) for k in kids])
+        return make_leaf(n, role)
 
-    def make_leaf(n):
+    def make_leaf(n, role):
         title = n.get("title") or ""
         where = f"'{title}'"
-        sources, teaches = [], []
+        sources, slides = [], []
         for sid in n.get("source_refs") or []:
             s = slide_index.get(sid)
             if s is None:
                 problems.append(f"leaf {where}: source slide '{sid}' is not in any deck this course was built from")
                 continue
             sources.append(SourceRef(s["course_id"], s["filename"], s["number"], sid))
-            teaches.extend(s.get("teaches") or [])
+            slides.append(s)
         if not n.get("source_refs"):
             problems.append(f"leaf {where}: has no source slides")
-        concepts = list(dict.fromkeys(c for c in (n.get("key_concepts") or []) if c))
-        if not concepts:
-            ranked = sorted(teaches, key=lambda t: -(t["salience"] if t.get("salience") is not None else float("-inf")))
-            concepts = list(dict.fromkeys(t["name"] for t in ranked if t.get("name")))
+        concepts, _ = effective_concepts(n, slides)
         if not concepts:
             problems.append(f"leaf {where}: has no concepts")
         body, refs = split_body_and_figure(n.get("content_markdown"))
@@ -203,14 +254,10 @@ def build_course(project, nodes, lookup) -> Course:
             problems.append(f"leaf {where}: the body is empty")
         if len(refs) > 1:
             problems.append(f"leaf {where}: has {len(refs)} image references and a slide holds one")
-        for c in concepts:
-            if c in seen_concepts:
-                problems.append(f"concept '{c}' is on two leaves: '{seen_concepts[c]}' and {where}")
-            else:
-                seen_concepts[c] = title
-        return Leaf(n["id"], title, concepts, body, n.get("notes") or "", Figure(refs[0]) if refs else None, sources)
+        return Leaf(n["id"], title, concepts, body, n.get("notes") or "", Figure(refs[0]) if refs else None, sources, role)
 
-    course = Course(project.get("title") or "", [convert(n) for n in children_of(None)])
+    course = Course(project.get("title") or "",
+                    [convert(n, n.get("section_type") or "technical") for n in children_of(None)])
     if problems:
         raise DeckExportError(problems)
     return course
@@ -252,8 +299,9 @@ class GraphLookup:
     DECK = """
     MATCH (c:Course {id: $deck})-[:HAS_SLIDE]->(s:Slide)
     OPTIONAL MATCH (s)-[t:TEACHES]->(k:Concept)
+    OPTIONAL MATCH (k)-[:ALIGNS_TO]->(cc:CanonicalConcept)
     RETURN c.id AS course_id, c.filename AS filename, s.id AS id, s.number AS number,
-           collect(CASE WHEN k IS NULL THEN NULL ELSE {name: k.name, salience: t.salience} END) AS teaches
+           collect(CASE WHEN k IS NULL THEN NULL ELSE {name: k.name, salience: t.salience, canonical: cc.name} END) AS teaches
     """
 
     def __init__(self, client):

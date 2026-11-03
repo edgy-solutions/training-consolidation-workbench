@@ -107,7 +107,14 @@ The order is the tree, depth-first. Siblings are sorted by `order` ascending; a 
 - **`sources`** are the node's recorded source slides (`source_slide_ids`), resolved through the decks the course records (`source_deck_ids` on the Project), not through whatever the graph holds. Each one gives a deck `filename` and a slide `number` (source contract §4.1). Three failures, all listed with the others: the course records no source decks; a recorded deck is not found; a source slide is not in any recorded deck (`leaf '<title>': source slide '<id>' is not in any deck this course was built from`). A leaf with no sources fails.
 - **`notes`** hold the node's speaker notes, if there are any, and always end with the line `Concepts: <name>; <name>`.
 
-**Each concept appears exactly once.** A concept named by two leaves fails, and the message names both leaves. In a consolidated course, a concept taught twice means the consolidation is not finished.
+**A concept may be taught on more than one leaf.** A repeat is not a failure.
+- A leaf's *role* is the `section_type` of its top-level ancestor (`introduction`, `mandatory_safety`, `technical`, `mandatory_assessment`; missing means `technical`), inherited down the tree.
+- A repeat that involves an `introduction` or `mandatory_assessment` leaf is by design and passes silently. Every other role, `mandatory_safety` and unknown values included, is a concept role.
+- A concept named by two or more concept-role leaves is an **overlap**. It is judged per concept: if it is on an introduction leaf and on concept-role leaves A and B, the overlap is A and B. Only leaves count; a concept on a parent section does not.
+- Rendering a course with an overlap needs an explicit "render anyway" with a reason. The render route answers 409 until it has one, and `render_project` refuses on its own, so a Dagster run or a race cannot skip it.
+- The reason is recorded, not delivered: `render_overrides` on the Project holds one JSON entry per such render (`schema`, `slides_sha256`, `reason`, `by`, `at`, `filename`, `overlaps`), joined to the deck by `slides_sha256` (§6). The deck itself carries no free text; its properties say only `render_anyway=yes`.
+
+**Gate order.** A pptx render stops at the first of these: (1) unfinished sections (a leaf with no source slides or an empty body), reported as "N of M sections unfinished" before any concept check; (2) build problems (§5); (3) overlaps. A reason overrides only the third.
 
 ### 3.4 Figures
 
@@ -149,13 +156,14 @@ The exporter raises one error listing every problem it found, in the order above
 The check reads the written `.pptx` back and compares it with the course. It runs inside every export, and the golden test runs it too. It asserts:
 
 1. **Slide sequence.** The course gives an expected role sequence: title, then sections and leaves in tree order, then summary, then sources. The mapping turns that into expected layout names. The deck's slide count and each slide's layout name must equal them. Two roles may share a layout, so a role is never recovered from a layout name alone.
-2. **Every concept once.** Every concept in the course appears on exactly one concept slide, in its `Concepts:` notes line.
+2. **Every concept on its leaves.** Each leaf's `Concepts:` notes line equals that leaf's concepts, and every concept in the course appears on at least one concept slide.
 3. **Citations.** Every concept slide's citation text equals §4's rendering of that leaf's sources.
 4. **Images.** Every `concept-with-figure` slide holds a picture, and no other slide does.
 5. **Nothing extra.**
    - No concept, citation, deck or slide appears in the export that is not in the course.
    - The summary lists exactly the course's concepts.
    - The sources slide lists exactly the cited decks and slides.
+6. **The deck records its content.** The deck's `comments` property reads `deck_export/1 slides_sha256=<hex>`, with ` render_anyway=yes` appended when the render went ahead over an overlap. The digest is the sha256 of the canonical JSON of each slide's number, role, expected fields and picture bytes, so two exports of one course give one digest. The exporter reads the property back after saving.
 
 ## 7. Changing this contract
 

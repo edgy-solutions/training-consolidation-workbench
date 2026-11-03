@@ -6,7 +6,7 @@ load_dotenv()
 from fastapi import FastAPI, HTTPException, Query, Body, Depends
 from fastapi.responses import FileResponse
 from src.publishing import deck_template
-from src.publishing.render import FORMATS, output_filename
+from src.publishing.render import FORMATS, output_filename, render_readiness
 from src.publishing.image_ids import list_generated_objects
 from src.publishing.render_jobs import create_job, job_file, read_job, run_job
 from src.services import outline_jobs
@@ -32,7 +32,7 @@ from src.workbench.models import (
 )
 
 from src.workbench.source_reader import get_source_reader
-from src.workbench import alignment, asset_links
+from src.workbench import alignment, asset_links, section_concepts
 from src.workbench.source_routes import (
     get_alignment_store, _course_name, _port_source_tree, _port_source_filters, _port_course_slides,
     _port_course_sections, _port_slide_details, _port_embedded_images,
@@ -1265,6 +1265,41 @@ def update_node_title(node_id: str, request: dict = Body(...), current_user: Use
     
     return {"status": "success", "node_id": node_id, "title": title}
 
+@app.get("/draft/concepts/{project_id}")
+def get_section_concepts(project_id: str, current_user: User = Depends(get_current_user)):
+    """Each section's concepts, their source slides and where else they are taught. Read only."""
+    _require_readable(current_user.id, project_id)
+    try:
+        view = section_concepts.build_view(project_id, neo4j_client=neo4j_client, reader=get_source_reader())
+    except LookupError:
+        raise HTTPException(status_code=404, detail="Draft not found")
+    return {"sections": view}
+
+
+class RemoveConceptRequest(BaseModel):
+    node_id: str
+    concept: str
+
+
+@app.post("/draft/node/concept/remove", dependencies=[Depends(require_store_writes)])
+def remove_section_concept(request: RemoveConceptRequest, current_user: User = Depends(get_current_user)):
+    """Drops a concept from this section only. Never touches a Concept, another section, or an edge."""
+    _require_owned(current_user.id, request.node_id)
+    rows = neo4j_client.execute_query(section_concepts.PROJECT_OF_NODE, {"id": request.node_id})
+    if not rows:
+        raise HTTPException(status_code=404, detail="Section not found")
+    view = section_concepts.build_view(rows[0]["id"], neo4j_client=neo4j_client, reader=get_source_reader())
+    node = view.get(request.node_id)
+    listed = [c["concept"] for c in node["concepts"]] if node else []
+    if request.concept not in listed:
+        raise HTTPException(status_code=404, detail="Concept not found on this section")
+    if len(listed) == 1 and node["exported"]:
+        raise HTTPException(status_code=409, detail="A section keeps at least one concept")
+    remaining = [c for c in listed if c != request.concept]
+    neo4j_client.execute_query(section_concepts.REMOVE_CONCEPT, {"id": request.node_id, "remaining": remaining})
+    return {"node_id": request.node_id, "concepts": remaining}
+
+
 @app.get("/draft/structure/{project_id}", response_model=List[TargetDraftNode])
 def get_draft_structure(project_id: str, current_user: User = Depends(get_current_user)):
     """
@@ -1673,6 +1708,16 @@ def trigger_render(request: RenderRequest, background_tasks: BackgroundTasks, cu
     if file_extension not in FORMATS:
         raise HTTPException(status_code=400, detail="format must be one of pptx, typ")
 
+    override = None
+    if file_extension == "pptx":
+        readiness = render_readiness(request.project_id, neo4j_client=neo4j_client, reader=get_source_reader())
+        reason = (request.render_anyway_reason or "").strip()
+        if readiness and not (readiness["kind"] == "concept_overlap" and reason):
+            raise HTTPException(status_code=409, detail=readiness)
+        if readiness:
+            override = {"reason": reason, "by": current_user.id,
+                        "at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")}
+
     filename = output_filename(project_title, request.project_id, file_extension)
 
     if render_runner() == "local":
@@ -1680,6 +1725,7 @@ def trigger_render(request: RenderRequest, background_tasks: BackgroundTasks, cu
         background_tasks.add_task(
             run_job, job["run_id"], request.template_name or "standin",
             neo4j_client=neo4j_client, minio_client=minio_client, reader=get_source_reader(),
+            override=override,
         )
         return {"status": "triggered", "filename": filename, "job": "render_local", "run_id": job["run_id"]}
 
@@ -1738,18 +1784,15 @@ def trigger_render(request: RenderRequest, background_tasks: BackgroundTasks, cu
     # 3. Trigger Dagster Job
     # We use tags to specify the partition for the asset job
     # And pass RenderConfig run configuration
+    render_config = {
+        "project_id": request.project_id,
+        "template_name": request.template_name or "standin",
+    }
+    if override:
+        render_config["render_anyway_json"] = json.dumps(override, sort_keys=True, separators=(",", ":"))
     run_id = dagster_client.submit_job_execution(
         "render_asset_job", 
-        run_config={
-            "ops": {
-                "rendered_course_file": {
-                    "config": {
-                        "project_id": request.project_id,
-                        "template_name": request.template_name or "standin"
-                    }
-                }
-            }
-        },
+        run_config={"ops": {"rendered_course_file": {"config": render_config}}},
         tags={"dagster/partition/published_files": filename}
     )
     

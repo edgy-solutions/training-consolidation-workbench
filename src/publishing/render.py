@@ -1,4 +1,5 @@
 """Render a project to a file. No Dagster: the api process and the Dagster asset both call this."""
+import json
 import os
 import re
 import tempfile
@@ -9,7 +10,10 @@ from src.publishing.course import (
     GraphLookup,
     MinioImageResolver,
     ReaderLookup,
+    DeckExportError,
     build_course,
+    concept_overlaps,
+    unfinished_sections,
 )
 from src.publishing import deck_template
 from src.publishing.deck_export import export_deck
@@ -23,7 +27,10 @@ MATCH (parent)-[:HAS_CHILD]->(n)
 RETURN n.id AS id, parent.id AS parent_id, n.title AS title, n.order AS order,
        n.content_markdown AS content_markdown, n.key_concepts AS key_concepts,
        coalesce(n.is_unassigned, false) AS is_unassigned,
-       coalesce(n.source_slide_ids, []) AS source_refs
+       coalesce(n.source_slide_ids, []) AS source_refs,
+       coalesce(n.section_type,'technical') AS section_type, n.status AS status,
+       [(n)-[:SUGGESTED_SOURCE]->(s:Slide) | s.id] AS suggested_ids,
+       [(n)-[:SUGGESTED_SOURCE|DERIVED_FROM]->(:Slide)<-[:HAS_SLIDE]-(c:Course) | c.id] AS slide_decks
 """
 
 PROJECT_QUERY = """
@@ -61,15 +68,59 @@ def output_filename(title, project_id, fmt) -> str:
     return re.sub(r"[^a-zA-Z0-9_\-]", "_", title) + "_" + project_id[:8] + "." + fmt
 
 
-def render_project(project_id, fmt, template_name, out_path, *, neo4j_client, minio_client, reader) -> Path:
-    """Write the project as `fmt` to out_path. `reader` set means fixture mode, None means the direct stores."""
-    if fmt not in FORMATS:
-        raise ValueError(f"format must be one of {', '.join(sorted(FORMATS))}")
+RENDER_OVERRIDE_QUERY = """
+MATCH (p:Project {id:$id}) SET p.render_overrides = coalesce(p.render_overrides, []) + $entry
+"""
+
+
+def _lookup_and_resolver(neo4j_client, minio_client, reader, deck_ids):
+    if reader is not None:
+        return ReaderLookup(reader), FixtureImageResolver(reader, deck_ids)
+    return (GraphLookup(neo4j_client),
+            MinioImageResolver(minio_client, os.getenv("BUCKET_NAME", "processing-artifacts"), deck_ids))
+
+
+def _project(neo4j_client, project_id):
     rows = neo4j_client.execute_query(PROJECT_QUERY, {"id": project_id})
     if not rows:
         raise LookupError(f"Project {project_id} not found")
-    title = rows[0]["title"]
-    deck_ids = list(rows[0].get("deck_ids") or [])
+    return {"id": project_id, "title": rows[0]["title"], "deck_ids": list(rows[0].get("deck_ids") or [])}
+
+
+def render_readiness(project_id, *, neo4j_client, reader):
+    """What stops a pptx render, or None. Unfinished sections first, then build problems, then overlaps."""
+    project = _project(neo4j_client, project_id)
+    nodes = fetch_course_nodes(neo4j_client, project_id)
+    unfinished, total = unfinished_sections(project, nodes)
+    if unfinished:
+        return {"kind": "unfinished", "message": f"{len(unfinished)} of {total} sections unfinished",
+                "unfinished": len(unfinished), "total": total, "sections": unfinished}
+    lookup, _ = _lookup_and_resolver(neo4j_client, None, reader, project["deck_ids"])
+    try:
+        course = build_course(project, nodes, lookup)
+    except DeckExportError as e:
+        return {"kind": "problems", "message": "The deck cannot be built", "problems": e.problems}
+    overlaps = concept_overlaps(course)
+    if overlaps:
+        return {"kind": "concept_overlap",
+                "message": f"{len(overlaps)} concept{' is' if len(overlaps) == 1 else 's are'} taught in more than one section",
+                "overlaps": overlaps}
+    return None
+
+
+def _overlap_lines(overlaps):
+    return [f"concept '{o['concept']}' is on {len(o['sections'])} sections: "
+            + ", ".join(f"'{s['title']}'" for s in o["sections"]) + "; rendering needs a reason"
+            for o in overlaps]
+
+
+def render_project(project_id, fmt, template_name, out_path, *, neo4j_client, minio_client, reader, override=None) -> Path:
+    """Write the project as `fmt` to out_path. `reader` set means fixture mode, None means the direct stores.
+    `override` is {reason, by, at} for a pptx whose course repeats a concept across concept-role sections."""
+    if fmt not in FORMATS:
+        raise ValueError(f"format must be one of {', '.join(sorted(FORMATS))}")
+    project = _project(neo4j_client, project_id)
+    title, deck_ids = project["title"], project["deck_ids"]
     out_path = Path(out_path)
 
     if fmt == "typ":
@@ -79,11 +130,18 @@ def render_project(project_id, fmt, template_name, out_path, *, neo4j_client, mi
     with tempfile.TemporaryDirectory() as tmpdir:
         # One configured template applies; template_name is kept for the call signature.
         mapping_path = deck_template.configured_mapping()
-        if reader is not None:
-            lookup, resolver = ReaderLookup(reader), FixtureImageResolver(reader, deck_ids)
-        else:
-            lookup = GraphLookup(neo4j_client)
-            resolver = MinioImageResolver(minio_client, os.getenv("BUCKET_NAME", "processing-artifacts"), deck_ids)
-        course = build_course({"id": project_id, "title": title, "deck_ids": deck_ids}, fetch_course_nodes(neo4j_client, project_id), lookup)
-        export_deck(course, mapping_path, out_path, resolver)
+        lookup, resolver = _lookup_and_resolver(neo4j_client, minio_client, reader, deck_ids)
+        course = build_course(project, fetch_course_nodes(neo4j_client, project_id), lookup)
+        overlaps = concept_overlaps(course)
+        if overlaps and not override:
+            raise DeckExportError(_overlap_lines(overlaps))
+        anyway = bool(overlaps)
+        export_deck(course, mapping_path, out_path, resolver, render_anyway=anyway)
+        if anyway:
+            entry = json.dumps({
+                "schema": "deck_export/1", "slides_sha256": course.slides_sha256,
+                "reason": override.get("reason"), "by": override.get("by"), "at": override.get("at"),
+                "filename": out_path.name, "overlaps": overlaps,
+            }, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+            neo4j_client.execute_query(RENDER_OVERRIDE_QUERY, {"id": project_id, "entry": entry})
     return out_path

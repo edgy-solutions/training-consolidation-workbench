@@ -11,6 +11,7 @@ published_files_partition = DynamicPartitionsDefinition(name="published_files")
 class RenderConfig(Config):
     project_id: str
     template_name: str = "standin"
+    render_anyway_json: str = ""
 
 from src.publishing.render import FORMATS, render_project
 
@@ -35,7 +36,8 @@ def rendered_course_file(context: AssetExecutionContext, config: RenderConfig, m
     with tempfile.TemporaryDirectory() as temp_dir:
         local_path = os.path.join(temp_dir, filename)
         render_project(project_id, ext, config.template_name, local_path,
-                       neo4j_client=neo4j_client, minio_client=minio_client, reader=None)
+                       neo4j_client=neo4j_client, minio_client=minio_client, reader=None,
+                       override=json.loads(config.render_anyway_json) if config.render_anyway_json else None)
 
         # 4. Upload to MinIO
         bucket_name = "published"

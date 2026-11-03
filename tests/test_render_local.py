@@ -131,18 +131,32 @@ def test_trigger_events_and_file_end_to_end(harness):
     assert len(Presentation(BytesIO(f.content)).slides) == 8
 
 
-def test_failure_reports_the_leaf_and_leaves_no_file(harness, tmp_path):
-    tmp_path = tmp_path / "exports"
+def test_unfinished_leaf_is_refused_by_the_gate_and_starts_no_job(harness):
+    # the render gate now answers what the job used to report: a blank leaf is "unfinished"
     client, fake, _ = harness
     leaf = next(n for n in fake.nodes if n["content_markdown"] and n["key_concepts"])
     fake.nodes = [{**n, "content_markdown": ""} if n is leaf else n for n in fake.nodes]
+    r = trigger(client)
+    assert r.status_code == 409
+    detail = r.json()["detail"]
+    assert detail["kind"] == "unfinished"
+    assert {"id": leaf["id"], "title": leaf["title"]} in detail["sections"]
+
+
+def test_failure_after_the_gate_reports_problems_and_leaves_no_file(harness, tmp_path):
+    # passes the gate (sources and body present); the export then finds no such image
+    tmp_path = tmp_path / "exports"
+    client, fake, _ = harness
+    leaf = next(n for n in fake.nodes if n["content_markdown"] and n["key_concepts"])
+    fake.nodes = [{**n, "content_markdown": n["content_markdown"] + "\n\n![fig](no-such-image.png)"} if n is leaf else n
+                  for n in fake.nodes]
     run_id = trigger(client).json()["run_id"]
 
     evs = events(client.get(f"/render/events/{run_id}").text)
     errors = [d for e, d in evs if e == "error"]
     assert len(errors) == 1
     assert errors[0]["status"] == "FAILURE"
-    assert any(leaf["title"] in p for p in errors[0]["problems"])
+    assert any("no-such-image.png" in p or leaf["title"] in p for p in errors[0]["problems"])
     assert client.get(f"/render/file/{run_id}").status_code == 404
     assert not list((tmp_path / run_id).glob("*.pptx"))
 

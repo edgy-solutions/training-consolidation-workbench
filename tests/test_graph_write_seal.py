@@ -4,7 +4,7 @@ import pytest
 from tests.cypher_seal import extract_write_queries, violations
 
 QUERIES = extract_write_queries()
-KNOWN_WRITE_QUERY_COUNT = 21  # counted when the harmonizer was removed and the proposal review added (was 21 with the harmonizer: it held 1 write query)
+KNOWN_WRITE_QUERY_COUNT = 23  # 21 when the harmonizer was removed and the proposal review added, plus the render-override record and the per-section concept removal
 
 
 def test_extractor_finds_the_write_queries():
