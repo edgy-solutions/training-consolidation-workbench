@@ -7,7 +7,7 @@ from fastapi import FastAPI, HTTPException, Query, Body, Depends, File, Form, Up
 from fastapi.responses import FileResponse
 from src.publishing import deck_template, template_config
 from src.publishing.course import DeckExportError
-from src.publishing.deck_export import load_mapping
+from src.publishing.deck_export import load_mapping, mapping_warnings
 from src.publishing.render import FORMATS, output_filename, render_readiness
 from src.publishing.image_ids import list_generated_objects
 from src.publishing.render_jobs import create_job, job_file, read_job, run_job
@@ -1729,6 +1729,7 @@ def _deck_template_state(user: Optional[User]) -> dict:
         "role_spec": template_config.role_spec(),
         "roles": mapping.roles,
         "template": template,
+        "warnings": mapping_warnings(mapping),
     }
 
 

@@ -14,6 +14,7 @@ import type {
 } from '../api';
 
 const NOTES_PAGE = 'notes-page';
+const MISSING = 'missing'; // the select's value for a saved layout the template does not have
 
 const FIELD_COLORS: Record<string, string> = {
     title: '#2563eb',
@@ -85,6 +86,13 @@ const prefill = (layout: TemplateLayout, spec: Settings['role_spec'][string]): F
     return out;
 };
 
+/** The layout a role uses: its layout_index when that position still holds the named layout, else the first with the name. */
+const resolveLayout = (inspection: TemplateInspection, m?: RoleMapping[string]): TemplateLayout | undefined => {
+    if (!m?.layout) return undefined;
+    const at = m.layout_index === undefined ? undefined : inspection.layouts[m.layout_index];
+    return at && at.name === m.layout ? at : inspection.layouts.find(l => l.name === m.layout);
+};
+
 const isComplete = (
     role: string,
     roles: RoleMapping,
@@ -93,8 +101,8 @@ const isComplete = (
 ) => {
     const m = roles[role];
     if (!m?.layout) return false;
-    const layout = inspection.layouts.find(l => l.name === m.layout);
-    if (!layout || layout.name_count > 1) return false;
+    const layout = resolveLayout(inspection, m);
+    if (!layout) return false;
     const idxs = new Set(layout.placeholders.map(p => p.idx));
     return spec[role].required.every(f => {
         const v = m.placeholders[f];
@@ -106,7 +114,7 @@ const isComplete = (
 const reconcile = (roles: RoleMapping, inspection: TemplateInspection): RoleMapping => {
     const out: RoleMapping = {};
     for (const [role, m] of Object.entries(roles)) {
-        const layout = inspection.layouts.find(l => l.name === m.layout);
+        const layout = resolveLayout(inspection, m);
         if (!layout) continue;
         const kept: FieldMapping = {};
         for (const [f, v] of Object.entries(m.placeholders)) {
@@ -118,6 +126,7 @@ const reconcile = (roles: RoleMapping, inspection: TemplateInspection): RoleMapp
             if (ph && ph.mappable && (f !== 'image' || ph.accepts_image)) kept[f] = v;
         }
         out[role] = { layout: m.layout, placeholders: kept };
+        if (layout.name_count > 1) out[role].layout_index = layout.index;
     }
     return out;
 };
@@ -246,13 +255,19 @@ export const DeckTemplateSettings: React.FC<Props> = ({ onClose }) => {
 
     const mapping = roles[selected];
     const roleSpec = spec[selected];
-    const layout = inspection?.layouts.find(l => l.name === mapping?.layout);
+    const layout = inspection ? resolveLayout(inspection, mapping) : undefined;
 
-    const setLayout = (name: string) => {
-        const next = inspection?.layouts.find(l => l.name === name);
-        if (!next || !roleSpec) return;
-        setRoles(r => ({ ...r, [selected]: { layout: name, placeholders: prefill(next, roleSpec) } }));
+    const setLayout = (index: string) => {
+        const next = inspection?.layouts[Number(index)];
+        if (index === '' || !next || !roleSpec) return;
+        const chosen: RoleMapping[string] = { layout: next.name, placeholders: prefill(next, roleSpec) };
+        if (next.name_count > 1) chosen.layout_index = next.index;
+        setRoles(r => ({ ...r, [selected]: chosen }));
     };
+
+    // n of count among the layouts that share a name, in template order
+    const nameOrder = (l: TemplateLayout) =>
+        inspection ? inspection.layouts.filter(o => o.name === l.name && o.index <= l.index).length : 1;
 
     const setField = (field: string, value: string) => {
         setRoles(r => {
@@ -442,25 +457,29 @@ export const DeckTemplateSettings: React.FC<Props> = ({ onClose }) => {
                                 <select
                                     id="dts-layout"
                                     disabled={!canEdit}
-                                    value={mapping?.layout ?? ''}
+                                    value={layout ? String(layout.index) : mapping?.layout ? MISSING : ''}
                                     onChange={e => setLayout(e.target.value)}
                                     className="w-full border border-slate-300 rounded-md px-2 py-1.5 text-sm disabled:bg-slate-50"
                                 >
                                     <option value="">Choose a layout</option>
                                     {mapping?.layout && !layout && (
-                                        <option value={mapping.layout} disabled>
+                                        <option value={MISSING} disabled>
                                             {mapping.layout} (not in this template)
                                         </option>
                                     )}
-                                    {inspection.layouts.map((l, i) => (
-                                        <option key={`${l.name}-${i}`} value={l.name} disabled={l.name_count > 1}>
+                                    {inspection.layouts.map(l => (
+                                        <option key={l.index} value={String(l.index)}>
                                             {l.name}
-                                            {l.name_count > 1
-                                                ? ` (name used by ${l.name_count} layouts: rename them in PowerPoint)`
-                                                : ''}
+                                            {l.name_count > 1 ? ` (${nameOrder(l)} of ${l.name_count} with this name)` : ''}
                                         </option>
                                     ))}
                                 </select>
+                                {layout && layout.name_count > 1 && (
+                                    <p className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded px-2 py-1 mt-1">
+                                        {layout.name_count} layouts are named "{layout.name}". This role uses the one you picked;
+                                        renaming them in PowerPoint would make this clearer.
+                                    </p>
+                                )}
                             </div>
 
                             {layout && roleSpec &&
@@ -504,6 +523,19 @@ export const DeckTemplateSettings: React.FC<Props> = ({ onClose }) => {
                                 <p className="text-sm text-slate-500">Choose a layout to see its blueprint.</p>
                             )}
                         </div>
+                    </div>
+                )}
+
+                {settings && settings.warnings.length > 0 && (
+                    <div className="px-5 py-3 border-t border-amber-200 bg-amber-50 text-sm text-amber-900 max-h-32 overflow-y-auto">
+                        <div className="flex items-center gap-2 font-semibold">
+                            <AlertTriangle size={14} /> Worth a look (this does not stop a save or an export)
+                        </div>
+                        <ul className="list-disc pl-6 mt-1">
+                            {settings.warnings.map((w, i) => (
+                                <li key={i}>{w}</li>
+                            ))}
+                        </ul>
                     </div>
                 )}
 

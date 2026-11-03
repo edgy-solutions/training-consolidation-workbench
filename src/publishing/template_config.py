@@ -16,7 +16,7 @@ from pptx.enum.shapes import PP_PLACEHOLDER
 from src.publishing import deck_template
 from src.publishing.course import Course, DeckExportError, Figure, Leaf, Section, SourceRef
 from src.publishing.deck_export import (
-    DECK_TEMPLATE_VERSION, IMAGE_TYPES, ROLES, export_deck, load_mapping, validate_mapping,
+    DECK_TEMPLATE_VERSION, IMAGE_TYPES, ROLES, _all_layouts, _resolve_layout, export_deck, load_mapping, validate_mapping,
 )
 
 # python-pptx does not clone these onto a new slide (iter_cloneable_placeholders), so a field mapped to one
@@ -61,7 +61,7 @@ def inspect_template(source) -> dict:
     for lo in layouts:
         counts[lo.name] = counts.get(lo.name, 0) + 1
     out = []
-    for lo in layouts:
+    for pos, lo in enumerate(layouts):
         phs = []
         for ph in lo.placeholders:
             t = ph.placeholder_format.type
@@ -73,7 +73,7 @@ def inspect_template(source) -> dict:
                 "mappable": t not in NOT_MAPPABLE,
                 "left": ph.left, "top": ph.top, "width": ph.width, "height": ph.height,
             })
-        out.append({"name": lo.name, "name_count": counts[lo.name], "placeholders": phs})
+        out.append({"name": lo.name, "index": pos, "name_count": counts[lo.name], "placeholders": phs})
     return {"slide_width": prs.slide_width, "slide_height": prs.slide_height, "layouts": out}
 
 
@@ -96,6 +96,8 @@ def _normalise(roles):
             problems.append(f"role '{role}' must be an object of layout and placeholders")
             continue
         out[role] = {"layout": spec.get("layout"), "placeholders": dict(fields or {})}
+        if "layout_index" in spec:
+            out[role]["layout_index"] = spec["layout_index"]  # validate_mapping reports a bad type
     if problems:
         raise TemplateRejected(problems)
     return out
@@ -107,7 +109,7 @@ def check_and_save(pptx_bytes, roles, filename, saved_by, minio=None) -> dict:
         raise TemplateRejected(["roles must be an object of role -> {layout, placeholders}"])
     roles = _normalise(roles)
     info = inspect_template(pptx_bytes)  # raises TemplateRejected when unreadable
-    by_layout = {lo["name"]: lo for lo in info["layouts"] if lo["name_count"] == 1}
+    prs = _open(pptx_bytes)
 
     problems: List[str] = []
     with tempfile.TemporaryDirectory() as tmp:
@@ -121,9 +123,10 @@ def check_and_save(pptx_bytes, roles, filename, saved_by, minio=None) -> dict:
         for role, spec in roles.items():
             if role not in ROLES:
                 continue
-            layout = by_layout.get(spec.get("layout"))
-            if not layout:
-                continue
+            found, problem, _ = _resolve_layout(prs, role, spec)
+            if problem:
+                continue  # validate_mapping has reported it
+            layout = info["layouts"][_all_layouts(prs).index(found)]
             phs = {p["idx"]: p for p in layout["placeholders"]}
             for field, idx in spec["placeholders"].items():
                 ph = phs.get(idx) if isinstance(idx, int) else None  # validate_mapping reports a non-int

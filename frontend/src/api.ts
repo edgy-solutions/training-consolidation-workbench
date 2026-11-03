@@ -160,7 +160,8 @@ export interface TemplatePlaceholder {
 
 export interface TemplateLayout {
     name: string;
-    name_count: number; // > 1: the contract refuses an ambiguous layout name
+    index: number; // 0-based position among all layouts, masters in order; a mapping's layout_index
+    name_count: number; // > 1: several layouts carry this name; the mapping disambiguates by index and warns
     placeholders: TemplatePlaceholder[];
 }
 
@@ -172,7 +173,7 @@ export interface TemplateInspection {
 
 // field -> placeholder idx, or 'notes-page' for the notes field
 export type FieldMapping = Record<string, number | string>;
-export type RoleMapping = Record<string, { layout: string; placeholders: FieldMapping }>;
+export type RoleMapping = Record<string, { layout: string; layout_index?: number; placeholders: FieldMapping }>;
 
 export interface DeckTemplateSettings {
     source: 'saved' | 'deployment' | 'standin';
@@ -184,6 +185,7 @@ export interface DeckTemplateSettings {
     role_spec: Record<string, { required: string[]; optional: string[] }>;
     roles: RoleMapping;
     template: TemplateInspection;
+    warnings: string[];
 }
 
 export interface GenerateJob {

@@ -12,7 +12,7 @@ from pptx import Presentation
 from src.auth.security import User, get_current_user
 from src.publishing import deck_template, template_config
 from src.publishing.course import DeckExportError
-from src.publishing.deck_export import export_deck, load_mapping
+from src.publishing.deck_export import export_deck, load_mapping, mapping_warnings
 from src.workbench import main
 from tests.deck_fixtures import STANDIN_DIR, golden_course, resolver
 
@@ -168,10 +168,9 @@ def test_a_failed_put_names_the_store(env):
 
 # --- validation ---
 
-def test_missing_role_ambiguous_layout_and_non_mappable_reported_together(env):
+def test_missing_role_and_non_mappable_reported_together(env):
     def mutate(prs):
         names = {lo.name: lo for lo in prs.slide_layouts}
-        names["section"]._element.cSld.set("name", "title")  # two layouts called 'title'
         for ph in names["summary"].placeholders:
             if ph.placeholder_format.idx == 1:
                 ph._element.nvSpPr.nvPr.ph.set("type", "ftr")  # a footer placeholder
@@ -183,7 +182,6 @@ def test_missing_role_ambiguous_layout_and_non_mappable_reported_together(env):
         save(FakeMinio(), data=data, roles=roles)
     text = "\n".join(e.value.problems)
     assert "role 'sources' is not mapped" in text
-    assert "layout 'title' is carried by 2 layouts" in text
     assert "role 'summary': field 'body' is mapped to placeholder 1 (FOOTER)" in text
 
 
@@ -241,8 +239,105 @@ def test_inspect_reports_the_real_size_and_flags(env):
     by_idx = {p["idx"]: p for p in figure["placeholders"]}
     assert by_idx[3]["accepts_image"] and by_idx[3]["type"] == "PICTURE" and by_idx[0]["mappable"]
     assert all(lo["name_count"] == 1 for lo in info["layouts"])
+    assert [lo["index"] for lo in info["layouts"]] == list(range(len(info["layouts"])))
     with pytest.raises(template_config.TemplateRejected):
         template_config.inspect_template(b"not a pptx")
+
+
+# --- duplicate layout names ---
+# The stand-in with its 'sources' layout (position 5) renamed 'concept', so two layouts are called 'concept': position 1
+# (placeholders 0, 1, 2) and position 5, whose body placeholder is idx 7.
+
+def dup_template():
+    def mutate(prs):
+        sources = next(lo for lo in prs.slide_layouts if lo.name == "sources")
+        sources._element.cSld.set("name", "concept")
+        for ph in sources.placeholders:
+            if ph.placeholder_format.idx == 1:
+                ph._element.nvSpPr.nvPr.ph.set("idx", "7")
+    return variant(mutate)
+
+
+def dup_roles(index=None, body=7):
+    sources = {"layout": "concept", "placeholders": {"title": 0, "body": body}}
+    if index is not None:
+        sources["layout_index"] = index
+    return roles_with(sources=sources)
+
+
+def exported_layout_positions(minio, tmp_path):
+    """The position in the template of the layout each exported slide uses, by the layout's part, not its name."""
+    out = tmp_path / "out.pptx"
+    export_deck(golden_course(), deck_template.configured_mapping(minio), out, resolver())
+    prs = Presentation(str(out))
+    positions = {lo.part.partname: i for i, lo in enumerate(prs.slide_layouts)}
+    return [positions[s.slide_layout.part.partname] for s in prs.slides]
+
+
+def test_inspect_reports_positions_and_duplicate_counts(env):
+    info = template_config.inspect_template(dup_template())
+    assert [lo["index"] for lo in info["layouts"]] == [0, 1, 2, 3, 4, 5]
+    assert [lo["name_count"] for lo in info["layouts"] if lo["name"] == "concept"] == [2, 2]
+
+
+def test_layout_index_chooses_the_second_duplicate(env, tmp_path):
+    minio = FakeMinio()
+    save(minio, data=dup_template(), roles=dup_roles(5, body=7))
+    used = exported_layout_positions(minio, tmp_path)
+    assert used.count(5) == 1  # the one sources slide
+
+
+def test_layout_index_chooses_the_first_duplicate(env, tmp_path):
+    minio = FakeMinio()
+    save(minio, data=dup_template(), roles=dup_roles(1, body=1))
+    used = exported_layout_positions(minio, tmp_path)
+    assert 5 not in used and used.count(1) >= 2  # the concept slides and the sources slide
+
+
+def test_a_duplicate_with_no_index_saves_uses_the_first_and_warns(env, tmp_path):
+    minio = FakeMinio()
+    save(minio, data=dup_template(), roles=dup_roles(None, body=1))
+    used = exported_layout_positions(minio, tmp_path)
+    assert 5 not in used
+    warnings = mapping_warnings(load_mapping(deck_template.configured_mapping(minio)))
+    assert len(warnings) == 2  # concept and sources both name 'concept'
+    assert all("'concept'" in w and "using the first, at position 1" in w for w in warnings)
+    assert any("role 'sources'" in w for w in warnings)
+
+
+@pytest.mark.parametrize("index,fragment", [
+    (99, "out of range"), (-1, "out of range"), ("5", "must be an integer"), (5.0, "must be an integer"),
+    (True, "must be an integer"), (3, "is layout 'section'"),
+])
+def test_a_bad_layout_index_is_refused_naming_the_role(env, index, fragment):
+    minio = FakeMinio()
+    with pytest.raises(template_config.TemplateRejected) as e:
+        save(minio, data=dup_template(), roles=dup_roles(index))
+    msgs = [p for p in e.value.problems if "layout_index" in p]
+    assert msgs and all("role 'sources'" in p for p in msgs) and fragment in msgs[0]
+    assert minio.puts == []
+
+
+def test_placeholders_are_checked_against_the_resolved_layout(env):
+    save(FakeMinio(), data=dup_template(), roles=dup_roles(5, body=7))  # idx 7 is only on position 5
+    with pytest.raises(template_config.TemplateRejected) as e:
+        save(FakeMinio(), data=dup_template(), roles=dup_roles(1, body=7))
+    assert any("role 'sources'" in p and "placeholder 7" in p for p in e.value.problems)
+
+
+def test_layout_index_survives_save_and_read_back(env):
+    minio = FakeMinio()
+    save(minio, data=dup_template(), roles=dup_roles(5))
+    roles = load_mapping(deck_template.configured_mapping(minio)).roles
+    assert roles["sources"]["layout_index"] == 5
+
+
+def test_a_unique_layout_with_no_index_has_no_warning_and_no_key(env):
+    minio = FakeMinio()
+    save(minio)
+    mapping = load_mapping(deck_template.configured_mapping(minio))
+    assert mapping_warnings(mapping) == []
+    assert all("layout_index" not in spec for spec in mapping.roles.values())
 
 
 # --- exports ---
@@ -345,6 +440,15 @@ def test_put_saves_then_get_reports_saved(client):
     assert body["source"] == "saved" and body["filename"] == "mine.pptx" and body["saved_by"] == "u1@example.com"
     assert client.get("/settings/deck-template").json()["source"] == "saved"
     assert main.deck_template.template_label() == "configured"
+
+
+def test_state_carries_warnings_for_a_duplicate_layout_only(client):
+    assert client.get("/settings/deck-template").json()["warnings"] == []
+    r = put(client, roles=dup_roles(None, body=1), file=dup_template())
+    assert r.status_code == 200, r.text
+    assert r.json()["warnings"]
+    assert client.get("/settings/deck-template").json()["warnings"] == r.json()["warnings"]
+    assert put(client).json()["warnings"] == []
 
 
 def test_put_without_a_file_reuses_the_saved_pptx(client):

@@ -61,11 +61,51 @@ def load_mapping(path) -> Mapping:
     return Mapping(path, raw.get("deck_template"), raw.get("template"), raw.get("roles") or {})
 
 
-def _layouts_by_name(prs):
-    out: Dict[str, list] = {}
-    for master in prs.slide_masters:
-        for layout in master.slide_layouts:
-            out.setdefault(layout.name, []).append(layout)
+def _all_layouts(prs):
+    """Every layout in template order: each master in turn, then its layouts. A layout_index counts in this order."""
+    return [lo for master in prs.slide_masters for lo in master.slide_layouts]
+
+
+def _resolve_layout(prs, role, spec):
+    """(layout, problem, warning) for a role's layout and optional layout_index; contract section 2.3."""
+    layouts = _all_layouts(prs)
+    name = spec.get("layout")
+    carriers = [i for i, lo in enumerate(layouts) if lo.name == name]
+    if "layout_index" in spec:
+        i = spec["layout_index"]
+        if isinstance(i, bool) or not isinstance(i, int):
+            return None, f"role '{role}': layout_index must be an integer, got {i!r}", None
+        if not 0 <= i < len(layouts):
+            return None, f"role '{role}': layout_index {i} is out of range; the template has {len(layouts)} layouts", None
+        if layouts[i].name != name:
+            return None, (f"role '{role}': layout_index {i} is layout '{layouts[i].name}', "
+                          f"but the role names layout '{name}'"), None
+        if len(carriers) > 1:
+            return layouts[i], None, (f"role '{role}': layout '{name}' is carried by {len(carriers)} layouts; "
+                                      f"using the one at position {i}")
+        return layouts[i], None, None
+    if not carriers:
+        return None, (f"role '{role}': layout '{name}' is not in the template; its layouts are: "
+                      + ", ".join(sorted({lo.name for lo in layouts}))), None
+    if len(carriers) > 1:
+        return layouts[carriers[0]], None, (
+            f"role '{role}': layout '{name}' is carried by {len(carriers)} layouts and no layout_index is set; "
+            f"using the first, at position {carriers[0]}. Set layout_index to choose explicitly")
+    return layouts[carriers[0]], None, None
+
+
+def mapping_warnings(mapping: Mapping) -> List[str]:
+    """Warnings for a mapping; none when the template cannot be opened (validate_mapping reports that)."""
+    try:
+        prs = Presentation(str(mapping.template_path))
+    except Exception:
+        return []
+    out = []
+    for role, spec in mapping.roles.items():
+        if role in ROLES and isinstance(spec, dict) and spec.get("layout"):
+            warning = _resolve_layout(prs, role, spec)[2]
+            if warning:
+                out.append(warning)
     return out
 
 
@@ -96,7 +136,6 @@ def validate_mapping(mapping: Mapping, needed_roles) -> List[str]:
         if role not in mapping.roles:
             problems.append(f"role '{role}' is not mapped")
 
-    layouts = _layouts_by_name(prs) if prs else {}
     for role, spec in mapping.roles.items():
         if role not in ROLES:
             problems.append(f"unknown role '{role}'")
@@ -119,15 +158,11 @@ def validate_mapping(mapping: Mapping, needed_roles) -> List[str]:
             continue
         if not prs:
             continue
-        found = layouts.get(name, [])
-        if not found:
-            problems.append(f"role '{role}': layout '{name}' is not in the template; its layouts are: "
-                            + ", ".join(sorted(layouts)))
+        layout, problem, _ = _resolve_layout(prs, role, spec)
+        if problem:
+            problems.append(problem)
             continue
-        if len(found) > 1:
-            problems.append(f"role '{role}': layout '{name}' is carried by {len(found)} layouts in the template")
-            continue
-        types = {p.placeholder_format.idx: p.placeholder_format.type for p in found[0].placeholders}
+        types = {p.placeholder_format.idx: p.placeholder_format.type for p in layout.placeholders}
         used: Dict[int, str] = {}
         for f, idx in fields.items():
             if f not in known:
@@ -253,14 +288,15 @@ def export_deck(course: Course, mapping_path, out_path, resolve_image, render_an
     comments = _comments(digest, render_anyway)
     prs = Presentation(str(mapping.template_path))
     prs.core_properties.comments = comments
-    layouts = {name: found[0] for name, found in _layouts_by_name(prs).items()}
+    for warning in mapping_warnings(mapping):
+        print(f"WARN: deck template: {warning}")
     _drop_template_slides(prs)
     for role, item in iter_slides(course):
         spec = mapping.roles[role]
         fields = dict(spec.get("placeholders") or {})
         if "notes" in ROLES[role]["optional"]:
             fields.setdefault("notes", NOTES_PAGE)  # contract section 2.2: omitted means the notes page
-        slide = prs.slides.add_slide(layouts[spec["layout"]])
+        slide = prs.slides.add_slide(_resolve_layout(prs, role, spec)[0])
         values = _expected_fields(role, item, course)
         used = set()
         for f, idx in fields.items():
