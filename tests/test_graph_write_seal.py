@@ -50,7 +50,7 @@ def test_analyzer_catches(query):
     "MERGE (u:User {id:$id}) ON CREATE SET u.email=$e SET u.last_login=datetime()",
     "MATCH (p:Project|TargetNode {id:$id}) CREATE (c:TargetNode) MERGE (p)-[:HAS_CHILD]->(c)",
     "MATCH (t:TargetNode {id:$id}) OPTIONAL MATCH (t)-[r:DERIVED_FROM]->() WITH t, r DELETE r SET t.status = 'draft'",
-    "MATCH (c:Concept {id:$concept_id})-[p:PROPOSED_ALIGNS_TO]->(cc:CanonicalConcept) WHERE coalesce(cc.id, cc.name) = $canonical_id AND p.status = 'open' SET p.status = $status, p.reviewed_by = $uid, p.reviewed_at = $at RETURN count(p) AS n",
+    "MATCH (c:Concept {id:$concept_id})-[p:PROPOSED_ALIGNS_TO]->(cc:CanonicalConcept) WHERE coalesce(cc.id, cc.name) = $canonical_id AND p.status = 'open' SET p.status = $status, p.reviewed_by = $uid, p.reviewed_at = datetime($at) RETURN count(p) AS n",
 ])
 def test_analyzer_passes(query):
     assert violations(query) == []

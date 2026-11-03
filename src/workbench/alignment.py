@@ -89,6 +89,6 @@ PROPOSALS_QUERY = """
 REVIEW_QUERY = """
     MATCH (c:Concept {id: $concept_id})-[p:PROPOSED_ALIGNS_TO]->(cc:CanonicalConcept)
     WHERE coalesce(cc.id, cc.name) = $canonical_id AND p.status = 'open'
-    SET p.status = $status, p.reviewed_by = $uid, p.reviewed_at = $at
+    SET p.status = $status, p.reviewed_by = $uid, p.reviewed_at = datetime($at)
     RETURN count(p) AS n
     """

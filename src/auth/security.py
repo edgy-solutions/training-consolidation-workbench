@@ -1,5 +1,6 @@
 import os
 import jwt
+import requests
 from jwt import PyJWKClient
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
@@ -146,3 +147,43 @@ def sync_user_to_neo4j(user: User):
         print(f"Failed to sync user to Neo4j: {e}")
     finally:
         driver.close()
+
+
+class DeciderUnavailable(Exception):
+    """Topaz gave no readable answer. That is not a no: the route answers 503, never 403."""
+
+
+def can_review(subject_id: str) -> bool:
+    """Asks the fleet's one decider whether subject_id holds can_review:<ALIGNMENT_REVIEW_SUBJECT>.
+
+    subject_id must be the fleet's entitlement key: AUTHZ_CLAIM has to name the same claim as the
+    fleet's USER_ENTITLEMENT_CLAIM, or a granted user reads as ungranted. Unconfigured is a deny."""
+    url = os.getenv("TOPAZ_DIRECTORY_URL", "").strip().rstrip("/")
+    subject = os.getenv("ALIGNMENT_REVIEW_SUBJECT", "").strip()
+    if not url or not subject or not subject_id:
+        print("WARN: proposal review denied: TOPAZ_DIRECTORY_URL or ALIGNMENT_REVIEW_SUBJECT is not set")
+        return False
+    try:
+        r = requests.post(
+            f"{url}/api/v3/directory/check",
+            json={"object_type": "capability", "object_id": f"can_review:{subject}",
+                  "relation": "can_invoke", "subject_type": "user", "subject_id": subject_id},
+            timeout=5,
+            allow_redirects=False,
+        )
+    except requests.RequestException as e:
+        raise DeciderUnavailable(str(e)) from e
+    if r.status_code == 404:  # object not found = ungranted
+        return False
+    if r.status_code != 200:
+        raise DeciderUnavailable(f"HTTP {r.status_code}")
+    try:
+        body = r.json()
+    except ValueError as e:
+        raise DeciderUnavailable("body is not JSON") from e
+    if not isinstance(body, dict):
+        raise DeciderUnavailable("body is not an object")
+    check = body.get("check", False)  # absent = no
+    if not isinstance(check, bool):
+        raise DeciderUnavailable("check is not a boolean")
+    return check

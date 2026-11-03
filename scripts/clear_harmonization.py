@@ -43,6 +43,7 @@ def clear_harmonization_data(apply=False):
 
     except Exception as e:
         print(f"Error: {e}")
+        sys.exit(1)
     finally:
         client.close()
 
