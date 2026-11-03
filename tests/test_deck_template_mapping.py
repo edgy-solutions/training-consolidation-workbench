@@ -3,7 +3,7 @@ import yaml
 from pptx import Presentation
 
 from src.publishing.course import DeckExportError
-from src.publishing.deck_export import export_deck
+from src.publishing.deck_export import export_deck, load_mapping, mapping_warnings, validate
 from tests.deck_fixtures import copy_standin, golden_course, resolver
 
 
@@ -47,14 +47,24 @@ def test_missing_layout_lists_the_templates_layouts(tmp_path):
         assert name in msg
 
 
-def test_ambiguous_layout(tmp_path):
-    path = _broken(tmp_path, lambda d: None)
+def test_a_duplicate_layout_name_with_no_index_is_a_warning_not_a_problem(tmp_path):
+    path = _broken(tmp_path, lambda d: d["roles"]["section"].update(layout="title"))
     tpl = path.parent / "standin.pptx"
     prs = Presentation(str(tpl))
     prs.slide_layouts.get_by_name("section")._element.cSld.set("name", "title")
     prs.save(str(tpl))
-    problems = _fails(tmp_path, path)
-    assert any("layout 'title' is carried by 2 layouts" in p for p in problems)
+    assert validate(load_mapping(path), golden_course()) == []
+    warnings = mapping_warnings(load_mapping(path))
+    assert len(warnings) == 2 and all("layout 'title' is carried by 2 layouts" in w for w in warnings)
+
+
+def test_omitted_notes_go_to_the_notes_page(tmp_path):
+    # Contract section 2.2: a concept role that maps no notes field still writes the notes page.
+    path = _broken(tmp_path, lambda d: d["roles"]["concept"]["placeholders"].pop("notes"))
+    out = tmp_path / "out.pptx"
+    export_deck(golden_course(), path, out, resolver())
+    slides = list(Presentation(str(out)).slides)
+    assert slides[2].notes_slide.notes_text_frame.text.splitlines()[-1] == "Concepts: Pascal's law; Hydraulic pressure"
 
 
 def test_bad_placeholder_idx(tmp_path):

@@ -3,14 +3,16 @@ from dotenv import load_dotenv
 # Load env vars first
 load_dotenv()
 
-from fastapi import FastAPI, HTTPException, Query, Body, Depends
+from fastapi import FastAPI, HTTPException, Query, Body, Depends, File, Form, UploadFile
 from fastapi.responses import FileResponse
-from src.publishing import deck_template
+from src.publishing import deck_template, template_config
+from src.publishing.course import DeckExportError
+from src.publishing.deck_export import load_mapping, mapping_warnings
 from src.publishing.render import FORMATS, output_filename, render_readiness
 from src.publishing.image_ids import list_generated_objects
 from src.publishing.render_jobs import create_job, job_file, read_job, run_job
 from src.services import outline_jobs
-from src.auth.security import get_current_user, optional_bearer, store_writes_on, User, can_review, DeciderUnavailable
+from src.auth.security import get_current_user, optional_bearer, store_writes_on, deck_template_ui_on, User, can_review, can_configure_templates, DeciderUnavailable
 from fastapi.middleware.cors import CORSMiddleware
 from typing import List, Dict, Any, Literal, Optional
 from pydantic import BaseModel
@@ -864,6 +866,7 @@ READ_ONLY_POSTS = {
     "/source/search",  # a vector search: reads Weaviate
     "/source/embedded-images-for-slides",  # lists and presigns source images: reads MinIO
     "/source/resolve-image-urls",  # presigns source images: reads MinIO
+    "/settings/deck-template/inspect",  # reads an uploaded file and answers; stores nothing
 }
 
 def require_store_writes():
@@ -1672,6 +1675,135 @@ def list_templates():
     The deck template in use: "standin" when none is configured, else "configured".
     """
     return {"templates": [deck_template.template_label()]}
+
+
+# --- Deck template settings (docs/contracts/deck-template.md section 8) ---
+
+MAX_TEMPLATE_BYTES = 64 * 1024 * 1024
+
+
+def require_deck_template_ui():
+    if not deck_template_ui_on():
+        raise HTTPException(status_code=404, detail="The deck template settings are off (WB_DECK_TEMPLATE_UI is not on).")
+
+
+def require_can_configure(current_user: User = Depends(get_current_user)) -> User:
+    """Choosing the deck template changes every user's exports, so it is the decider's call and fails closed."""
+    try:
+        allowed = can_configure_templates(current_user.id)
+    except DeciderUnavailable as e:
+        print(f"WARN: deck template configuration: decider unavailable: {e}")
+        raise HTTPException(status_code=503, detail="The authorization service is unavailable.")
+    if not allowed:
+        raise HTTPException(status_code=403, detail="Not permitted to configure the deck template.")
+    return current_user
+
+
+def _read_upload(file: UploadFile) -> bytes:
+    data = file.file.read(MAX_TEMPLATE_BYTES + 1)
+    if len(data) > MAX_TEMPLATE_BYTES:
+        raise HTTPException(status_code=413, detail="The template is larger than 64 MB.")
+    return data
+
+
+def _store_503(e: DeckExportError):
+    raise HTTPException(status_code=503, detail="; ".join(e.problems))
+
+
+def _deck_template_state(user: Optional[User]) -> dict:
+    try:
+        cur = deck_template.current()
+        mapping = load_mapping(cur.mapping_path)
+        template = template_config.inspect_template(mapping.template_path)
+    except DeckExportError as e:
+        _store_503(e)
+    can_configure = False
+    if user is not None:
+        try:
+            can_configure = can_configure_templates(user.id)
+        except DeciderUnavailable as e:
+            print(f"WARN: deck template configuration: decider unavailable: {e}")
+    source = (cur.saved or {}).get("source") or {}
+    return {
+        "source": cur.source,
+        "store_enabled": deck_template.store_location() is not None,
+        "can_configure": can_configure,
+        "filename": source.get("filename"),
+        "saved_by": source.get("saved_by"),
+        "saved_at": source.get("saved_at"),
+        "role_spec": template_config.role_spec(),
+        "roles": mapping.roles,
+        "template": template,
+        "warnings": mapping_warnings(mapping),
+    }
+
+
+def _require_store():
+    try:
+        enabled = deck_template.store_location() is not None
+    except DeckExportError as e:
+        _store_503(e)
+    if not enabled:
+        raise HTTPException(status_code=409, detail="Saving a template needs DECK_TEMPLATE_STORE to be set.")
+
+
+@app.get("/settings/deck-template/enabled")
+def deck_template_enabled(user: Optional[User] = Depends(require_platform_reader)):
+    """Whether the settings screen is on, for the gear. Reads no store and no template."""
+    return {"enabled": deck_template_ui_on()}
+
+
+@app.get("/settings/deck-template", dependencies=[Depends(require_deck_template_ui)])
+def get_deck_template_settings(user: Optional[User] = Depends(require_platform_reader)):
+    return _deck_template_state(user)
+
+
+@app.post("/settings/deck-template/inspect", dependencies=[Depends(require_deck_template_ui)])
+def inspect_deck_template(file: UploadFile = File(...), user: User = Depends(require_can_configure)):
+    """Describes an uploaded .pptx for the mapping screen. Writes nothing."""
+    try:
+        return template_config.inspect_template(_read_upload(file))
+    except template_config.TemplateRejected as e:
+        raise HTTPException(status_code=422, detail="; ".join(e.problems))
+
+
+@app.put("/settings/deck-template", dependencies=[Depends(require_deck_template_ui), Depends(require_store_writes)])
+def save_deck_template(
+    roles: str = Form(...),
+    file: Optional[UploadFile] = File(None),
+    user: User = Depends(require_can_configure),
+):
+    _require_store()
+    try:
+        parsed = json.loads(roles)
+    except ValueError:
+        raise HTTPException(status_code=422, detail={"problems": ["roles is not valid JSON"]})
+    try:
+        if file is not None:
+            data, filename = _read_upload(file), os.path.basename(file.filename or "") or "template.pptx"
+        else:
+            saved = deck_template.saved_pptx()
+            if saved is None:
+                raise HTTPException(status_code=422, detail={"problems": ["No template is saved yet: upload a .pptx."]})
+            data, filename = saved[0], (saved[1].get("source") or {}).get("filename") or "template.pptx"
+        template_config.check_and_save(data, parsed, filename, user.email or user.id)
+    except template_config.TemplateRejected as e:
+        raise HTTPException(status_code=422, detail={"problems": e.problems})
+    except DeckExportError as e:
+        _store_503(e)
+    return _deck_template_state(user)
+
+
+@app.delete("/settings/deck-template", dependencies=[Depends(require_deck_template_ui), Depends(require_store_writes)])
+def reset_deck_template(user: User = Depends(require_can_configure)):
+    """Back to the deployment default: removes the pointer only, leaving the uploaded .pptx objects."""
+    _require_store()
+    try:
+        deck_template.delete_saved()
+    except DeckExportError as e:
+        _store_503(e)
+    return _deck_template_state(user)
+
 
 RENDER_POLL_SECONDS = 1.0
 PPTX_TYPE = "application/vnd.openxmlformats-officedocument.presentationml.presentation"

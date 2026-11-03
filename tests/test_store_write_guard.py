@@ -15,12 +15,15 @@ GUARDED = [
     ("POST", "/draft/node/accept", {}),
     ("DELETE", "/draft/node/reject", {}),
     ("POST", "/render/trigger", {}),
+    ("PUT", "/settings/deck-template", {}),
+    ("DELETE", "/settings/deck-template", {}),
 ]
 
 
 @pytest.fixture
 def app_client(monkeypatch):
     monkeypatch.setenv("SOURCE_READER", "fixture")
+    monkeypatch.setenv("WB_DECK_TEMPLATE_UI", "on")  # the settings routes answer 404 before the write guard otherwise
     from src.workbench import main
 
     calls = []
