@@ -4,7 +4,7 @@ from src.publishing.image_ids import ImageRefError
 
 from src.publishing.course import (
     DeckExportError, FixtureImageResolver, MinioImageResolver, ReaderLookup, Section, SourceRef, build_course,
-    format_citation, iter_leaves, iter_slides, split_body_and_figure,
+    course_concepts, format_citation, iter_leaves, iter_slides, split_body_and_figure,
 )
 from tests.deck_fixtures import COURSE_ID, image_id, reader
 
@@ -77,9 +77,10 @@ def test_concepts_fall_back_to_teaches_by_salience():
     assert next(iter_leaves(c)).concepts == ["High", "Low", "None"]
 
 
-def test_duplicate_concept_names_both_leaves():
-    p = problems([node("first", concepts=["dup"]), node("second", order=1, concepts=["dup"])])
-    assert len(p) == 1 and "'dup'" in p[0] and "'first'" in p[0] and "'second'" in p[0]
+def test_a_repeated_concept_does_not_stop_the_build():
+    c = build([node("first", concepts=["dup"]), node("second", order=1, concepts=["dup"])])
+    assert [l.concepts for l in iter_leaves(c)] == [["dup"], ["dup"]]
+    assert course_concepts(c) == ["dup"]
 
 
 def test_empty_body():
@@ -182,3 +183,97 @@ def test_minio_resolver_forms():
     assert r("training/generated/abc/1.0/images/missing.png") is None
     with pytest.raises(ImageRefError, match="carries no deck prefix"):
         r("slide_4_img_0")
+
+
+# ---- roles, overlaps, unfinished sections, summary
+
+from src.publishing.course import concept_overlaps, effective_concepts, unfinished_sections  # noqa: E402
+
+
+def top(id, role=None, order=0):
+    n = node(id, order=order, concepts=[])
+    if role:
+        n["section_type"] = role
+    return n
+
+
+def leaf_under(id, parent, concepts, order=0, role=None):
+    n = node(id, parent=parent, order=order, concepts=concepts)
+    if role:
+        n["section_type"] = role
+    return n
+
+
+def overlaps(nodes):
+    return {o["concept"]: [s["id"] for s in o["sections"]] for o in concept_overlaps(build(nodes))}
+
+
+def test_role_comes_from_the_top_level_ancestor():
+    c = build([top("t", "mandatory_safety"), leaf_under("a", "t", ["x"]),
+               leaf_under("b", "a2", ["y"], order=1), top("a2", "introduction", order=1)])
+    # a2 has a child, so it is a section; b inherits introduction; a inherits mandatory_safety
+    roles = {l.id: l.role for l in iter_leaves(c)}
+    assert roles == {"a": "mandatory_safety", "b": "introduction"}
+
+
+def test_a_child_does_not_use_its_own_section_type():
+    c = build([top("t", "introduction"), leaf_under("a", "t", ["x"], role="technical")])
+    assert next(iter_leaves(c)).role == "introduction"
+
+
+def test_missing_role_is_technical():
+    assert next(iter_leaves(build([node("a")]))).role == "technical"
+
+
+@pytest.mark.parametrize("role", ["introduction", "mandatory_safety", "mandatory_assessment"])
+def test_repeat_with_a_revisiting_section_is_silent(role):
+    assert overlaps([node("a", concepts=["x"]), node("b", order=1, concepts=["x"]) | {"section_type": role}]) == {}
+
+
+@pytest.mark.parametrize("role", [None, "technical", "something_new"])
+def test_two_concept_role_leaves_overlap(role):
+    b = node("b", order=1, concepts=["x"])
+    if role:
+        b["section_type"] = role
+    assert overlaps([node("a", concepts=["x"]), b]) == {"x": ["a", "b"]}
+
+
+def test_introduction_plus_two_technical_lists_only_the_technical_ones():
+    got = overlaps([node("i", concepts=["x"]) | {"section_type": "introduction"},
+                    node("a", order=1, concepts=["x"]), node("b", order=2, concepts=["x"])])
+    assert got == {"x": ["a", "b"]}
+
+
+def test_a_repeat_on_a_parent_does_not_count():
+    nodes = [node("par", concepts=["x"]), leaf_under("a", "par", ["x"]), node("b", order=1, concepts=["y"])]
+    assert overlaps(nodes) == {}
+
+
+def test_unassigned_is_skipped_by_overlaps_and_unfinished():
+    nodes = [node("a", concepts=["x"]), node("u", order=1, concepts=["x"], unassigned=True, sources=[], body="")]
+    assert overlaps(nodes) == {}
+    assert unfinished_sections(PROJECT, nodes) == ([], 1)
+
+
+def test_build_still_raises_on_an_empty_body_but_not_on_a_repeat():
+    nodes = [node("a", concepts=["x"]), node("b", order=1, concepts=["x"], body="")]
+    p = problems(nodes)
+    assert len(p) == 1 and "body is empty" in p[0]
+
+
+def test_summary_lists_a_repeated_concept_once_in_first_order():
+    c = build([node("a", concepts=["x", "y"]), node("b", order=1, concepts=["z", "x"])])
+    assert course_concepts(c) == ["x", "y", "z"]
+
+
+def test_unfinished_counts_missing_sources_and_empty_bodies():
+    nodes = [node("sec"), leaf_under("ok", "sec", ["x"]), leaf_under("nosrc", "sec", ["y"], order=1) | {"source_refs": []},
+             leaf_under("nobody", "sec", ["z"], order=2) | {"content_markdown": "![i](a/images/1.png)"}]
+    unfinished, total = unfinished_sections(PROJECT, nodes)
+    assert total == 3 and [u["id"] for u in unfinished] == ["nosrc", "nobody"]
+    assert unfinished[0] == {"id": "nosrc", "title": "nosrc"}
+
+
+def test_effective_concepts_reports_where_they_came_from():
+    assert effective_concepts({"key_concepts": ["a", "a", "b"]}, []) == (["a", "b"], False)
+    assert effective_concepts({"key_concepts": []}, [SLIDES["s1"], SLIDES["s2"]]) == (["High", "Two", "Low", "None"], True)

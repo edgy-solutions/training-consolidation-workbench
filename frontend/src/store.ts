@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { api } from './api';
-import type { TargetDraftNode } from './api';
+import type { TargetDraftNode, SectionConcepts } from './api';
 import { AUTH_DISABLED } from './auth/config';
 
 // 'empty': no project could be loaded and auth is off, so show an empty outline.
@@ -11,6 +11,7 @@ interface AppState {
     discipline: string;
     projectId: string | null;
     structure: TargetDraftNode[];
+    sectionConcepts: Record<string, SectionConcepts>; // by node id; empty when the view could not be loaded
     projectStatus: ProjectStatus;
     activeNodeId: string | null; // The node currently being edited/viewed in Right Pane
     activeSlideId: string | null; // The source slide currently being inspected
@@ -56,6 +57,7 @@ export const useAppStore = create<AppState>()(
             discipline: '',
             projectId: null,
             structure: [],
+            sectionConcepts: {},
             projectStatus: 'loading',
             activeNodeId: null,
             activeSlideId: null,
@@ -71,7 +73,7 @@ export const useAppStore = create<AppState>()(
             stagingMode: false,
             outlineNotice: null,
 
-            setDiscipline: (d) => set({ discipline: d, projectId: null, structure: [], projectStatus: 'loading' }),
+            setDiscipline: (d) => set({ discipline: d, projectId: null, structure: [], sectionConcepts: {}, projectStatus: 'loading' }),
             setProjectId: (id) => set({ projectId: id }),
             setActiveNodeId: (id) => set({ activeNodeId: id }),
             setActiveSlideId: (id) => set({ activeSlideId: id }),
@@ -95,6 +97,15 @@ export const useAppStore = create<AppState>()(
                 try {
                     const nodes = await api.getDraftStructure(projectId);
                     set({ structure: nodes, projectStatus: 'ready' });
+                    // The concepts view never breaks the outline: a failure leaves it empty.
+                    let concepts: Record<string, SectionConcepts> = {};
+                    try {
+                        concepts = await api.getSectionConcepts(projectId);
+                    } catch (e) {
+                        console.error("Failed to fetch section concepts", e);
+                    }
+                    // A slower answer for a project the user has left must not land on the current one.
+                    if (get().projectId === projectId) set({ sectionConcepts: concepts });
                 } catch (e) {
                     console.error("Failed to fetch structure", e);
                     if (get().projectStatus === 'loading') projectLoadFailed(set);

@@ -3,8 +3,10 @@ import { useDroppable } from '@dnd-kit/core';
 import { SortableContext, verticalListSortingStrategy } from '@dnd-kit/sortable';
 import { Sparkles, GripVertical, X, MessageSquare, ChevronRight, ChevronDown, LayoutTemplate } from 'lucide-react';
 import clsx from 'clsx';
-import { api, assetSrc, slideLabel } from '../api';
-import type { TargetDraftNode } from '../api';
+import { toast } from 'sonner';
+import { api, assetSrc, httpError, slideLabel } from '../api';
+import type { SectionConcepts, TargetDraftNode } from '../api';
+import { goToSection } from '../sectionNav';
 import { useAppStore } from '../store';
 import { MarkdownEditor } from './MarkdownEditor';
 import { AssetDrawer } from './AssetDrawer';
@@ -75,10 +77,11 @@ const SortableSlideThumbnail: React.FC<{ id: string, url?: string, onRemove?: ()
 
 interface SynthBlockProps {
     node: TargetDraftNode;
+    concepts?: SectionConcepts;
     onRefresh: () => void;
 }
 
-export const SynthBlock: React.FC<SynthBlockProps> = ({ node, onRefresh }) => {
+export const SynthBlock: React.FC<SynthBlockProps> = ({ node, concepts, onRefresh }) => {
     // Handle Drop from Source Browser to Block
     const { isOver, setNodeRef } = useDroppable({
         id: node.id,
@@ -88,6 +91,7 @@ export const SynthBlock: React.FC<SynthBlockProps> = ({ node, onRefresh }) => {
     const [instruction, setInstruction] = useState("");
     const [synthesizing, setSynthesizing] = useState(false);
     const [expanded, setExpanded] = useState(true);
+    const setActiveSlideId = useAppStore(state => state.setActiveSlideId);
 
 
     // Ref for the title input to enable auto-focus
@@ -152,6 +156,16 @@ export const SynthBlock: React.FC<SynthBlockProps> = ({ node, onRefresh }) => {
         }
     };
 
+    const handleRemoveConcept = async (concept: string) => {
+        try {
+            await api.removeSectionConcept(node.id, concept);
+            onRefresh();
+        } catch (e) {
+            const { detail } = httpError(e);
+            toast.error(typeof detail === 'string' ? detail : 'Failed to remove concept');
+        }
+    };
+
     const handleSynthesize = async () => {
         setSynthesizing(true);
         try {
@@ -187,6 +201,7 @@ export const SynthBlock: React.FC<SynthBlockProps> = ({ node, onRefresh }) => {
 
     return (
         <div
+            id={`section-${node.id}`}
             className={clsx(
                 "border rounded-xl transition-all mb-6 shadow-sm group relative overflow-hidden",
                 isSuggestion
@@ -293,6 +308,75 @@ export const SynthBlock: React.FC<SynthBlockProps> = ({ node, onRefresh }) => {
                     </span>
                 </div>
             </div>
+
+            {expanded && concepts && concepts.concepts.length > 0 && (
+                <div className="px-4 py-2 border-b border-slate-100 bg-white">
+                    <div className="text-[10px] font-bold text-slate-400 uppercase mb-1 tracking-wider">Concepts</div>
+                    {!concepts.exported && (
+                        <div className="text-[10px] text-slate-400 mb-1">Subsections carry the exported concepts</div>
+                    )}
+                    <ul className="space-y-0.5">
+                        {concepts.concepts.map(c => {
+                            const first = c.sources[0];
+                            return (
+                                <li key={c.concept} className="flex items-center flex-wrap gap-x-2 gap-y-0.5 text-[11px] leading-5">
+                                    <span className="font-medium text-slate-700">{c.concept}</span>
+                                    {first ? (
+                                        <>
+                                            <span className="text-slate-400">
+                                                {first.filename} ·{' '}
+                                                <button
+                                                    onClick={() => setActiveSlideId(first.slide_id)}
+                                                    className="text-brand-teal hover:underline"
+                                                >
+                                                    {slideLabel(first.slide_id, first.number)}
+                                                </button>
+                                                {c.sources.length > 1 && <span> +{c.sources.length - 1}</span>}
+                                            </span>
+                                            {!first.in_section && (
+                                                <span className="text-slate-400 italic">not on this section's slides</span>
+                                            )}
+                                        </>
+                                    ) : (
+                                        <span className="text-slate-400 italic">no source slide</span>
+                                    )}
+                                    {c.repeated_in.length > 0 && (
+                                        <span
+                                            className={clsx(
+                                                "px-1.5 rounded-full border",
+                                                c.overlap
+                                                    ? "bg-amber-50 text-amber-700 border-amber-200"
+                                                    : "bg-slate-100 text-slate-500 border-slate-200"
+                                            )}
+                                            title={c.overlap
+                                                ? "Overlap: rendering will ask for a reason"
+                                                : "Overview, safety and assessment sections revisit by design"}
+                                        >
+                                            also in{' '}
+                                            {c.repeated_in.map((r, i) => (
+                                                <React.Fragment key={r.id}>
+                                                    {i > 0 && ', '}
+                                                    <button onClick={() => goToSection(r.id)} className="hover:underline">
+                                                        {r.title}
+                                                    </button>
+                                                </React.Fragment>
+                                            ))}
+                                        </span>
+                                    )}
+                                    <button
+                                        onClick={() => handleRemoveConcept(c.concept)}
+                                        className="ml-auto text-slate-300 hover:text-red-500"
+                                        title="Remove this concept from this section only"
+                                        aria-label={`Remove ${c.concept} from this section`}
+                                    >
+                                        <X size={12} />
+                                    </button>
+                                </li>
+                            );
+                        })}
+                    </ul>
+                </div>
+            )}
 
             {expanded && (
                 <div className="p-4 flex gap-6">

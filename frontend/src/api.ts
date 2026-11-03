@@ -54,6 +54,41 @@ export interface TargetDraftNode {
     level?: number; // Hierarchy depth; the decks send top-level as 1, so the UI indents relative to each course's shallowest
 }
 
+// The HTTP status and the body's `detail` of a failed request; both undefined when there was no response.
+export const httpError = (e: unknown): { status?: number; detail?: unknown } =>
+    axios.isAxiosError(e) ? { status: e.response?.status, detail: e.response?.data?.detail } : {};
+
+export interface ConceptSource {
+    slide_id: string;
+    filename: string;
+    number: number;
+    in_section: boolean;
+}
+
+export interface ConceptRepeat {
+    id: string;
+    title: string;
+    role: string;
+}
+
+export interface SectionConcept {
+    concept: string;
+    sources: ConceptSource[];
+    repeated_in: ConceptRepeat[];
+    overlap: boolean;
+}
+
+export interface SectionConcepts {
+    exported: boolean;
+    inherited: boolean;
+    concepts: SectionConcept[];
+}
+
+export type RenderGateDetail =
+    | { kind: 'unfinished'; message: string; unfinished: number; total: number; sections: { id: string; title: string }[] }
+    | { kind: 'problems'; message: string; problems: string[] }
+    | { kind: 'concept_overlap'; message: string; overlaps: { concept: string; sections: { id: string; title: string }[] }[] };
+
 export interface CourseNode {
     id: string;
     name: string;
@@ -208,8 +243,19 @@ export const api = {
         });
         return res.data;
     },
-    triggerRender: async (projectId: string, format: string = "pptx", templateName: string = "standin"): Promise<TriggerRenderResponse> => {
-        const res = await axios.post<TriggerRenderResponse>(`${API_URL}/render/trigger`, { project_id: projectId, format, template_name: templateName });
+    triggerRender: async (projectId: string, format: string = "pptx", templateName: string = "standin", renderAnywayReason?: string): Promise<TriggerRenderResponse> => {
+        const res = await axios.post<TriggerRenderResponse>(`${API_URL}/render/trigger`, {
+            project_id: projectId, format, template_name: templateName,
+            ...(renderAnywayReason ? { render_anyway_reason: renderAnywayReason } : {}),
+        });
+        return res.data;
+    },
+    getSectionConcepts: async (projectId: string) => {
+        const res = await axios.get<{ sections: Record<string, SectionConcepts> }>(`${API_URL}/draft/concepts/${projectId}`);
+        return res.data.sections;
+    },
+    removeSectionConcept: async (nodeId: string, concept: string) => {
+        const res = await axios.post<{ node_id: string; concepts: string[] }>(`${API_URL}/draft/node/concept/remove`, { node_id: nodeId, concept });
         return res.data;
     },
     listTemplates: async () => {

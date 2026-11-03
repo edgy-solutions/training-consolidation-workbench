@@ -2,7 +2,9 @@
 
 The code names no template, layout or placeholder index; those come from the mapping file.
 """
+import hashlib
 import io
+import json
 import os
 import re
 from dataclasses import dataclass
@@ -202,7 +204,23 @@ def _drop_template_slides(prs):
         ids.remove(sld)
 
 
-def export_deck(course: Course, mapping_path, out_path, resolve_image) -> Path:
+def deck_digest(course, images) -> str:
+    """sha256 of what the exporter writes: each slide's number, role, fields and picture bytes.
+    It hashes the content, not the file: a pptx is a zip with write times in it."""
+    rows = []
+    for n, (role, item) in enumerate(iter_slides(course), start=1):
+        data = images.get(item.id) if role == "concept-with-figure" else None
+        rows.append([n, role, _expected_fields(role, item, course),
+                     hashlib.sha256(data).hexdigest() if data else None])
+    blob = json.dumps(rows, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    return hashlib.sha256(blob.encode("utf-8")).hexdigest()
+
+
+def _comments(digest, render_anyway):
+    return f"deck_export/1 slides_sha256={digest}" + (" render_anyway=yes" if render_anyway else "")
+
+
+def export_deck(course: Course, mapping_path, out_path, resolve_image, render_anyway: bool = False) -> Path:
     out_path = Path(out_path)
     mapping = load_mapping(mapping_path)
     problems = validate(mapping, course)
@@ -227,7 +245,10 @@ def export_deck(course: Course, mapping_path, out_path, resolve_image) -> Path:
     if problems:
         raise DeckExportError(problems)
 
+    digest = deck_digest(course, images)
+    comments = _comments(digest, render_anyway)
     prs = Presentation(str(mapping.template_path))
+    prs.core_properties.comments = comments
     layouts = {name: found[0] for name, found in _layouts_by_name(prs).items()}
     _drop_template_slides(prs)
     for role, item in iter_slides(course):
@@ -258,9 +279,13 @@ def export_deck(course: Course, mapping_path, out_path, resolve_image) -> Path:
     try:
         prs.save(str(tmp))
         problems = check_round_trip(course, mapping, tmp)
+        written = Presentation(str(tmp)).core_properties.comments
+        if written != comments:
+            problems.append(f"the deck records {written!r} in its properties, expected {comments!r}")
         if problems:
             raise DeckExportError(problems)
         os.replace(tmp, out_path)
+        course.slides_sha256 = digest
     finally:
         if tmp.exists():
             tmp.unlink()
@@ -336,9 +361,6 @@ def check_round_trip(course, mapping, pptx_path) -> List[str]:
             if body != want_lines:
                 problems.append(f"slide {n}: the sources slide lists {body}, the course cites {want_lines}")
 
-    for c, where in seen.items():
-        if len(where) > 1:
-            problems.append(f"concept '{c}' appears on {len(where)} slides: {where}")
     for c in course_concepts(course):
         if c not in seen:
             problems.append(f"concept '{c}' appears on no concept slide")

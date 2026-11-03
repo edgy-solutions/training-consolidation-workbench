@@ -45,11 +45,12 @@ def test_extra_concept_in_notes(exported, tmp_path):
     assert any("Invented concept" in p for p in _tamper(exported, tmp_path, fn))
 
 
-def test_concept_repeated_on_two_slides(exported, tmp_path):
+def test_concept_from_another_leaf_on_a_slide_is_still_caught(exported, tmp_path):
     def fn(prs):
         prs.slides[3].notes_slide.notes_text_frame.text += "; Gear pump; Hydraulic pressure"
     problems = _tamper(exported, tmp_path, fn)
-    assert any("'Hydraulic pressure' appears on 2 slides" in p for p in problems)
+    assert any("'Hydraulic pressure' is not in the course for this leaf" in p for p in problems)
+    assert not any("appears on" in p for p in problems)
 
 
 def test_picture_removed(exported, tmp_path):

@@ -155,11 +155,11 @@ class GraphFreeNeo4j:
         self.nodes = nodes if nodes is not None else self.data["nodes"]
 
     def execute_query(self, query, params=None):
-        assert "Slide" not in query, query
         if query == PROJECT_QUERY:
             return [{"title": self.data["project"]["title"], "deck_ids": self.deck_ids}]
         if query == COURSE_NODES_QUERY:
             return [dict(n) for n in self.nodes]
+        assert "Slide" not in query, query  # no deck-slide query (the outline query names Slides only for ids)
         raise AssertionError(query)
 
 

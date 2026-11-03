@@ -95,6 +95,7 @@ class RenderRequest(BaseModel):
     project_id: str
     format: str = "pptx" # "pptx" or "typ"
     template_name: Optional[str] = "standin"
+    render_anyway_reason: Optional[str] = Field(None, max_length=500)
 
 class ProjectTreeResponse(BaseModel):
     """Full project tree structure with all nodes"""
