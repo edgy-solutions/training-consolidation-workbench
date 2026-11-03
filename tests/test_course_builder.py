@@ -225,12 +225,12 @@ def test_missing_role_is_technical():
     assert next(iter_leaves(build([node("a")]))).role == "technical"
 
 
-@pytest.mark.parametrize("role", ["introduction", "mandatory_assessment"])
+@pytest.mark.parametrize("role", ["introduction", "mandatory_safety", "mandatory_assessment"])
 def test_repeat_with_a_revisiting_section_is_silent(role):
     assert overlaps([node("a", concepts=["x"]), node("b", order=1, concepts=["x"]) | {"section_type": role}]) == {}
 
 
-@pytest.mark.parametrize("role", [None, "technical", "mandatory_safety", "something_new"])
+@pytest.mark.parametrize("role", [None, "technical", "something_new"])
 def test_two_concept_role_leaves_overlap(role):
     b = node("b", order=1, concepts=["x"])
     if role:

@@ -350,7 +350,7 @@ export const SynthBlock: React.FC<SynthBlockProps> = ({ node, concepts, onRefres
                                             )}
                                             title={c.overlap
                                                 ? "Overlap: rendering will ask for a reason"
-                                                : "Overview and assessment sections revisit by design"}
+                                                : "Overview, safety and assessment sections revisit by design"}
                                         >
                                             also in{' '}
                                             {c.repeated_in.map((r, i) => (

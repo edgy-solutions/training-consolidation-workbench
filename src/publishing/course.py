@@ -54,7 +54,7 @@ class Course:
     slides_sha256: Optional[str] = None
 
 
-REVISITING_ROLES = {"introduction", "mandatory_assessment"}
+REVISITING_ROLES = {"introduction", "mandatory_safety", "mandatory_assessment"}
 
 MARKDOWN_IMAGE = re.compile(r"!\[[^\]]*\]\(\s*([^)\s]+)[^)]*\)")
 ASSET_REF = re.compile(r"\{\{\s*([^{}\s]+)\s*\}\}")
@@ -92,7 +92,7 @@ def course_concepts(course) -> List[str]:
 
 
 def concept_overlaps(course) -> List[Dict]:
-    """Concepts named by two or more concept-role leaves (introduction and assessment leaves are not counted)."""
+    """Concepts named by two or more concept-role leaves (leaves of a revisiting role are not counted)."""
     where: Dict[str, List[dict]] = {}
     for leaf in iter_leaves(course):
         if leaf.role in REVISITING_ROLES:

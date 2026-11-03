@@ -109,7 +109,7 @@ The order is the tree, depth-first. Siblings are sorted by `order` ascending; a 
 
 **A concept may be taught on more than one leaf.** A repeat is not a failure.
 - A leaf's *role* is the `section_type` of its top-level ancestor (`introduction`, `mandatory_safety`, `technical`, `mandatory_assessment`; missing means `technical`), inherited down the tree.
-- A repeat that involves an `introduction` or `mandatory_assessment` leaf is by design and passes silently. Every other role, `mandatory_safety` and unknown values included, is a concept role.
+- A repeat that involves an `introduction`, `mandatory_safety` or `mandatory_assessment` leaf is by design and passes silently. Every other role, unknown values included, is a concept role.
 - A concept named by two or more concept-role leaves is an **overlap**. It is judged per concept: if it is on an introduction leaf and on concept-role leaves A and B, the overlap is A and B. Only leaves count; a concept on a parent section does not.
 - Rendering a course with an overlap needs an explicit "render anyway" with a reason. The render route answers 409 until it has one, and `render_project` refuses on its own, so a Dagster run or a race cannot skip it.
 - The reason is recorded, not delivered: `render_overrides` on the Project holds one JSON entry per such render (`schema`, `slides_sha256`, `reason`, `by`, `at`, `filename`, `overlaps`), joined to the deck by `slides_sha256` (§6). The deck itself carries no free text; its properties say only `render_anyway=yes`.
