@@ -31,6 +31,12 @@ api:
   deckTemplate:
     uri: ""                 # s3://<bucket>/<key> of the .pptx; empty = the stand-in
     mappingConfigMap: ""    # ConfigMap with key deck-template.yaml
+    # s3://<bucket>/<prefix>: where templates saved from the settings screen are kept (<prefix>/active.yaml and
+    # <prefix>/<sha256>.pptx). Empty = saving from the UI is off. A saved template wins over uri.
+    store: ""
+    # true renders WB_DECK_TEMPLATE_UI=on and shows the settings screen. Saving from it still needs the store,
+    # WB_STORE_WRITES=on and the can_configure:deck_template grant. Exports ignore it.
+    ui: false
   # A CA the api must trust beyond the public roots, e.g. for an https Keycloak, LLM or MinIO
   # signed by a private CA. An init container appends it to the image's system bundle, and
   # SSL_CERT_FILE / REQUESTS_CA_BUNDLE point at the result (it replaces, never adds to, the

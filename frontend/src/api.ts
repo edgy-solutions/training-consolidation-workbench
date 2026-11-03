@@ -145,6 +145,49 @@ axios.interceptors.request.use(config => {
     return Promise.reject(error);
 });
 
+// --- Deck template settings (docs/contracts/deck-template.md section 8) ---
+export interface TemplatePlaceholder {
+    idx: number;
+    name: string;
+    type: string;
+    accepts_image: boolean;
+    mappable: boolean;
+    left: number | null; // EMU
+    top: number | null;
+    width: number | null;
+    height: number | null;
+}
+
+export interface TemplateLayout {
+    name: string;
+    index: number; // 0-based position among all layouts, masters in order; a mapping's layout_index
+    name_count: number; // > 1: several layouts carry this name; the mapping disambiguates by index and warns
+    placeholders: TemplatePlaceholder[];
+}
+
+export interface TemplateInspection {
+    slide_width: number;
+    slide_height: number;
+    layouts: TemplateLayout[];
+}
+
+// field -> placeholder idx, or 'notes-page' for the notes field
+export type FieldMapping = Record<string, number | string>;
+export type RoleMapping = Record<string, { layout: string; layout_index?: number; placeholders: FieldMapping }>;
+
+export interface DeckTemplateSettings {
+    source: 'saved' | 'deployment' | 'standin';
+    store_enabled: boolean;
+    can_configure: boolean;
+    filename: string | null;
+    saved_by: string | null;
+    saved_at: string | null;
+    role_spec: Record<string, { required: string[]; optional: string[] }>;
+    roles: RoleMapping;
+    template: TemplateInspection;
+    warnings: string[];
+}
+
 export interface GenerateJob {
     job_id: string;
     status: 'QUEUED' | 'RUNNING' | 'SUCCESS' | 'FAILURE' | 'LOST';
@@ -260,6 +303,31 @@ export const api = {
     },
     listTemplates: async () => {
         const res = await axios.get<{ templates: string[] }>(`${API_URL}/render/templates`);
+        return res.data;
+    },
+    getDeckTemplate: async () => {
+        const res = await axios.get<DeckTemplateSettings>(`${API_URL}/settings/deck-template`);
+        return res.data;
+    },
+    getDeckTemplateEnabled: async () => {
+        const res = await axios.get<{ enabled: boolean }>(`${API_URL}/settings/deck-template/enabled`);
+        return res.data.enabled;
+    },
+    inspectDeckTemplate: async (file: File) => {
+        const form = new FormData();
+        form.append('file', file);
+        const res = await axios.post<TemplateInspection>(`${API_URL}/settings/deck-template/inspect`, form);
+        return res.data;
+    },
+    saveDeckTemplate: async (roles: RoleMapping, file?: File | null) => {
+        const form = new FormData();
+        form.append('roles', JSON.stringify(roles));
+        if (file) form.append('file', file);
+        const res = await axios.put<DeckTemplateSettings>(`${API_URL}/settings/deck-template`, form);
+        return res.data;
+    },
+    resetDeckTemplate: async () => {
+        const res = await axios.delete<DeckTemplateSettings>(`${API_URL}/settings/deck-template`);
         return res.data;
     },
     getConceptHeatmap: async (term: string) => {

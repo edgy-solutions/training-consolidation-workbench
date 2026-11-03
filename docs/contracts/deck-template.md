@@ -43,6 +43,15 @@ roles:
     placeholders: {title: 0, body: 1}
 ```
 
+A role may also carry `layout_index`, which is optional. It is the 0-based position of the layout among all the layouts in the template, counting each slide master in turn and then that master's layouts in order. It must agree with `layout`: the layout at that position must have that name. It is how a role picks one layout when several carry the same name (§2.3).
+
+```yaml
+  concept:
+    layout: Title Only
+    layout_index: 7
+    placeholders: {title: 0, body: 1}
+```
+
 ### 2.1 Roles
 
 There are six roles, and each slide in the export has exactly one.
@@ -68,12 +77,15 @@ The exporter checks the mapping against the template and the course **before wri
 - `deck_template` is missing or is not `1`, or the template file is missing.
 - **A role the course needs is not mapped.** The message names the role (`role 'concept-with-figure' is not mapped`). Roles the course does not need may be left unmapped.
 - An unknown role or field name. Typos fail; they are not ignored.
-- A `layout` that no slide layout in the template carries, or that more than one layout carries. The message lists the template's layout names.
-- A placeholder `idx` the layout does not have, or an `image` placeholder that cannot take a picture.
+- A `layout` that no slide layout in the template carries. The message lists the template's layout names.
+- A `layout_index` that is out of range, is not an integer, or is the position of a layout with a different name from `layout`. The message names the role, the index and both names.
+- A placeholder `idx` the layout does not have (checked against the layout the role resolves to), or an `image` placeholder that cannot take a picture.
 - A required field (§2.1) that is not mapped.
 - **Content with no mapped field to go to,** for example a title slide with a subtitle when the `title` role maps no `body`. Content is never dropped.
 
-**Nothing falls back.** There is no default role, default layout or "first layout". An export either meets this contract or fails.
+**Nothing falls back,** with one exception. There is no default role or default layout. The exception is a name that several layouts carry, with no `layout_index`: the exporter uses the first of them in template order and warns. A `layout_index` that agrees with `layout` always chooses that layout. Everything else either meets this contract or fails.
+
+**A duplicate layout name is a warning, never a failure.** Corporate templates often reuse a name. The warning names the role, the layout name, how many layouts carry it and the position used; for the no-index case it also says to set `layout_index`. It is printed once per export, and the settings screen shows it when the template is opened and after a save (`warnings` in the settings state). A save is never refused for it. A layout name carried by one layout needs no `layout_index` and gives no warning.
 
 ### 2.4 What the exporter does with the template
 
@@ -169,3 +181,25 @@ The check reads the written `.pptx` back and compares it with the course. It run
 
 - **Adding a role or field** is a contract change: bump `deck_template` and update the stand-in and its mapping in the same commit.
 - **A new template** (the customer's included) is a data change: one `.pptx` plus one mapping file, kept wherever that template's owner keeps them.
+
+## 8. Choosing the template from the settings screen
+
+A person holding `can_configure:deck_template` (Topaz) can upload a template and map its roles in the workbench's settings screen, instead of shipping a mapping file with the deployment. The mapping format (§2) and its validation (§2.3) are unchanged, and `deck_template` stays `1`.
+
+**Which template is in force.** In this order:
+1. the template saved from the screen;
+2. the deployment's `DECK_TEMPLATE_URI` and `DECK_TEMPLATE` (§1);
+3. the repo stand-in.
+
+Nothing falls back past a failure: if the store holds a pointer but cannot be read, exports fail naming the store, and they do not use a lower choice. Saving from the screen is on only when `DECK_TEMPLATE_STORE=s3://<bucket>/<prefix>` is set. Unset, the store is never read and the order is just 2 then 3.
+
+**The flag.** The screen is behind `WB_DECK_TEMPLATE_UI` (chart `api.deckTemplate.ui`), default off, in addition to `can_configure:deck_template`. Off: the gear is not shown and every `/settings/deck-template` route except `/settings/deck-template/enabled` answers 404. Exports do not read the flag: a saved template stays in force, so turning the flag off does not change decks. Going back to the deployment's template means Reset before turning it off, or deleting `active.yaml`.
+
+**Store layout.**
+- `<prefix>/<sha256>.pptx`: the template, named by the hash of its bytes. The uploaded file name is never part of a key.
+- `<prefix>/active.yaml`: the one pointer. It holds `deck_template: 1`, `template: s3://…/<sha256>.pptx`, `source: {filename, saved_by, saved_at}` and `roles` (§2). The `.pptx` is written first and the pointer last, so a save either lands whole or not at all.
+- "Reset to deployment default" deletes `active.yaml` only. The `.pptx` objects stay.
+
+**What a save must meet.** All six roles must be mapped, which is stricter than §2.3's per-course rule, so a saved template can never later fail with "role not mapped". A field cannot be mapped to a date, footer or slide-number placeholder: python-pptx does not copy those onto a new slide, so they could never be filled. A duplicate layout name is a warning, not a refusal (§2.3). Every problem is reported together.
+
+**The trial export.** After the checks above, the workbench runs the real exporter, round-trip check included (§6), on a small built-in course with a section, a concept slide, a figure slide, a summary and a sources slide. If that fails, nothing is written to the store.

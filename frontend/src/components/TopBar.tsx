@@ -6,6 +6,7 @@ import { LoginButton } from './LoginButton';
 import { LogoutButton } from './LogoutButton';
 import { useAuth } from 'react-oidc-context';
 import { api } from '../api';
+import { DeckTemplateSettings } from './DeckTemplateSettings';
 
 interface TopBarProps {
     discipline: string;
@@ -28,6 +29,9 @@ const ICONS: Record<string, LucideIcon> = {
 
 export const TopBar: React.FC<TopBarProps> = ({ discipline, setDiscipline }) => {
     const auth = useAuth();
+    const [settingsOpen, setSettingsOpen] = useState(false);
+    // The gear shows only when the api has the settings screen on (WB_DECK_TEMPLATE_UI); a failed ask leaves it hidden.
+    const [settingsEnabled, setSettingsEnabled] = useState(false);
     // const userDisplay = auth.user?.profile.preferred_username || auth.user?.profile.email || "Guest";
 
     // The buttons come from the disciplines the courses actually carry (/source/filters domains).
@@ -38,6 +42,12 @@ export const TopBar: React.FC<TopBarProps> = ({ discipline, setDiscipline }) => 
         api.getFilterOptions()
             .then(f => setDomains(f.domains))
             .catch(err => console.error("Failed to load disciplines", err));
+    }, []);
+
+    useEffect(() => {
+        api.getDeckTemplateEnabled()
+            .then(setSettingsEnabled)
+            .catch(err => console.error("Failed to load the deck template setting", err));
     }, []);
 
     // A persisted choice that no course carries any more would hide every course.
@@ -96,7 +106,18 @@ export const TopBar: React.FC<TopBarProps> = ({ discipline, setDiscipline }) => 
                 )}
                 <LoginButton />
                 <LogoutButton />
-                <Settings size={18} className="cursor-pointer hover:text-white" />
+                {settingsEnabled && (
+                    <button
+                        type="button"
+                        aria-label="Deck template settings"
+                        title="Deck template settings"
+                        onClick={() => setSettingsOpen(true)}
+                        className="hover:text-white"
+                    >
+                        <Settings size={18} />
+                    </button>
+                )}
+                {settingsOpen && <DeckTemplateSettings onClose={() => setSettingsOpen(false)} />}
             </div>
         </div>
     );
