@@ -23,6 +23,7 @@ Its output is one `.pptx`. Before returning, it runs the round-trip check (§6) 
 deck_template: 1                 # this contract's version
 template: standin.pptx           # path relative to this file
 max_bullets_per_slide: 5         # optional; a longer body continues on the next slide
+max_summary_items: 12            # optional; concepts beyond this go in the summary's notes
 roles:
   title:
     layout: title                # a layout name in the template
@@ -72,6 +73,7 @@ There are six roles, and each slide in the export has exactly one.
 - **`notes`.** The value is `notes-page` (the slide's speaker-notes page) or a placeholder `idx`. If it is omitted, it means `notes-page`. The notes page exists in every deck, so the default cannot drop content. The citation (§4) goes here. Notes carry the citation, so a course with sources cannot use a placeholder here: the round trip refuses a filename on a slide face (§6).
 - **`citation` is retired.** A mapping that still names `citation` on `concept` or `concept-with-figure` is accepted: the exporter warns (`role 'concept': field 'citation' is retired; citations now go in the speaker notes and the placeholder is removed from the slide`), does not check its `idx`, writes nothing to it, and removes that placeholder from the slide. The `sources` role has no `notes` field to map: its notes page is always written (§3.5).
 - **`max_bullets_per_slide`.** A top-level setting, optional, default `5`: a whole number of at least 1. It is how many lines a body may hold before it continues on another slide (§2.4).
+- **`max_summary_items`.** A top-level setting, optional, default `12`: a whole number of at least 1. It is how many concepts the summary slides list; the rest go in the last summary slide's speaker notes (§3.5).
 
 ### 2.3 Validation
 
@@ -81,6 +83,7 @@ The exporter checks the mapping against the template and the course **before wri
 - **A role the course needs is not mapped.** The message names the role (`role 'concept-with-figure' is not mapped`). Roles the course does not need may be left unmapped.
 - An unknown role or field name. Typos fail; they are not ignored. The retired `citation` (§2.2) is the one exception.
 - A `max_bullets_per_slide` that is not a whole number of at least 1 (`max_bullets_per_slide must be a whole number of at least 1, got '5'`). A boolean is not a number here.
+- A `max_summary_items` that is not a whole number of at least 1 (`max_summary_items must be a whole number of at least 1, got 0`). A boolean is not a number here.
 - A `layout` that no slide layout in the template carries. The message lists the template's layout names.
 - A `layout_index` that is out of range, is not an integer, or is the position of a layout with a different name from `layout`. The message names the role, the index and both names.
 - A placeholder `idx` the layout does not have (checked against the layout the role resolves to), or an `image` placeholder that cannot take a picture.
@@ -153,7 +156,7 @@ The order is the tree, depth-first. Siblings are sorted by `order` ascending; a 
 
 ### 3.5 Generated slides
 
-- **`summary`.** `title` "Summary"; `body` lists every concept once, one bullet each, in course order. It continues like any body (§2.4).
+- **`summary`.** `title` "Summary"; `body` lists the first `max_summary_items` concepts, one bullet each, in course order. It continues like any body (§2.4). When concepts remain, the last summary slide's body ends with one more line, `+<n> more in notes` (`+1 more in notes` for one), written as a plain line with no bullet marker and not counted against `max_bullets_per_slide`, so it never makes a slide of its own. The remaining concepts are in that slide's speaker notes, one per line in course order. At or under the cap the summary has no such line and no notes.
 - **`sources`.** `title` "Sources"; `body` is a count line, `<n> source decks, <m> cited slides` ("1 source deck", "1 cited slide" in the singular). The slide's speaker notes have one line per source deck, in order of first citation: `<filename>: slides 1, 2, 4`.
 
 ## 4. Citations
@@ -187,7 +190,7 @@ The check reads the written `.pptx` back and compares it with the course. It run
 4. **Images.** Every `concept-with-figure` slide holds a picture, and no other slide does.
 5. **Nothing extra.**
    - No concept, citation, deck or slide appears in the export that is not in the course.
-   - The summary slides together list exactly the course's concepts.
+   - The summary slides' faces, with the last one's speaker notes, together list exactly the course's concepts: the faces the first `max_summary_items` and the `+<n> more in notes` line, the notes the rest.
    - The sources slide's face is the count line (§3.5) and its notes list exactly the cited decks and slides.
    - No source filename is on any slide face (§4).
 6. **The deck records its content.** The deck's `comments` property reads `deck_export/1 slides_sha256=<hex>`, with ` render_anyway=yes` appended when the render went ahead over an overlap. The digest is the sha256 of the canonical JSON of each slide's number, role, expected fields and picture bytes, so two exports of one course give one digest. The exporter reads the property back after saving.
@@ -195,6 +198,7 @@ The check reads the written `.pptx` back and compares it with the course. It run
 ## 7. Changing this contract
 
 - **Adding a role or field** is a contract change: bump `deck_template` and update the stand-in and its mapping in the same commit.
+- **Adding an optional key with a default** does not bump `deck_template`: a mapping written before it still validates and means what it meant. `layout_index`, `max_bullets_per_slide` and `max_summary_items` are such keys.
 - **A new template** (the customer's included) is a data change: one `.pptx` plus one mapping file, kept wherever that template's owner keeps them.
 
 ## 8. Choosing the template from the settings screen

@@ -1,7 +1,7 @@
 """The consolidated course the deck exporter takes as input (docs/contracts/deck-template.md section 3)."""
 import re
 from dataclasses import dataclass, field, replace
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 from urllib.parse import unquote, urlparse
 
 from src.publishing.image_ids import ImageRefError, deck_prefix, image_objects, list_generated_objects, split
@@ -158,6 +158,7 @@ def sources_body(course) -> str:
 
 
 DEFAULT_MAX_BULLETS = 5
+DEFAULT_MAX_SUMMARY_ITEMS = 12
 CONT_SUFFIX = " (cont.)"
 _HEADING = re.compile(r"^#+\s+")
 
@@ -232,10 +233,23 @@ def split_bullets(body, max_bullets) -> List[str]:
 class SummaryPart:
     title: str
     body: str
+    notes: str = ""
 
 
-def deck_slides(course, max_bullets=DEFAULT_MAX_BULLETS):
-    """(role, item) in export order: iter_slides, with a long body or the summary split over continuation slides."""
+def summary_items(course, max_items) -> Tuple[List[str], List[str]]:
+    """(shown, rest): the course's concepts in order, the first max_items for the summary face and the remainder."""
+    concepts = course_concepts(course)
+    return concepts[:max_items], concepts[max_items:]
+
+
+def more_in_notes(rest) -> str:
+    """The line that ends the summary face when concepts remain, or "" when none do."""
+    return f"+{len(rest)} more in notes" if rest else ""
+
+
+def deck_slides(course, max_bullets=DEFAULT_MAX_BULLETS, max_summary=DEFAULT_MAX_SUMMARY_ITEMS):
+    """(role, item) in export order: iter_slides, with a long body or the summary split over continuation slides.
+    The summary shows max_summary concepts; the rest go in the last summary slide's notes."""
     for role, item in iter_slides(course):
         if role in ("concept", "concept-with-figure"):
             for i, chunk in enumerate(split_bullets(item.body, max_bullets)):
@@ -244,9 +258,13 @@ def deck_slides(course, max_bullets=DEFAULT_MAX_BULLETS):
                 else:
                     yield "concept", replace(item, title=item.title + CONT_SUFFIX, body=chunk, figure=None, notes="")
         elif role == "summary":
-            body = "\n".join("- " + c for c in course_concepts(course))
-            for i, chunk in enumerate(split_bullets(body, max_bullets)):
-                yield "summary", SummaryPart("Summary" + (CONT_SUFFIX if i else ""), chunk)
+            shown, rest = summary_items(course, max_summary)
+            chunks = split_bullets("\n".join("- " + c for c in shown), max_bullets)
+            if rest:  # the line is not a bullet and does not count against max_bullets
+                chunks[-1] += "\n" + more_in_notes(rest)
+            for i, chunk in enumerate(chunks):
+                last = i == len(chunks) - 1
+                yield "summary", SummaryPart("Summary" + (CONT_SUFFIX if i else ""), chunk, "\n".join(rest) if last else "")
         else:
             yield role, item
 

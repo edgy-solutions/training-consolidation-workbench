@@ -20,7 +20,7 @@ from pptx.shapes.placeholder import PicturePlaceholder
 from src.publishing.deck_template import DECK_TEMPLATE_VERSION, STANDIN_MAPPING
 from src.publishing.image_ids import ImageRefError
 from src.publishing.course import (
-    DEFAULT_MAX_BULLETS, Course, DeckExportError, course_concepts, deck_slides, decks, format_citation,
+    DEFAULT_MAX_BULLETS, DEFAULT_MAX_SUMMARY_ITEMS, Course, DeckExportError, course_concepts, deck_slides, decks, format_citation, more_in_notes, summary_items,
     format_deck_line, iter_leaves, notes_text, sources_body, title_body,
 )
 
@@ -48,6 +48,7 @@ class Mapping:
     template: Optional[str]
     roles: Dict[str, dict]
     max_bullets_per_slide: object = DEFAULT_MAX_BULLETS
+    max_summary_items: object = DEFAULT_MAX_SUMMARY_ITEMS
 
     @property
     def template_path(self) -> Optional[Path]:
@@ -63,7 +64,7 @@ def load_mapping(path) -> Mapping:
     if not isinstance(raw, dict):
         raise DeckExportError([f"mapping file {path} is not a mapping"])
     return Mapping(path, raw.get("deck_template"), raw.get("template"), raw.get("roles") or {},
-                   raw.get("max_bullets_per_slide", DEFAULT_MAX_BULLETS))
+                   raw.get("max_bullets_per_slide", DEFAULT_MAX_BULLETS), raw.get("max_summary_items", DEFAULT_MAX_SUMMARY_ITEMS))
 
 
 def _all_layouts(prs):
@@ -120,7 +121,7 @@ def mapping_warnings(mapping: Mapping) -> List[str]:
     return out
 
 
-def _valid_max_bullets(v) -> bool:
+def _valid_count(v) -> bool:
     return isinstance(v, int) and not isinstance(v, bool) and v >= 1
 
 
@@ -130,15 +131,17 @@ def _needed_roles(course, max_bullets=DEFAULT_MAX_BULLETS):
 
 def validate(mapping: Mapping, course) -> List[str]:
     v = mapping.max_bullets_per_slide
-    return validate_mapping(mapping, _needed_roles(course, v if _valid_max_bullets(v) else DEFAULT_MAX_BULLETS))
+    return validate_mapping(mapping, _needed_roles(course, v if _valid_count(v) else DEFAULT_MAX_BULLETS))
 
 
 def validate_mapping(mapping: Mapping, needed_roles) -> List[str]:
     problems: List[str] = []
     if mapping.version != DECK_TEMPLATE_VERSION:
         problems.append(f"deck_template is {mapping.version!r}, this exporter reads {DECK_TEMPLATE_VERSION}")
-    if not _valid_max_bullets(mapping.max_bullets_per_slide):
+    if not _valid_count(mapping.max_bullets_per_slide):
         problems.append(f"max_bullets_per_slide must be a whole number of at least 1, got {mapping.max_bullets_per_slide!r}")
+    if not _valid_count(mapping.max_summary_items):
+        problems.append(f"max_summary_items must be a whole number of at least 1, got {mapping.max_summary_items!r}")
     prs = None
     if not mapping.template:
         problems.append("the mapping names no template")
@@ -251,7 +254,7 @@ def _expected_fields(role, item, course):
     if role in ("concept", "concept-with-figure"):
         return {"title": item.title, "body": item.body, "notes": notes_text(item)}
     if role == "summary":
-        return {"title": item.title, "body": item.body}
+        return {"title": item.title, "body": item.body, "notes": item.notes}
     return {"title": "Sources", "body": sources_body(course), "notes": "\n".join(format_deck_line(d) for d in decks(course))}
 
 
@@ -262,11 +265,11 @@ def _drop_template_slides(prs):
         ids.remove(sld)
 
 
-def deck_digest(course, images, max_bullets=DEFAULT_MAX_BULLETS) -> str:
+def deck_digest(course, images, max_bullets=DEFAULT_MAX_BULLETS, max_summary=DEFAULT_MAX_SUMMARY_ITEMS) -> str:
     """sha256 of what the exporter writes: each slide's number, role, fields and picture bytes.
     It hashes the content, not the file: a pptx is a zip with write times in it."""
     rows = []
-    for n, (role, item) in enumerate(deck_slides(course, max_bullets), start=1):
+    for n, (role, item) in enumerate(deck_slides(course, max_bullets, max_summary), start=1):
         data = images.get(item.id) if role == "concept-with-figure" else None
         rows.append([n, role, _expected_fields(role, item, course),
                      hashlib.sha256(data).hexdigest() if data else None])
@@ -303,14 +306,14 @@ def export_deck(course: Course, mapping_path, out_path, resolve_image, render_an
     if problems:
         raise DeckExportError(problems)
 
-    digest = deck_digest(course, images, mapping.max_bullets_per_slide)
+    digest = deck_digest(course, images, mapping.max_bullets_per_slide, mapping.max_summary_items)
     comments = _comments(digest, render_anyway)
     prs = Presentation(str(mapping.template_path))
     prs.core_properties.comments = comments
     for warning in mapping_warnings(mapping):
         print(f"WARN: deck template: {warning}")
     _drop_template_slides(prs)
-    for role, item in deck_slides(course, mapping.max_bullets_per_slide):
+    for role, item in deck_slides(course, mapping.max_bullets_per_slide, mapping.max_summary_items):
         spec = mapping.roles[role]
         fields = dict(spec.get("placeholders") or {})
         if "notes" in ROLES[role]["optional"]:
@@ -336,7 +339,7 @@ def export_deck(course: Course, mapping_path, out_path, resolve_image, render_an
                 if f == "body":
                     frame.auto_size = MSO_AUTO_SIZE.TEXT_TO_FIT_SHAPE  # shrink on overflow; no font or size is set
                 used.add(idx)
-        if role == "sources":
+        if role == "sources" or (role == "summary" and item.notes):
             slide.notes_slide.notes_text_frame.text = values["notes"]
         for ph in list(slide.placeholders):
             if ph.placeholder_format.idx not in used:
@@ -384,7 +387,7 @@ def check_round_trip(course, mapping, pptx_path) -> List[str]:
     problems: List[str] = []
     prs = Presentation(str(pptx_path))
     slides = list(prs.slides)
-    expected = list(deck_slides(course, mapping.max_bullets_per_slide))
+    expected = list(deck_slides(course, mapping.max_bullets_per_slide, mapping.max_summary_items))
 
     want = [mapping.roles[role]["layout"] for role, _ in expected]
     got = [s.slide_layout.name for s in slides]
@@ -394,6 +397,7 @@ def check_round_trip(course, mapping, pptx_path) -> List[str]:
 
     seen: Dict[str, List[int]] = {}
     summary: List[str] = []
+    summary_notes: List[str] = []
     for n, (slide, (role, item)) in enumerate(zip(slides, expected), start=1):
         if role in ("concept", "concept-with-figure"):
             lines = _slide_text(slide, mapping, role, "notes") or []
@@ -424,6 +428,7 @@ def check_round_trip(course, mapping, pptx_path) -> List[str]:
 
         if role == "summary":
             summary += _slide_text(slide, mapping, role, "body") or []
+            summary_notes = _slide_text(slide, mapping, role, "notes") or []  # the last summary slide's wins
         if role == "sources":
             body = _slide_text(slide, mapping, role, "body")
             if body != [sources_body(course)]:
@@ -438,8 +443,12 @@ def check_round_trip(course, mapping, pptx_path) -> List[str]:
             if d["filename"] in face:
                 problems.append(f"slide {n}: source filename '{d['filename']}' is on the slide face")
 
-    if summary != course_concepts(course):
-        problems.append(f"the summary slides list {summary}, the course has {course_concepts(course)}")
+    shown, rest = summary_items(course, mapping.max_summary_items)
+    want_face = shown + ([more_in_notes(rest)] if rest else [])
+    if summary != want_face:
+        problems.append(f"the summary slides list {summary}, the course has {want_face}")
+    if summary_notes != rest:
+        problems.append(f"the last summary slide's notes list {summary_notes}, the course has {rest} beyond the summary")
     for c in course_concepts(course):
         if c not in seen:
             problems.append(f"concept '{c}' appears on no concept slide")

@@ -1,6 +1,7 @@
 deck_template: 1                 # this contract's version
 template: standin.pptx           # path relative to this file
 max_bullets_per_slide: 5         # a longer body continues on the next slide
+max_summary_items: 12            # concepts beyond this go in the summary's notes
 roles:
   title:
     layout: title                # a layout name in the template
