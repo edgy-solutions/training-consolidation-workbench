@@ -8,7 +8,7 @@ roles:
     placeholders: {title: 0, body: 1}
   section:
     layout: section
-    placeholders: {title: 0}
+    placeholders: {title: 0, body: 1}
   concept:
     layout: concept
     placeholders: {title: 0, body: 1, notes: notes-page}

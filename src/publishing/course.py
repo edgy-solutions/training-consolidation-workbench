@@ -45,6 +45,7 @@ class Section:
     id: str
     title: str
     children: list = field(default_factory=list)
+    body: str = ""
 
 
 @dataclass
@@ -172,6 +173,21 @@ def _indent(line) -> int:
     return len(expanded) - len(expanded.lstrip())
 
 
+def _norm_title(text) -> str:
+    return " ".join(text.casefold().split())
+
+
+def drop_repeated_title(title, body) -> str:
+    """The body without any heading line (any level) that repeats the slide title (case and spacing ignored),
+    when other lines remain; otherwise the body unchanged. A heading that differs from the title stays: it is reviewed text."""
+    lines = (body or "").splitlines()
+    rest = [ln for ln in lines
+            if not (_is_heading(ln) and _norm_title(_HEADING.sub("", ln.strip())) == _norm_title(title))]
+    if len(rest) == len(lines) or not any(ln.strip() for ln in rest):
+        return body
+    return "\n".join(rest)
+
+
 def split_bullets(body, max_bullets) -> List[str]:
     """Chunks of a body holding at most max_bullets lines each. A heading counts 0 and stays with what follows it;
     a bullet and its indented lines stay together unless that block alone is over the limit, which is cut by line."""
@@ -247,16 +263,34 @@ def more_in_notes(rest) -> str:
     return f"+{len(rest)} more in notes" if rest else ""
 
 
-def deck_slides(course, max_bullets=DEFAULT_MAX_BULLETS, max_summary=DEFAULT_MAX_SUMMARY_ITEMS):
+def _section_has_slide(item, section_body) -> bool:
+    return bool(section_body and (item.body or "").strip())
+
+
+def skipped_sections(course, section_body=True) -> List[Dict]:
+    """{"id", "title"} for each section that gets no slide, in order: it has no body, or the mapping maps no section body."""
+    return [{"id": item.id, "title": item.title} for role, item in iter_slides(course)
+            if role == "section" and not _section_has_slide(item, section_body)]
+
+
+def deck_slides(course, max_bullets=DEFAULT_MAX_BULLETS, max_summary=DEFAULT_MAX_SUMMARY_ITEMS, section_body=True):
     """(role, item) in export order: iter_slides, with a long body or the summary split over continuation slides.
+    A section yields its body as slides of role section, continuing like a concept; with no body, or when section_body
+    is false (the mapping maps no section body), it yields no slide and its children follow as usual.
+    A leading heading that repeats the title is dropped before splitting.
     The summary shows max_summary concepts; the rest go in the last summary slide's notes."""
     for role, item in iter_slides(course):
         if role in ("concept", "concept-with-figure"):
-            for i, chunk in enumerate(split_bullets(item.body, max_bullets)):
+            for i, chunk in enumerate(split_bullets(drop_repeated_title(item.title, item.body), max_bullets)):
                 if i == 0:
                     yield role, replace(item, body=chunk)
                 else:
                     yield "concept", replace(item, title=item.title + CONT_SUFFIX, body=chunk, figure=None, notes="")
+        elif role == "section":
+            if not _section_has_slide(item, section_body):
+                continue
+            for i, chunk in enumerate(split_bullets(drop_repeated_title(item.title, item.body), max_bullets)):
+                yield "section", replace(item, title=item.title + (CONT_SUFFIX if i else ""), body=chunk)
         elif role == "summary":
             shown, rest = summary_items(course, max_summary)
             chunks = split_bullets("\n".join("- " + c for c in shown), max_bullets)
@@ -353,7 +387,8 @@ def build_course(project, nodes, lookup) -> Course:
     def convert(n, role):
         kids = children_of(n["id"])
         if kids:
-            return Section(n["id"], n.get("title") or "", [convert(k, role) for k in kids])
+            return Section(n["id"], n.get("title") or "", [convert(k, role) for k in kids],
+                           split_body_and_figure(n.get("content_markdown"))[0])
         return make_leaf(n, role)
 
     def make_leaf(n, role):

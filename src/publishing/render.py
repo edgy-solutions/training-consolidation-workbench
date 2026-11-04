@@ -13,10 +13,11 @@ from src.publishing.course import (
     DeckExportError,
     build_course,
     concept_overlaps,
+    skipped_sections,
     unfinished_sections,
 )
 from src.publishing import deck_template
-from src.publishing.deck_export import export_deck
+from src.publishing.deck_export import export_deck, load_mapping
 from src.publishing.typst_generator import generate_typst_document
 
 FORMATS = {"pptx", "typ"}
@@ -137,11 +138,13 @@ def render_project(project_id, fmt, template_name, out_path, *, neo4j_client, mi
             raise DeckExportError(_overlap_lines(overlaps))
         anyway = bool(overlaps)
         export_deck(course, mapping_path, out_path, resolver, render_anyway=anyway)
-        if anyway:
+        skipped = skipped_sections(course, load_mapping(mapping_path).section_body)
+        if anyway or skipped:
+            given = override or {}
             entry = json.dumps({
                 "schema": "deck_export/1", "slides_sha256": course.slides_sha256,
-                "reason": override.get("reason"), "by": override.get("by"), "at": override.get("at"),
-                "filename": out_path.name, "overlaps": overlaps,
+                "reason": given.get("reason"), "by": given.get("by"), "at": given.get("at"),
+                "filename": out_path.name, "overlaps": overlaps, "skipped_sections": skipped,
             }, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
             neo4j_client.execute_query(RENDER_OVERRIDE_QUERY, {"id": project_id, "entry": entry})
     return out_path
