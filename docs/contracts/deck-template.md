@@ -30,7 +30,7 @@ roles:
     placeholders: {title: 0, body: 1}
   section:
     layout: section
-    placeholders: {title: 0}
+    placeholders: {title: 0, body: 1}
   concept:
     layout: concept
     placeholders: {title: 0, body: 1, notes: notes-page}
@@ -61,7 +61,7 @@ There are six roles, and each slide in the export has exactly one.
 | Role | One slide per | Required fields | Optional fields |
 |---|---|---|---|
 | `title` | course (first slide) | `title` | `body` (subtitle) |
-| `section` | section (§3.2) | `title` | `body` |
+| `section` | section with a body, plus continuations (§3.2, §2.4) | `title` | `body` |
 | `concept` | leaf without a figure, and each continuation (§2.4) | `title`, `body` | `notes` |
 | `concept-with-figure` | leaf with a figure (its first slide) | `title`, `body`, `image` | `notes` |
 | `summary` | course (after the last leaf), plus continuations (§2.4) | `title`, `body` | |
@@ -88,7 +88,8 @@ The exporter checks the mapping against the template and the course **before wri
 - A `layout_index` that is out of range, is not an integer, or is the position of a layout with a different name from `layout`. The message names the role, the index and both names.
 - A placeholder `idx` the layout does not have (checked against the layout the role resolves to), or an `image` placeholder that cannot take a picture.
 - A required field (§2.1) that is not mapped.
-- **Content with no mapped field to go to,** for example a title slide with a subtitle when the `title` role maps no `body`. Content is never dropped.
+- **Content with no mapped field to go to,** for example a title slide with a subtitle when the `title` role maps no `body`. Content is never dropped. The one exception is a section body: when the `section` role maps no `body`, section slides are skipped and recorded (§3.2), and the exporter warns.
+- **Headings.** A `#` heading line renders as a bold level-0 paragraph with no bullet. A leading heading that repeats the slide's title (case and spacing ignored) is removed as a duplicate, when other lines remain; any other heading stays.
 
 **Nothing falls back,** with one exception. There is no default role or default layout. The exception is a name that several layouts carry, with no `layout_index`: the exporter uses the first of them in template order and warns. A `layout_index` that agrees with `layout` always chooses that layout. Everything else either meets this contract or fails.
 
@@ -106,6 +107,7 @@ The exporter checks the mapping against the template and the course **before wri
   - Blocks fill a slide in order. A block that alone is over the limit is cut by line at the limit.
   - A body within the limit is written unchanged.
   - A continuation's title is the leaf's title plus ` (cont.)`, and its role is `concept`, even for a figure leaf, so a figure leaf's course needs the `concept` role mapped. The figure goes on the first slide only, and the leaf's own notes go on the first slide only. Every part carries the citation and `Concepts:` line (§3.3).
+  - A section body splits the same way. Its continuations are titled the section's title plus ` (cont.)` and keep the role `section`.
   - The `summary` splits the same way, one bullet per concept: `Summary`, then `Summary (cont.)`. There is always at least one.
 - The image is placed into its placeholder, which crops it to fit (`insert_picture`).
 
@@ -123,7 +125,7 @@ The order is the tree, depth-first. Siblings are sorted by `order` ascending; a 
 |---|---|
 | the Project | the `title` slide. `title` is the project title; `body` is "Consolidated from N source decks" ("1 source deck" when there is one). |
 | a TargetNode with `is_unassigned`, and its subtree | nothing: "Unassigned / For Review" is not part of the course |
-| a TargetNode with children | a `section` slide (`title` only; nesting deeper than one level still gives a `section` slide per node) |
+| a TargetNode with children | a `section` slide whose `title` is the node's title and whose `body` is the node's `content_markdown`, split like a leaf body (§2.4); nesting deeper than one level still gives a `section` slide per node. When the node has no body, or the mapping maps no `section` `body`, there is no slide, and the section is listed under `skipped_sections` in the render record (§3.3). Its children still get their slides. |
 | a TargetNode without children (a leaf) | a `concept-with-figure` slide if it has a figure (§3.4), otherwise a `concept` slide |
 
 ### 3.3 A leaf's fields
@@ -139,7 +141,7 @@ The order is the tree, depth-first. Siblings are sorted by `order` ascending; a 
 - A repeat that involves an `introduction`, `mandatory_safety` or `mandatory_assessment` leaf is by design and passes silently. Every other role, unknown values included, is a concept role.
 - A concept named by two or more concept-role leaves is an **overlap**. It is judged per concept: if it is on an introduction leaf and on concept-role leaves A and B, the overlap is A and B. Only leaves count; a concept on a parent section does not.
 - Rendering a course with an overlap needs an explicit "render anyway" with a reason. The render route answers 409 until it has one, and `render_project` refuses on its own, so a Dagster run or a race cannot skip it.
-- The reason is recorded, not delivered: `render_overrides` on the Project holds one JSON entry per such render (`schema`, `slides_sha256`, `reason`, `by`, `at`, `filename`, `overlaps`), joined to the deck by `slides_sha256` (§6). The deck itself carries no free text; its properties say only `render_anyway=yes`.
+- The reason is recorded, not delivered: `render_overrides` on the Project holds one JSON entry per such render (`schema`, `slides_sha256`, `reason`, `by`, `at`, `filename`, `overlaps`, `skipped_sections`), joined to the deck by `slides_sha256` (§6). The entry is also written when sections are skipped (§3.2): `skipped_sections` lists each as `{id, title}`, and `reason`, `by` and `at` are null when nothing was overridden. The deck itself carries no free text; its properties say only `render_anyway=yes`.
 
 **Gate order.** A pptx render stops at the first of these: (1) unfinished sections (a leaf with no source slides or an empty body), reported as "N of M sections unfinished" before any concept check; (2) build problems (§5); (3) overlaps. A reason overrides only the third.
 
@@ -184,7 +186,7 @@ The exporter raises one error listing every problem it found, in the order above
 
 The check reads the written `.pptx` back and compares it with the course. It runs inside every export, and the golden test runs it too. It asserts:
 
-1. **Slide sequence.** The course gives an expected role sequence: title, then sections and leaves in tree order (a leaf's continuations after it, §2.4), then summary (with its continuations), then sources. The mapping turns that into expected layout names. The deck's slide count and each slide's layout name must equal them. Two roles may share a layout, so a role is never recovered from a layout name alone.
+1. **Slide sequence.** The course gives an expected role sequence: title, then sections that get a slide (§3.2) and leaves in tree order (a slide's continuations after it, §2.4), then summary (with its continuations), then sources. The mapping turns that into expected layout names. The deck's slide count and each slide's layout name must equal them. Two roles may share a layout, so a role is never recovered from a layout name alone.
 2. **Every concept on its leaves.** Each leaf's `Concepts:` notes line equals that leaf's concepts, and every concept in the course appears on at least one concept slide.
 3. **Citations.** Every concept slide's notes hold §4's rendering of that leaf's sources, directly before the `Concepts:` line.
 4. **Images.** Every `concept-with-figure` slide holds a picture, and no other slide does.

@@ -12,7 +12,7 @@
       "parent_id": "proj-hydraulics",
       "title": "Hydraulic Principles",
       "order": 0,
-      "content_markdown": "",
+      "content_markdown": "- Hydraulic systems transmit force through a confined fluid\n- Pressure and area set the force a piston delivers",
       "key_concepts": [],
       "source_refs": [],
       "is_unassigned": false
@@ -50,7 +50,7 @@
       "parent_id": "proj-hydraulics",
       "title": "System Components",
       "order": 3,
-      "content_markdown": "",
+      "content_markdown": "- A hydraulic circuit pairs a reservoir with pumps, valves and actuators",
       "key_concepts": [],
       "source_refs": [],
       "is_unassigned": false

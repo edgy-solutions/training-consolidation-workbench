@@ -74,6 +74,11 @@ def build(out_path):
     _strip(lay, {0, 1})
     body = _by_idx(lay, 1)
     _place(body, (457200, 1600200, 8229600, 4300000))
+    sec_body = copy.deepcopy(body._element)
+    sec = by_name["section"]
+    sec.shapes._spTree.append(sec_body)
+    sec_body.nvSpPr.cNvPr.set("id", "92")
+    sec_body.nvSpPr.cNvPr.set("name", "Body Placeholder")
     cite = copy.deepcopy(body._element)
     lay.shapes._spTree.append(cite)
     cite.nvSpPr.cNvPr.set("id", "90")

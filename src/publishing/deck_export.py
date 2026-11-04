@@ -15,6 +15,7 @@ import yaml
 from pptx import Presentation
 from pptx.enum.shapes import PP_PLACEHOLDER
 from pptx.enum.text import MSO_AUTO_SIZE
+from pptx.oxml.ns import qn
 from pptx.shapes.placeholder import PicturePlaceholder
 
 from src.publishing.deck_template import DECK_TEMPLATE_VERSION, STANDIN_MAPPING
@@ -49,6 +50,12 @@ class Mapping:
     roles: Dict[str, dict]
     max_bullets_per_slide: object = DEFAULT_MAX_BULLETS
     max_summary_items: object = DEFAULT_MAX_SUMMARY_ITEMS
+
+    @property
+    def section_body(self) -> bool:
+        """Whether the section role maps a body; without one, sections get no slide."""
+        spec = self.roles.get("section")
+        return isinstance(spec, dict) and "body" in (spec.get("placeholders") or {})
 
     @property
     def template_path(self) -> Optional[Path]:
@@ -103,6 +110,10 @@ def _resolve_layout(prs, role, spec):
 def mapping_warnings(mapping: Mapping) -> List[str]:
     """Warnings for a mapping; layout warnings need the template, so none of those when it cannot be opened."""
     out = []
+    section = mapping.roles.get("section")
+    if isinstance(section, dict) and not mapping.section_body:
+        out.append("role 'section': maps no 'body' field, so section slides are skipped "
+                   "and recorded in the render record")
     for role, spec in mapping.roles.items():
         if role in RETIRED_FIELDS and isinstance(spec, dict) and isinstance(spec.get("placeholders"), dict):
             for f in RETIRED_FIELDS[role]:
@@ -214,18 +225,27 @@ def _runs(text):
             yield part, False
 
 
+def _heading_paragraph(p):
+    """Level 0, no indent and no bullet, whatever the placeholder gives its paragraphs."""
+    pPr = p._p.get_or_add_pPr()
+    pPr.set("marL", "0")
+    pPr.set("indent", "0")
+    pPr.append(pPr.makeelement(qn("a:buNone"), {}))
+
+
 def write_text(text_frame, markdown):
-    """Paragraphs from markdown lines: bullets and indentation become levels, `**x**` and `#` headers become bold."""
+    """Paragraphs from markdown lines: bullets and indentation become levels and `**x**` becomes bold.
+    A `#` heading becomes a bold level-0 paragraph with no bullet."""
     lines = [ln.rstrip() for ln in (markdown or "").splitlines() if ln.strip()]
     text_frame.clear()
     first = True
     for line in lines:
         indent = len(line.replace("\t", "    ")) - len(line.replace("\t", "    ").lstrip())
         content = line.strip()
-        bold_all = False
+        heading = False
         m = re.match(r"^(#+)\s+(.*)$", content)
         if m:
-            content, bold_all = m.group(2), True
+            content, heading = m.group(2), True
             indent = 0
         else:
             m = re.match(r"^[-*+]\s+(.*)$", content)
@@ -234,10 +254,12 @@ def write_text(text_frame, markdown):
         p = text_frame.paragraphs[0] if first else text_frame.add_paragraph()
         first = False
         p.level = min(indent // 2, 8)
+        if heading:
+            _heading_paragraph(p)
         for text, bold in _runs(content):
             r = p.add_run()
             r.text = text
-            if bold or bold_all:
+            if bold or heading:
                 r.font.bold = True
 
 
@@ -250,7 +272,7 @@ def _expected_fields(role, item, course):
     if role == "title":
         return {"title": course.title, "body": title_body(course)}
     if role == "section":
-        return {"title": item.title}
+        return {"title": item.title, "body": item.body}
     if role in ("concept", "concept-with-figure"):
         return {"title": item.title, "body": item.body, "notes": notes_text(item)}
     if role == "summary":
@@ -265,11 +287,12 @@ def _drop_template_slides(prs):
         ids.remove(sld)
 
 
-def deck_digest(course, images, max_bullets=DEFAULT_MAX_BULLETS, max_summary=DEFAULT_MAX_SUMMARY_ITEMS) -> str:
+def deck_digest(course, images, max_bullets=DEFAULT_MAX_BULLETS, max_summary=DEFAULT_MAX_SUMMARY_ITEMS,
+                section_body=True) -> str:
     """sha256 of what the exporter writes: each slide's number, role, fields and picture bytes.
     It hashes the content, not the file: a pptx is a zip with write times in it."""
     rows = []
-    for n, (role, item) in enumerate(deck_slides(course, max_bullets, max_summary), start=1):
+    for n, (role, item) in enumerate(deck_slides(course, max_bullets, max_summary, section_body), start=1):
         data = images.get(item.id) if role == "concept-with-figure" else None
         rows.append([n, role, _expected_fields(role, item, course),
                      hashlib.sha256(data).hexdigest() if data else None])
@@ -306,14 +329,14 @@ def export_deck(course: Course, mapping_path, out_path, resolve_image, render_an
     if problems:
         raise DeckExportError(problems)
 
-    digest = deck_digest(course, images, mapping.max_bullets_per_slide, mapping.max_summary_items)
+    digest = deck_digest(course, images, mapping.max_bullets_per_slide, mapping.max_summary_items, mapping.section_body)
     comments = _comments(digest, render_anyway)
     prs = Presentation(str(mapping.template_path))
     prs.core_properties.comments = comments
     for warning in mapping_warnings(mapping):
         print(f"WARN: deck template: {warning}")
     _drop_template_slides(prs)
-    for role, item in deck_slides(course, mapping.max_bullets_per_slide, mapping.max_summary_items):
+    for role, item in deck_slides(course, mapping.max_bullets_per_slide, mapping.max_summary_items, mapping.section_body):
         spec = mapping.roles[role]
         fields = dict(spec.get("placeholders") or {})
         if "notes" in ROLES[role]["optional"]:
@@ -387,7 +410,7 @@ def check_round_trip(course, mapping, pptx_path) -> List[str]:
     problems: List[str] = []
     prs = Presentation(str(pptx_path))
     slides = list(prs.slides)
-    expected = list(deck_slides(course, mapping.max_bullets_per_slide, mapping.max_summary_items))
+    expected = list(deck_slides(course, mapping.max_bullets_per_slide, mapping.max_summary_items, mapping.section_body))
 
     want = [mapping.roles[role]["layout"] for role, _ in expected]
     got = [s.slide_layout.name for s in slides]

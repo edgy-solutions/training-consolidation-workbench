@@ -84,7 +84,7 @@ def _trial_course() -> Course:
         Section("s1", "A section", [
             Leaf("l1", "A concept", ["Concept one"], "- First point\n- **Second** point", "Speaker notes.", None, src),
             Leaf("l2", "A figure", ["Concept two"], "A short body.", "", Figure("trial-image"), src),
-        ]),
+        ], "- A section point"),
     ])
 
 

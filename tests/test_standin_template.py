@@ -7,7 +7,7 @@ from tests.deck_fixtures import STANDIN_DIR
 
 EXPECTED = {
     "title": {0: T.CENTER_TITLE, 1: T.SUBTITLE},
-    "section": {0: T.TITLE},
+    "section": {0: T.TITLE, 1: T.OBJECT},
     "concept": {0: T.TITLE, 1: T.OBJECT, 2: T.BODY},
     "concept-with-figure": {0: T.TITLE, 1: T.OBJECT, 2: T.BODY, 3: T.PICTURE},
     "summary": {0: T.TITLE, 1: T.OBJECT},
