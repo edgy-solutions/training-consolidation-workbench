@@ -223,9 +223,9 @@ def save(pptx_bytes, roles, filename, saved_by, minio=None) -> dict:
     }
     try:
         minio = minio or _default_minio()
-        minio.upload_bytes(bucket, _key(prefix, sha + ".pptx"), pptx_bytes, PPTX_TYPE)
-        minio.upload_bytes(bucket, _key(prefix, POINTER_NAME),
-                           yaml.safe_dump(pointer, sort_keys=False).encode("utf-8"), "application/yaml")
+        minio.put_bytes(bucket, _key(prefix, sha + ".pptx"), pptx_bytes, PPTX_TYPE)
+        minio.put_bytes(bucket, _key(prefix, POINTER_NAME),
+                         yaml.safe_dump(pointer, sort_keys=False).encode("utf-8"), "application/yaml")
     except Exception as e:
         raise _store_error("could not be written", e)
     return pointer

@@ -14,13 +14,14 @@ from typing import Dict, List, Optional
 import yaml
 from pptx import Presentation
 from pptx.enum.shapes import PP_PLACEHOLDER
+from pptx.enum.text import MSO_AUTO_SIZE
 from pptx.shapes.placeholder import PicturePlaceholder
 
 from src.publishing.deck_template import DECK_TEMPLATE_VERSION, STANDIN_MAPPING
 from src.publishing.image_ids import ImageRefError
 from src.publishing.course import (
-    Course, DeckExportError, course_concepts, decks, format_citation, format_deck_line,
-    iter_leaves, iter_slides, notes_text, title_body,
+    DEFAULT_MAX_BULLETS, DEFAULT_MAX_SUMMARY_ITEMS, Course, DeckExportError, course_concepts, deck_slides, decks, format_citation, more_in_notes, summary_items,
+    format_deck_line, iter_leaves, notes_text, sources_body, title_body,
 )
 
 NOTES_PAGE = "notes-page"
@@ -30,11 +31,13 @@ DEFAULT_MAPPING = STANDIN_MAPPING
 ROLES = {
     "title": {"required": ["title"], "optional": ["body"]},
     "section": {"required": ["title"], "optional": ["body"]},
-    "concept": {"required": ["title", "body", "citation"], "optional": ["notes"]},
-    "concept-with-figure": {"required": ["title", "body", "citation", "image"], "optional": ["notes"]},
+    "concept": {"required": ["title", "body"], "optional": ["notes"]},
+    "concept-with-figure": {"required": ["title", "body", "image"], "optional": ["notes"]},
     "summary": {"required": ["title", "body"], "optional": []},
     "sources": {"required": ["title", "body"], "optional": []},
 }
+# Fields an older mapping may still name: accepted and warned about, never written, so the sweep removes the placeholder.
+RETIRED_FIELDS = {"concept": ["citation"], "concept-with-figure": ["citation"]}
 IMAGE_TYPES = (PP_PLACEHOLDER.PICTURE, PP_PLACEHOLDER.OBJECT)
 
 
@@ -44,6 +47,8 @@ class Mapping:
     version: object
     template: Optional[str]
     roles: Dict[str, dict]
+    max_bullets_per_slide: object = DEFAULT_MAX_BULLETS
+    max_summary_items: object = DEFAULT_MAX_SUMMARY_ITEMS
 
     @property
     def template_path(self) -> Optional[Path]:
@@ -58,7 +63,8 @@ def load_mapping(path) -> Mapping:
         raise DeckExportError([f"mapping file {path} could not be read: {e}"])
     if not isinstance(raw, dict):
         raise DeckExportError([f"mapping file {path} is not a mapping"])
-    return Mapping(path, raw.get("deck_template"), raw.get("template"), raw.get("roles") or {})
+    return Mapping(path, raw.get("deck_template"), raw.get("template"), raw.get("roles") or {},
+                   raw.get("max_bullets_per_slide", DEFAULT_MAX_BULLETS), raw.get("max_summary_items", DEFAULT_MAX_SUMMARY_ITEMS))
 
 
 def _all_layouts(prs):
@@ -95,12 +101,18 @@ def _resolve_layout(prs, role, spec):
 
 
 def mapping_warnings(mapping: Mapping) -> List[str]:
-    """Warnings for a mapping; none when the template cannot be opened (validate_mapping reports that)."""
+    """Warnings for a mapping; layout warnings need the template, so none of those when it cannot be opened."""
+    out = []
+    for role, spec in mapping.roles.items():
+        if role in RETIRED_FIELDS and isinstance(spec, dict) and isinstance(spec.get("placeholders"), dict):
+            for f in RETIRED_FIELDS[role]:
+                if f in spec["placeholders"]:
+                    out.append(f"role '{role}': field '{f}' is retired; citations now go in the speaker notes "
+                               f"and the placeholder is removed from the slide")
     try:
         prs = Presentation(str(mapping.template_path))
     except Exception:
-        return []
-    out = []
+        return out
     for role, spec in mapping.roles.items():
         if role in ROLES and isinstance(spec, dict) and spec.get("layout"):
             warning = _resolve_layout(prs, role, spec)[2]
@@ -109,18 +121,27 @@ def mapping_warnings(mapping: Mapping) -> List[str]:
     return out
 
 
-def _needed_roles(course):
-    return list(dict.fromkeys(role for role, _ in iter_slides(course)))
+def _valid_count(v) -> bool:
+    return isinstance(v, int) and not isinstance(v, bool) and v >= 1
+
+
+def _needed_roles(course, max_bullets=DEFAULT_MAX_BULLETS):
+    return list(dict.fromkeys(role for role, _ in deck_slides(course, max_bullets)))
 
 
 def validate(mapping: Mapping, course) -> List[str]:
-    return validate_mapping(mapping, _needed_roles(course))
+    v = mapping.max_bullets_per_slide
+    return validate_mapping(mapping, _needed_roles(course, v if _valid_count(v) else DEFAULT_MAX_BULLETS))
 
 
 def validate_mapping(mapping: Mapping, needed_roles) -> List[str]:
     problems: List[str] = []
     if mapping.version != DECK_TEMPLATE_VERSION:
         problems.append(f"deck_template is {mapping.version!r}, this exporter reads {DECK_TEMPLATE_VERSION}")
+    if not _valid_count(mapping.max_bullets_per_slide):
+        problems.append(f"max_bullets_per_slide must be a whole number of at least 1, got {mapping.max_bullets_per_slide!r}")
+    if not _valid_count(mapping.max_summary_items):
+        problems.append(f"max_summary_items must be a whole number of at least 1, got {mapping.max_summary_items!r}")
     prs = None
     if not mapping.template:
         problems.append("the mapping names no template")
@@ -143,8 +164,9 @@ def validate_mapping(mapping: Mapping, needed_roles) -> List[str]:
         spec = spec or {}
         fields = spec.get("placeholders") or {}
         known = ROLES[role]["required"] + ROLES[role]["optional"]
+        retired = RETIRED_FIELDS.get(role, [])
         for f in fields:
-            if f not in known:
+            if f not in known and f not in retired:
                 problems.append(f"role '{role}': unknown field '{f}'")
         for f in ROLES[role]["required"]:
             if f not in fields:
@@ -165,7 +187,7 @@ def validate_mapping(mapping: Mapping, needed_roles) -> List[str]:
         types = {p.placeholder_format.idx: p.placeholder_format.type for p in layout.placeholders}
         used: Dict[int, str] = {}
         for f, idx in fields.items():
-            if f not in known:
+            if f not in known:  # unknown, or retired and so never read
                 continue
             if f == "notes" and idx == NOTES_PAGE:
                 continue
@@ -230,10 +252,10 @@ def _expected_fields(role, item, course):
     if role == "section":
         return {"title": item.title}
     if role in ("concept", "concept-with-figure"):
-        return {"title": item.title, "body": item.body, "citation": format_citation(item.sources), "notes": notes_text(item)}
+        return {"title": item.title, "body": item.body, "notes": notes_text(item)}
     if role == "summary":
-        return {"title": "Summary", "body": "\n".join("- " + c for c in course_concepts(course))}
-    return {"title": "Sources", "body": "\n".join(format_deck_line(d) for d in decks(course))}
+        return {"title": item.title, "body": item.body, "notes": item.notes}
+    return {"title": "Sources", "body": sources_body(course), "notes": "\n".join(format_deck_line(d) for d in decks(course))}
 
 
 def _drop_template_slides(prs):
@@ -243,11 +265,11 @@ def _drop_template_slides(prs):
         ids.remove(sld)
 
 
-def deck_digest(course, images) -> str:
+def deck_digest(course, images, max_bullets=DEFAULT_MAX_BULLETS, max_summary=DEFAULT_MAX_SUMMARY_ITEMS) -> str:
     """sha256 of what the exporter writes: each slide's number, role, fields and picture bytes.
     It hashes the content, not the file: a pptx is a zip with write times in it."""
     rows = []
-    for n, (role, item) in enumerate(iter_slides(course), start=1):
+    for n, (role, item) in enumerate(deck_slides(course, max_bullets, max_summary), start=1):
         data = images.get(item.id) if role == "concept-with-figure" else None
         rows.append([n, role, _expected_fields(role, item, course),
                      hashlib.sha256(data).hexdigest() if data else None])
@@ -284,14 +306,14 @@ def export_deck(course: Course, mapping_path, out_path, resolve_image, render_an
     if problems:
         raise DeckExportError(problems)
 
-    digest = deck_digest(course, images)
+    digest = deck_digest(course, images, mapping.max_bullets_per_slide, mapping.max_summary_items)
     comments = _comments(digest, render_anyway)
     prs = Presentation(str(mapping.template_path))
     prs.core_properties.comments = comments
     for warning in mapping_warnings(mapping):
         print(f"WARN: deck template: {warning}")
     _drop_template_slides(prs)
-    for role, item in iter_slides(course):
+    for role, item in deck_slides(course, mapping.max_bullets_per_slide, mapping.max_summary_items):
         spec = mapping.roles[role]
         fields = dict(spec.get("placeholders") or {})
         if "notes" in ROLES[role]["optional"]:
@@ -312,8 +334,13 @@ def export_deck(course: Course, mapping_path, out_path, resolve_image, render_an
                     write_text(slide.placeholders[idx].text_frame, values["notes"])
                     used.add(idx)
             elif f in values:
-                write_text(slide.placeholders[idx].text_frame, values[f])
+                frame = slide.placeholders[idx].text_frame
+                write_text(frame, values[f])
+                if f == "body":
+                    frame.auto_size = MSO_AUTO_SIZE.TEXT_TO_FIT_SHAPE  # shrink on overflow; no font or size is set
                 used.add(idx)
+        if role == "sources" or (role == "summary" and item.notes):
+            slide.notes_slide.notes_text_frame.text = values["notes"]
         for ph in list(slide.placeholders):
             if ph.placeholder_format.idx not in used:
                 ph._element.getparent().remove(ph._element)
@@ -360,7 +387,7 @@ def check_round_trip(course, mapping, pptx_path) -> List[str]:
     problems: List[str] = []
     prs = Presentation(str(pptx_path))
     slides = list(prs.slides)
-    expected = list(iter_slides(course))
+    expected = list(deck_slides(course, mapping.max_bullets_per_slide, mapping.max_summary_items))
 
     want = [mapping.roles[role]["layout"] for role, _ in expected]
     got = [s.slide_layout.name for s in slides]
@@ -369,6 +396,8 @@ def check_round_trip(course, mapping, pptx_path) -> List[str]:
         return problems
 
     seen: Dict[str, List[int]] = {}
+    summary: List[str] = []
+    summary_notes: List[str] = []
     for n, (slide, (role, item)) in enumerate(zip(slides, expected), start=1):
         if role in ("concept", "concept-with-figure"):
             lines = _slide_text(slide, mapping, role, "notes") or []
@@ -384,10 +413,12 @@ def check_round_trip(course, mapping, pptx_path) -> List[str]:
                     problems.append(f"slide {n} ('{item.title}'): concept '{c}' is not in the course for this leaf")
                 seen.setdefault(c, []).append(n)
 
-            cite = _slide_text(slide, mapping, role, "citation")
-            want_cite = format_citation(item.sources)
-            if cite != [want_cite]:
-                problems.append(f"slide {n} ('{item.title}'): citation is {cite!r}, expected {want_cite!r}")
+            if item.sources:
+                want_cite = format_citation(item.sources)
+                at = lines.index(line) if line in lines else -1
+                if at < 1 or lines[at - 1] != want_cite:
+                    problems.append(f"slide {n} ('{item.title}'): the notes lack the citation {want_cite!r} "
+                                    f"directly before the Concepts line")
 
         has_pic = _has_picture(slide)
         if role == "concept-with-figure" and not has_pic:
@@ -396,15 +427,28 @@ def check_round_trip(course, mapping, pptx_path) -> List[str]:
             problems.append(f"slide {n} ({role}): holds a picture but should not")
 
         if role == "summary":
-            body = _slide_text(slide, mapping, role, "body")
-            if body != course_concepts(course):
-                problems.append(f"slide {n}: the summary lists {body}, the course has {course_concepts(course)}")
+            summary += _slide_text(slide, mapping, role, "body") or []
+            summary_notes = _slide_text(slide, mapping, role, "notes") or []  # the last summary slide's wins
         if role == "sources":
             body = _slide_text(slide, mapping, role, "body")
+            if body != [sources_body(course)]:
+                problems.append(f"slide {n}: the sources slide reads {body}, expected {[sources_body(course)]}")
+            notes = _slide_text(slide, mapping, role, "notes")
             want_lines = [format_deck_line(d) for d in decks(course)]
-            if body != want_lines:
-                problems.append(f"slide {n}: the sources slide lists {body}, the course cites {want_lines}")
+            if notes != want_lines:
+                problems.append(f"slide {n}: the sources slide notes list {notes}, the course cites {want_lines}")
 
+        face = " ".join(sh.text_frame.text for sh in slide.shapes if sh.has_text_frame)
+        for d in decks(course):
+            if d["filename"] in face:
+                problems.append(f"slide {n}: source filename '{d['filename']}' is on the slide face")
+
+    shown, rest = summary_items(course, mapping.max_summary_items)
+    want_face = shown + ([more_in_notes(rest)] if rest else [])
+    if summary != want_face:
+        problems.append(f"the summary slides list {summary}, the course has {want_face}")
+    if summary_notes != rest:
+        problems.append(f"the last summary slide's notes list {summary_notes}, the course has {rest} beyond the summary")
     for c in course_concepts(course):
         if c not in seen:
             problems.append(f"concept '{c}' appears on no concept slide")

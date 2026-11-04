@@ -60,9 +60,8 @@ class MinioClient:
             print("error occurred.", exc)
             raise
 
-    def upload_bytes(self, bucket_name: str, object_name: str, data: bytes, content_type: str = "application/octet-stream"):
-        """Upload bytes data."""
-        self.ensure_bucket(bucket_name)
+    def put_bytes(self, bucket_name: str, object_name: str, data: bytes, content_type: str = "application/octet-stream"):
+        """Upload bytes to a bucket that already exists; needs only write on the key."""
         try:
             data_stream = io.BytesIO(data)
             self.client.put_object(
@@ -77,6 +76,11 @@ class MinioClient:
         except S3Error as exc:
             print("error occurred.", exc)
             raise
+
+    def upload_bytes(self, bucket_name: str, object_name: str, data: bytes, content_type: str = "application/octet-stream"):
+        """Upload bytes data."""
+        self.ensure_bucket(bucket_name)
+        return self.put_bytes(bucket_name, object_name, data, content_type)
 
     def download_file(self, bucket_name: str, object_name: str, file_path: str):
         """Download a file from the bucket to the local filesystem."""
