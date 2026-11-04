@@ -22,6 +22,7 @@ Its output is one `.pptx`. Before returning, it runs the round-trip check (§6) 
 ```yaml
 deck_template: 1                 # this contract's version
 template: standin.pptx           # path relative to this file
+max_bullets_per_slide: 5         # optional; a longer body continues on the next slide
 roles:
   title:
     layout: title                # a layout name in the template
@@ -31,10 +32,10 @@ roles:
     placeholders: {title: 0}
   concept:
     layout: concept
-    placeholders: {title: 0, body: 1, citation: 2, notes: notes-page}
+    placeholders: {title: 0, body: 1, notes: notes-page}
   concept-with-figure:
     layout: concept-with-figure
-    placeholders: {title: 0, body: 1, citation: 2, image: 3, notes: notes-page}
+    placeholders: {title: 0, body: 1, image: 3, notes: notes-page}
   summary:
     layout: summary
     placeholders: {title: 0, body: 1}
@@ -60,15 +61,17 @@ There are six roles, and each slide in the export has exactly one.
 |---|---|---|---|
 | `title` | course (first slide) | `title` | `body` (subtitle) |
 | `section` | section (§3.2) | `title` | `body` |
-| `concept` | leaf without a figure | `title`, `body`, `citation` | `notes` |
-| `concept-with-figure` | leaf with a figure | `title`, `body`, `citation`, `image` | `notes` |
-| `summary` | course (after the last leaf) | `title`, `body` | |
+| `concept` | leaf without a figure, and each continuation (§2.4) | `title`, `body` | `notes` |
+| `concept-with-figure` | leaf with a figure (its first slide) | `title`, `body`, `image` | `notes` |
+| `summary` | course (after the last leaf), plus continuations (§2.4) | `title`, `body` | |
 | `sources` | course (last slide) | `title`, `body` | |
 
 ### 2.2 Fields
 
-- **`title`, `body`, `citation`, `image`.** The value is the `idx` of a placeholder on the role's layout. `image` must name a placeholder that accepts a picture (picture or object type).
-- **`notes`.** The value is `notes-page` (the slide's speaker-notes page) or a placeholder `idx`. If it is omitted, it means `notes-page`. The notes page exists in every deck, so the default cannot drop content.
+- **`title`, `body`, `image`.** The value is the `idx` of a placeholder on the role's layout. `image` must name a placeholder that accepts a picture (picture or object type).
+- **`notes`.** The value is `notes-page` (the slide's speaker-notes page) or a placeholder `idx`. If it is omitted, it means `notes-page`. The notes page exists in every deck, so the default cannot drop content. The citation (§4) goes here. Notes carry the citation, so a course with sources cannot use a placeholder here: the round trip refuses a filename on a slide face (§6).
+- **`citation` is retired.** A mapping that still names `citation` on `concept` or `concept-with-figure` is accepted: the exporter warns (`role 'concept': field 'citation' is retired; citations now go in the speaker notes and the placeholder is removed from the slide`), does not check its `idx`, writes nothing to it, and removes that placeholder from the slide. The `sources` role has no `notes` field to map: its notes page is always written (§3.5).
+- **`max_bullets_per_slide`.** A top-level setting, optional, default `5`: a whole number of at least 1. It is how many lines a body may hold before it continues on another slide (§2.4).
 
 ### 2.3 Validation
 
@@ -76,7 +79,8 @@ The exporter checks the mapping against the template and the course **before wri
 
 - `deck_template` is missing or is not `1`, or the template file is missing.
 - **A role the course needs is not mapped.** The message names the role (`role 'concept-with-figure' is not mapped`). Roles the course does not need may be left unmapped.
-- An unknown role or field name. Typos fail; they are not ignored.
+- An unknown role or field name. Typos fail; they are not ignored. The retired `citation` (§2.2) is the one exception.
+- A `max_bullets_per_slide` that is not a whole number of at least 1 (`max_bullets_per_slide must be a whole number of at least 1, got '5'`). A boolean is not a number here.
 - A `layout` that no slide layout in the template carries. The message lists the template's layout names.
 - A `layout_index` that is out of range, is not an integer, or is the position of a layout with a different name from `layout`. The message names the role, the index and both names.
 - A placeholder `idx` the layout does not have (checked against the layout the role resolves to), or an `image` placeholder that cannot take a picture.
@@ -92,6 +96,14 @@ The exporter checks the mapping against the template and the course **before wri
 - Slides already in the template are dropped. Only its masters and layouts are used.
 - A placeholder on a layout that the mapping does not fill is removed from the slide, so no empty prompt boxes remain.
 - Text goes into the placeholder's text frame and inherits the layout's styling. The exporter sets no font, size or colour, except that `**bold**` runs are bold.
+- A `body` placeholder is set to shrink text on overflow (`normAutofit`); the viewer applies the shrink. The exporter still sets no font, size or colour.
+- **One slide per leaf, plus continuations.** A body with more than `max_bullets_per_slide` lines continues on further slides.
+  - Every non-blank line counts 1, whether bullet, paragraph or nested bullet, except a heading (`#`), which counts 0.
+  - A block stays together: a bullet with its indented lines. A heading stays with the block that follows it; a heading at the end stays with the block before it.
+  - Blocks fill a slide in order. A block that alone is over the limit is cut by line at the limit.
+  - A body within the limit is written unchanged.
+  - A continuation's title is the leaf's title plus ` (cont.)`, and its role is `concept`, even for a figure leaf, so a figure leaf's course needs the `concept` role mapped. The figure goes on the first slide only, and the leaf's own notes go on the first slide only. Every part carries the citation and `Concepts:` line (§3.3).
+  - The `summary` splits the same way, one bullet per concept: `Summary`, then `Summary (cont.)`. There is always at least one.
 - The image is placed into its placeholder, which crops it to fit (`insert_picture`).
 
 ## 3. The consolidated course
@@ -117,7 +129,7 @@ The order is the tree, depth-first. Siblings are sorted by `order` ascending; a 
 - **`concepts`** are the node's `key_concepts`. If it has none, they are the concepts its source slides `TEACHES`, in descending salience. A leaf with no concepts fails.
 - **`body`** is `content_markdown` with the image markup removed. An empty body (whitespace only) fails: it would be a blank slide.
 - **`sources`** are the node's recorded source slides (`source_slide_ids`), resolved through the decks the course records (`source_deck_ids` on the Project), not through whatever the graph holds. Each one gives a deck `filename` and a slide `number` (source contract §4.1). Three failures, all listed with the others: the course records no source decks; a recorded deck is not found; a source slide is not in any recorded deck (`leaf '<title>': source slide '<id>' is not in any deck this course was built from`). A leaf with no sources fails.
-- **`notes`** hold the node's speaker notes, if there are any, and always end with the line `Concepts: <name>; <name>`.
+- **`notes`** are, in order: the node's speaker notes if there are any; the citation line (§4); and the line `Concepts: <name>; <name>`, which is always last.
 
 **A concept may be taught on more than one leaf.** A repeat is not a failure.
 - A leaf's *role* is the `section_type` of its top-level ancestor (`introduction`, `mandatory_safety`, `technical`, `mandatory_assessment`; missing means `technical`), inherited down the tree.
@@ -141,17 +153,19 @@ The order is the tree, depth-first. Siblings are sorted by `order` ascending; a 
 
 ### 3.5 Generated slides
 
-- **`summary`.** `title` "Summary"; `body` lists every concept once, one bullet each, in course order.
-- **`sources`.** `title` "Sources"; `body` has one line per source deck, in order of first citation: `<filename>: slides 1, 2, 4`.
+- **`summary`.** `title` "Summary"; `body` lists every concept once, one bullet each, in course order. It continues like any body (§2.4).
+- **`sources`.** `title` "Sources"; `body` is a count line, `<n> source decks, <m> cited slides` ("1 source deck", "1 cited slide" in the singular). The slide's speaker notes have one line per source deck, in order of first citation: `<filename>: slides 1, 2, 4`.
 
 ## 4. Citations
 
-Every concept slide's `citation` field reads:
+Every concept slide's speaker notes carry a citation line, directly before the `Concepts:` line. It reads:
 
 - `Source: <filename>, slide <n>` for one slide;
 - `Sources: <filename>, slides <n>, <m>; <filename>, slide <k>` for several.
 
 Decks appear in order of first citation, and slide numbers ascend within a deck. `<n>` is the source slide's `number`, its position in the deck, counting hidden slides (source contract §4.1).
+
+**No source filename reaches a slide face.** A filename appears only in speaker notes.
 
 ## 5. Failures
 
@@ -167,14 +181,15 @@ The exporter raises one error listing every problem it found, in the order above
 
 The check reads the written `.pptx` back and compares it with the course. It runs inside every export, and the golden test runs it too. It asserts:
 
-1. **Slide sequence.** The course gives an expected role sequence: title, then sections and leaves in tree order, then summary, then sources. The mapping turns that into expected layout names. The deck's slide count and each slide's layout name must equal them. Two roles may share a layout, so a role is never recovered from a layout name alone.
+1. **Slide sequence.** The course gives an expected role sequence: title, then sections and leaves in tree order (a leaf's continuations after it, §2.4), then summary (with its continuations), then sources. The mapping turns that into expected layout names. The deck's slide count and each slide's layout name must equal them. Two roles may share a layout, so a role is never recovered from a layout name alone.
 2. **Every concept on its leaves.** Each leaf's `Concepts:` notes line equals that leaf's concepts, and every concept in the course appears on at least one concept slide.
-3. **Citations.** Every concept slide's citation text equals §4's rendering of that leaf's sources.
+3. **Citations.** Every concept slide's notes hold §4's rendering of that leaf's sources, directly before the `Concepts:` line.
 4. **Images.** Every `concept-with-figure` slide holds a picture, and no other slide does.
 5. **Nothing extra.**
    - No concept, citation, deck or slide appears in the export that is not in the course.
-   - The summary lists exactly the course's concepts.
-   - The sources slide lists exactly the cited decks and slides.
+   - The summary slides together list exactly the course's concepts.
+   - The sources slide's face is the count line (§3.5) and its notes list exactly the cited decks and slides.
+   - No source filename is on any slide face (§4).
 6. **The deck records its content.** The deck's `comments` property reads `deck_export/1 slides_sha256=<hex>`, with ` render_anyway=yes` appended when the render went ahead over an overlap. The digest is the sha256 of the canonical JSON of each slide's number, role, expected fields and picture bytes, so two exports of one course give one digest. The exporter reads the property back after saving.
 
 ## 7. Changing this contract

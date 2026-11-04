@@ -23,15 +23,13 @@ def test_golden_export_has_the_eight_slides(tmp_path):
     assert _ph(slides[0], 1).text_frame.text == "Consolidated from 1 source deck"
     assert _ph(slides[1], 0).text_frame.text == "Hydraulic Principles"
     assert _ph(slides[2], 0).text_frame.text == "Pascal's Law"
-    assert _ph(slides[2], 2).text_frame.text == "Sources: hydraulics_fixture.pptx, slides 1, 2"
-    assert _ph(slides[3], 2).text_frame.text == "Source: hydraulics_fixture.pptx, slide 3"
     assert _ph(slides[4], 0).text_frame.text == "System Components"
     assert _ph(slides[5], 0).text_frame.text == "Reservoir Schematic"
-    assert _ph(slides[5], 2).text_frame.text == "Source: hydraulics_fixture.pptx, slide 4"
     assert _ph(slides[5], 1).text_frame.text == "Figure 1: reservoir, filter and pump in series"
     assert [p.text for p in _ph(slides[6], 1).text_frame.paragraphs] == [
         "Pascal's law", "Hydraulic pressure", "Hydraulic pump", "Gear pump", "Hydraulic reservoir"]
-    assert _ph(slides[7], 1).text_frame.text == "hydraulics_fixture.pptx: slides 1, 2, 3, 4"
+    assert _ph(slides[7], 1).text_frame.text == "1 source deck, 4 cited slides"
+    assert [ph.placeholder_format.idx for ph in slides[2].placeholders] == [0, 1]  # the citation placeholder is gone
     assert "Stray" not in "".join(p.text_frame.text for s in slides for p in s.placeholders if p.has_text_frame)
 
 
@@ -40,7 +38,11 @@ def test_golden_pictures_notes_and_round_trip(tmp_path):
     slides = list(prs.slides)
     has_pic = [any(sp.tag.endswith("}pic") for sp in s.shapes._spTree) for s in slides]
     assert has_pic == [False] * 5 + [True] + [False] * 2
-    assert slides[2].notes_slide.notes_text_frame.text.splitlines()[-1] == "Concepts: Pascal's law; Hydraulic pressure"
+    assert slides[2].notes_slide.notes_text_frame.text.splitlines()[-2:] == [
+        "Sources: hydraulics_fixture.pptx, slides 1, 2", "Concepts: Pascal's law; Hydraulic pressure"]
+    assert slides[3].notes_slide.notes_text_frame.text.splitlines()[-2] == "Source: hydraulics_fixture.pptx, slide 3"
+    assert slides[5].notes_slide.notes_text_frame.text.splitlines()[-2] == "Source: hydraulics_fixture.pptx, slide 4"
+    assert slides[7].notes_slide.notes_text_frame.text == "hydraulics_fixture.pptx: slides 1, 2, 3, 4"
     assert slides[3].notes_slide.notes_text_frame.text.splitlines()[-1] == "Concepts: Hydraulic pump; Gear pump"
     assert slides[5].notes_slide.notes_text_frame.text.splitlines()[-1] == "Concepts: Hydraulic reservoir"
     assert check_round_trip(course, load_mapping(DEFAULT_MAPPING), out) == []
@@ -82,7 +84,7 @@ def test_a_repeated_concept_exports_and_round_trips(tmp_path):
 def test_a_slide_missing_a_concept_still_fails(tmp_path):
     course = _repeating()
     out = _out(tmp_path, "m.pptx", course)
-    list(iter_leaves(course))[1].concepts.append("Never written")
+    list(iter_leaves(course))[1].concepts[0] = "Never written"
     assert any("'Never written'" in p for p in check_round_trip(course, load_mapping(DEFAULT_MAPPING), out))
 
 

@@ -1,5 +1,6 @@
 deck_template: 1                 # this contract's version
 template: standin.pptx           # path relative to this file
+max_bullets_per_slide: 5         # a longer body continues on the next slide
 roles:
   title:
     layout: title                # a layout name in the template
@@ -9,10 +10,10 @@ roles:
     placeholders: {title: 0}
   concept:
     layout: concept
-    placeholders: {title: 0, body: 1, citation: 2, notes: notes-page}
+    placeholders: {title: 0, body: 1, notes: notes-page}
   concept-with-figure:
     layout: concept-with-figure
-    placeholders: {title: 0, body: 1, citation: 2, image: 3, notes: notes-page}
+    placeholders: {title: 0, body: 1, image: 3, notes: notes-page}
   summary:
     layout: summary
     placeholders: {title: 0, body: 1}

@@ -16,7 +16,8 @@ from pptx.enum.shapes import PP_PLACEHOLDER
 from src.publishing import deck_template
 from src.publishing.course import Course, DeckExportError, Figure, Leaf, Section, SourceRef
 from src.publishing.deck_export import (
-    DECK_TEMPLATE_VERSION, IMAGE_TYPES, ROLES, _all_layouts, _resolve_layout, export_deck, load_mapping, validate_mapping,
+    DECK_TEMPLATE_VERSION, IMAGE_TYPES, RETIRED_FIELDS, ROLES, _all_layouts, _resolve_layout, export_deck, load_mapping,
+    validate_mapping,
 )
 
 # python-pptx does not clone these onto a new slide (iter_cloneable_placeholders), so a field mapped to one
@@ -95,7 +96,9 @@ def _normalise(roles):
         if not isinstance(spec, dict) or not isinstance(fields or {}, dict):
             problems.append(f"role '{role}' must be an object of layout and placeholders")
             continue
-        out[role] = {"layout": spec.get("layout"), "placeholders": dict(fields or {})}
+        retired = RETIRED_FIELDS.get(role, [])  # an old mapping may still name one; it is not persisted
+        out[role] = {"layout": spec.get("layout"),
+                     "placeholders": {f: v for f, v in (fields or {}).items() if f not in retired}}
         if "layout_index" in spec:
             out[role]["layout_index"] = spec["layout_index"]  # validate_mapping reports a bad type
     if problems:

@@ -19,7 +19,6 @@ const MISSING = 'missing'; // the select's value for a saved layout the template
 const FIELD_COLORS: Record<string, string> = {
     title: '#2563eb',
     body: '#0d9488',
-    citation: '#d97706',
     image: '#9333ea',
     notes: '#db2777',
 };
@@ -27,7 +26,6 @@ const FIELD_COLORS: Record<string, string> = {
 const FIELD_HINTS: Record<string, string> = {
     title: 'Slide title',
     body: 'Body text (the subtitle on a title slide)',
-    citation: 'Source citation line',
     image: 'The figure; needs a picture or object placeholder',
     notes: 'Speaker notes',
 };
@@ -77,10 +75,6 @@ const prefill = (layout: TemplateLayout, spec: Settings['role_spec'][string]): F
     if (want('body')) {
         const v = pick(['BODY', 'OBJECT', 'SUBTITLE']);
         if (v !== undefined) out.body = v;
-    }
-    if (want('citation')) {
-        const v = pick(['BODY', 'OBJECT', 'SUBTITLE']);
-        if (v !== undefined) out.citation = v;
     }
     if (fieldsOf(spec).includes('notes')) out.notes = NOTES_PAGE;
     return out;

@@ -35,8 +35,22 @@ def test_untouched_is_clean(exported, tmp_path):
 
 def test_deleted_citation(exported, tmp_path):
     def fn(prs):
-        _ph(prs.slides[2], 2).text_frame.text = ""
+        notes = prs.slides[2].notes_slide.notes_text_frame
+        notes.text = notes.text.splitlines()[-1]
     assert any("citation" in p for p in _tamper(exported, tmp_path, fn))
+
+
+def test_a_filename_on_the_slide_face(exported, tmp_path):
+    def fn(prs):
+        _ph(prs.slides[2], 1).text_frame.text += " (hydraulics_fixture.pptx)"
+    problems = _tamper(exported, tmp_path, fn)
+    assert any("slide 3: source filename 'hydraulics_fixture.pptx' is on the slide face" in p for p in problems)
+
+
+def test_altered_sources_notes(exported, tmp_path):
+    def fn(prs):
+        prs.slides[-1].notes_slide.notes_text_frame.text = "other.pptx: slide 1"
+    assert any("sources slide notes" in p for p in _tamper(exported, tmp_path, fn))
 
 
 def test_extra_concept_in_notes(exported, tmp_path):
