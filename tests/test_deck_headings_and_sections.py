@@ -60,16 +60,18 @@ def test_a_heading_is_a_bold_level_zero_paragraph_without_a_bullet():
     assert not any(r.font.bold for r in plain.runs)
 
 
-def test_a_leading_heading_equal_to_the_title_is_dropped():
+def test_a_heading_equal_to_the_title_is_dropped_wherever_it_is():
     assert drop_repeated_title("Pascal's Law", "#  pascal's   LAW\n- a\n- b") == "- a\n- b"
     assert drop_repeated_title("T", "\n\n## T\n- a") == "\n\n- a"
+    assert drop_repeated_title("T", "# Other\n## T\n- a") == "# Other\n- a"
+    assert drop_repeated_title("T", "- a\n# T") == "- a"
 
 
 def test_a_different_heading_or_a_lone_heading_is_kept():
     body = "# Other\n- a"
     assert drop_repeated_title("T", body) == body
     assert drop_repeated_title("T", "# T") == "# T"
-    assert drop_repeated_title("T", "- a\n# T") == "- a\n# T"
+    assert drop_repeated_title("T", "# T\n## t") == "# T\n## t"
     assert drop_repeated_title("T", "") == ""
 
 
@@ -79,8 +81,54 @@ def test_the_heading_is_dropped_once_and_before_splitting():
     leaf.body = f"# {leaf.title.upper()}\n{LONG}\n# {leaf.title}"
     parts = [i for r, i in deck_slides(course, 5) if getattr(i, "id", None) == leaf.id]
     assert [p.body for p in parts] == ["\n".join(f"- point {i}" for i in range(1, 6)),
-                                       "\n".join(f"- point {i}" for i in range(6, 9)) + f"\n# {leaf.title}"]
+                                       "\n".join(f"- point {i}" for i in range(6, 9))]
     assert [p.title for p in parts] == [leaf.title, leaf.title + " (cont.)"]
+
+
+def _frame(markdown):
+    prs = Presentation(str(DEFAULT_MAPPING.parent / "standin.pptx"))
+    slide = prs.slides.add_slide(next(l for l in prs.slide_layouts if l.name == "concept"))
+    frame = _body(slide).text_frame
+    write_text(frame, markdown)
+    return frame
+
+
+def _bold(p):
+    return bool(p.runs) and all(r.font.bold for r in p.runs)
+
+
+def test_only_the_first_heading_is_a_bold_subtitle_and_later_ones_are_plain():
+    frame = _frame("# x\n## y **z**\n- a\n- b")
+    x, y, a, b = frame.paragraphs
+    assert [p.text for p in frame.paragraphs] == ["x", "y z", "a", "b"]
+    assert _bold(x) and x.level == 0
+    assert y.level == 0 and y._p.pPr.find(A + "buNone") is not None
+    assert y._p.pPr.get("marL") == "0" and y._p.pPr.get("indent") == "0"
+    assert [r.font.bold for r in y.runs] == [None, True]
+    assert sum(1 for p in frame.paragraphs if _bold(p)) == 1
+
+
+def test_a_repeated_title_line_goes_and_a_differing_first_line_is_the_subtitle():
+    body = drop_repeated_title("T", "# Sub\n## T\n- a")
+    assert body == "# Sub\n- a"
+    frame = _frame(body)
+    assert [p.text for p in frame.paragraphs] == ["Sub", "a"]
+    assert _bold(frame.paragraphs[0]) and not _bold(frame.paragraphs[1])
+
+
+def test_a_body_of_only_title_headings_is_unchanged():
+    assert drop_repeated_title("T", "# T\n## t") == "# T\n## t"
+
+
+def test_a_continuation_slide_starting_with_a_heading_gets_its_own_subtitle():
+    course = golden_course()
+    leaf = next(iter_leaves(course))
+    five = "\n".join(f"- point {i}" for i in range(1, 6))
+    leaf.body = f"# First\n{five}\n# Next\n- more\n- last"
+    parts = [i for r, i in deck_slides(course, 5) if getattr(i, "id", None) == leaf.id]
+    assert len(parts) == 2 and parts[1].body.startswith("# Next")
+    frame = _frame(parts[1].body)
+    assert _bold(frame.paragraphs[0]) and frame.paragraphs[0].text == "Next"
 
 
 # ---- the course carries a parent's body

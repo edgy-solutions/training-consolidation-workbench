@@ -235,10 +235,12 @@ def _heading_paragraph(p):
 
 def write_text(text_frame, markdown):
     """Paragraphs from markdown lines: bullets and indentation become levels and `**x**` becomes bold.
-    A `#` heading becomes a bold level-0 paragraph with no bullet."""
+    The first `#` heading in the frame becomes a bold level-0 paragraph with no bullet; any later heading becomes a plain
+    level-0 paragraph with no bullet, so a frame never has two bold heading lines. No text is dropped."""
     lines = [ln.rstrip() for ln in (markdown or "").splitlines() if ln.strip()]
     text_frame.clear()
     first = True
+    subtitle = False
     for line in lines:
         indent = len(line.replace("\t", "    ")) - len(line.replace("\t", "    ").lstrip())
         content = line.strip()
@@ -254,12 +256,14 @@ def write_text(text_frame, markdown):
         p = text_frame.paragraphs[0] if first else text_frame.add_paragraph()
         first = False
         p.level = min(indent // 2, 8)
+        bold_all = heading and not subtitle
+        subtitle = subtitle or heading
         if heading:
             _heading_paragraph(p)
         for text, bold in _runs(content):
             r = p.add_run()
             r.text = text
-            if bold or heading:
+            if bold or bold_all:
                 r.font.bold = True
 
 

@@ -178,16 +178,12 @@ def _norm_title(text) -> str:
 
 
 def drop_repeated_title(title, body) -> str:
-    """The body without a leading heading that repeats the slide title (case and spacing ignored), when other lines remain.
-    A heading that differs from the title stays: it is reviewed text."""
+    """The body without any heading line (any level) that repeats the slide title (case and spacing ignored),
+    when other lines remain; otherwise the body unchanged. A heading that differs from the title stays: it is reviewed text."""
     lines = (body or "").splitlines()
-    first = next((i for i, ln in enumerate(lines) if ln.strip()), None)
-    if first is None or not _is_heading(lines[first]):
-        return body
-    if _norm_title(_HEADING.sub("", lines[first].strip())) != _norm_title(title):
-        return body
-    rest = lines[:first] + lines[first + 1:]
-    if not any(ln.strip() for ln in rest):
+    rest = [ln for ln in lines
+            if not (_is_heading(ln) and _norm_title(_HEADING.sub("", ln.strip())) == _norm_title(title))]
+    if len(rest) == len(lines) or not any(ln.strip() for ln in rest):
         return body
     return "\n".join(rest)
 

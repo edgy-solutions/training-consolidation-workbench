@@ -89,7 +89,7 @@ The exporter checks the mapping against the template and the course **before wri
 - A placeholder `idx` the layout does not have (checked against the layout the role resolves to), or an `image` placeholder that cannot take a picture.
 - A required field (§2.1) that is not mapped.
 - **Content with no mapped field to go to,** for example a title slide with a subtitle when the `title` role maps no `body`. Content is never dropped. The one exception is a section body: when the `section` role maps no `body`, section slides are skipped and recorded (§3.2), and the exporter warns.
-- **Headings.** A `#` heading line renders as a bold level-0 paragraph with no bullet. A leading heading that repeats the slide's title (case and spacing ignored) is removed as a duplicate, when other lines remain; any other heading stays.
+- **Headings.** A heading line equal to the slide's title (case and spacing ignored) is removed as a duplicate, when other lines remain; any other heading stays. The first remaining heading on a slide is its bold subtitle (level 0, no bullet). Any further heading renders as a plain level-0 line with no bullet, so a slide never has two bold heading lines.
 
 **Nothing falls back,** with one exception. There is no default role or default layout. The exception is a name that several layouts carry, with no `layout_index`: the exporter uses the first of them in template order and warns. A `layout_index` that agrees with `layout` always chooses that layout. Everything else either meets this contract or fails.
 
