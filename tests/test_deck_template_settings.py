@@ -46,7 +46,7 @@ class FakeMinio:
     def __init__(self, fail=None):
         self.objects, self.puts, self.gets, self.removed, self.fail = {}, [], [], [], fail
 
-    def upload_bytes(self, bucket, key, data, content_type=None):
+    def put_bytes(self, bucket, key, data, content_type=None):
         if self.fail == "put":
             raise OSError("store is down")
         self.puts.append(key)
@@ -161,6 +161,32 @@ def test_save_writes_pptx_before_pointer(env):
     assert pointer["source"]["filename"] == "mine.pptx" and pointer["source"]["saved_by"] == "u1"
     assert pointer["template"] == f"s3://tpl/{minio.puts[0]}"
     assert deck_template.read_saved(minio)["roles"] == STANDIN_ROLES
+
+
+def test_save_never_touches_the_bucket_itself(env):
+    from src.storage.minio import MinioClient
+
+    class Stub:
+        def __init__(self):
+            self.keys = []
+
+        def bucket_exists(self, *a, **k):
+            raise AssertionError("HeadBucket")
+
+        def make_bucket(self, *a, **k):
+            raise AssertionError("MakeBucket")
+
+        def put_object(self, **kwargs):
+            self.keys.append(kwargs["object_name"])
+
+    client = MinioClient.__new__(MinioClient)
+    client.endpoint = "x"
+    client.client = Stub()
+    deck_template.save(b"pptx-bytes", {}, "a.pptx", "me", minio=client)
+    keys = client.client.keys
+    assert len(keys) == 2
+    assert keys[0].startswith("cfg/") and keys[0].endswith(".pptx")
+    assert keys[1] == "cfg/active.yaml"
 
 
 def test_failed_validation_writes_nothing(env):
