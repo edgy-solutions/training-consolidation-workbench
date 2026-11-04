@@ -81,7 +81,7 @@ class ContentSynthesizer(dspy.Module):
         # Use ChainOfThought like the OutlineHarmonizer
         self.generate = dspy.ChainOfThought(GenerateRichContent)
     
-    def forward(self, slides: List[Dict[str, Any]], instruction: str, section_title: str = "", section_rationale: str = "", target_layout: str = "documentary") -> Dict[str, Any]:
+    def forward(self, slides: List[Dict[str, Any]], instruction: str, section_title: str = "", section_rationale: str = "", target_layout: str = "documentary", section_notes: List[Dict[str, Any]] = None) -> Dict[str, Any]:
         """
         Args:
             slides: List of dicts with keys: id, text, assets (List[SourceAsset])
@@ -89,6 +89,7 @@ class ContentSynthesizer(dspy.Module):
             section_title: Title of this section
             section_rationale: AI-generated rationale explaining why this section exists
             target_layout: Layout archetype (hero, documentary, split, grid, content_caption, table, blank)
+            section_notes: Source section notes, dicts with title, summary, objectives; orientation only
         """
         
         # 1. Format Text Context
@@ -120,6 +121,16 @@ class ContentSynthesizer(dspy.Module):
             section_context_parts.append(f"Section Title: {section_title}")
         if section_rationale:
             section_context_parts.append(f"Purpose: {section_rationale}")
+        if section_notes:
+            lines = ["Source section notes (orientation only; facts still come only from the slide text):"]
+            for note in section_notes:
+                line = f"- {note.get('title') or 'Untitled section'}"
+                if note.get("summary"):
+                    line += f": {note['summary']}"
+                lines.append(line)
+                if note.get("objectives"):
+                    lines.append("  Objectives: " + "; ".join(note["objectives"]))
+            section_context_parts.append("\n".join(lines))
         section_context_block = "\n".join(section_context_parts) if section_context_parts else "General content section"
 
         # 4. Build Layout-Specific Guidance
