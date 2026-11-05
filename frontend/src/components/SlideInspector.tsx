@@ -11,6 +11,23 @@ import { SlidePreview } from './SlidePreview';
 import type { LayoutArchetype } from './LayoutContext';
 import { toast } from 'sonner';
 
+// One line per set of sections that share 2+ repeated concepts.
+function recurringPairs(overlaps: { concept: string; sections: { id: string; title: string }[] }[]): string[] {
+    const groups = new Map<string, { titles: string[]; count: number }>();
+    for (const o of overlaps) {
+        const key = o.sections.map(s => s.id).sort().join('|');
+        const g = groups.get(key);
+        if (g) g.count += 1;
+        else groups.set(key, { titles: o.sections.map(s => s.title), count: 1 });
+    }
+    return [...groups.values()].filter(g => g.count >= 2).map(g => {
+        const names = g.titles.length > 1
+            ? `${g.titles.slice(0, -1).join(', ')} and ${g.titles[g.titles.length - 1]}`
+            : g.titles[0];
+        return `${g.count} concepts repeat between ${names}`;
+    });
+}
+
 export const SlideInspector: React.FC = () => {
     const activeSlideId = useAppStore(state => state.activeSlideId);
     const activeNodeId = useAppStore(state => state.activeNodeId);
@@ -350,6 +367,12 @@ export const SlideInspector: React.FC = () => {
                             onClick={e => e.stopPropagation()}
                         >
                             <h3 className="font-bold text-slate-800 text-sm mb-2">{overlap.message}</h3>
+                            <p className="text-xs text-slate-600 mb-3">
+                                Cancel to move concepts so each is taught once, or render anyway: the repeats and your reason are recorded with the project.
+                            </p>
+                            {recurringPairs(overlap.overlaps).map(line => (
+                                <p key={line} className="text-xs font-medium text-slate-700 mb-1">{line}</p>
+                            ))}
                             <ul className="space-y-1 mb-4 text-xs text-slate-600">
                                 {overlap.overlaps.map(o => (
                                     <li key={o.concept}>
