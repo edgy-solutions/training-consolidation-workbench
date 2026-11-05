@@ -108,7 +108,7 @@ The exporter checks the mapping against the template and the course **before wri
   - A body within the limit is written unchanged.
   - A continuation's title is the leaf's title plus ` (cont.)`, and its role is `concept`, even for a figure leaf, so a figure leaf's course needs the `concept` role mapped. The figure goes on the first slide only, and the leaf's own notes go on the first slide only. Every part carries the citation and `Concepts:` line (§3.3).
   - A section body splits the same way. Its continuations are titled the section's title plus ` (cont.)` and keep the role `section`.
-  - The `summary` splits the same way, one bullet per concept: `Summary`, then `Summary (cont.)`. There is always at least one.
+  - The summary's shown concepts, one bullet each, are spread evenly over the fewest slides that hold them at `max_bullets_per_slide` each, the earlier slides taking one more when they don't divide evenly (12 at 5 → 4, 4, 4; 11 → 4, 4, 3): `Summary`, then `Summary (cont.)`. There is always at least one.
 - The image is placed into its placeholder, which crops it to fit (`insert_picture`).
 
 ## 3. The consolidated course
@@ -158,7 +158,7 @@ The order is the tree, depth-first. Siblings are sorted by `order` ascending; a 
 
 ### 3.5 Generated slides
 
-- **`summary`.** `title` "Summary"; `body` lists the first `max_summary_items` concepts, one bullet each, in course order. It continues like any body (§2.4). When concepts remain, the last summary slide's body ends with one more line, `+<n> more in notes` (`+1 more in notes` for one), written as a plain line with no bullet marker and not counted against `max_bullets_per_slide`, so it never makes a slide of its own. The remaining concepts are in that slide's speaker notes, one per line in course order. At or under the cap the summary has no such line and no notes.
+- **`summary`.** `title` "Summary"; `body` lists the first `max_summary_items` concepts, one bullet each, in course order. It continues like any body (§2.4). When concepts remain, the last summary slide's body ends with one more line, `+<n> more in notes` (`+1 more in notes` for one), written as a plain line with no bullet marker and not counted against `max_bullets_per_slide`, so it never makes a slide of its own. It renders at level 0 with no bullet and not bold, whatever the placeholder gives its paragraphs. The remaining concepts are in that slide's speaker notes, one per line in course order. At or under the cap the summary has no such line and no notes.
 - **`sources`.** `title` "Sources"; `body` is a count line, `<n> source decks, <m> cited slides` ("1 source deck", "1 cited slide" in the singular). The slide's speaker notes have one line per source deck, in order of first citation: `<filename>: slides 1, 2, 4`.
 
 ## 4. Citations

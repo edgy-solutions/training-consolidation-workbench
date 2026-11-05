@@ -225,7 +225,7 @@ def _runs(text):
             yield part, False
 
 
-def _heading_paragraph(p):
+def _plain_paragraph(p):
     """Level 0, no indent and no bullet, whatever the placeholder gives its paragraphs."""
     pPr = p._p.get_or_add_pPr()
     pPr.set("marL", "0")
@@ -259,7 +259,7 @@ def write_text(text_frame, markdown):
         bold_all = heading and not subtitle
         subtitle = subtitle or heading
         if heading:
-            _heading_paragraph(p)
+            _plain_paragraph(p)
         for text, bold in _runs(content):
             r = p.add_run()
             r.text = text
@@ -363,6 +363,8 @@ def export_deck(course: Course, mapping_path, out_path, resolve_image, render_an
             elif f in values:
                 frame = slide.placeholders[idx].text_frame
                 write_text(frame, values[f])
+                if role == "summary" and f == "body" and item.notes:
+                    _plain_paragraph(frame.paragraphs[-1])  # the "+N more in notes" line
                 if f == "body":
                     frame.auto_size = MSO_AUTO_SIZE.TEXT_TO_FIT_SHAPE  # shrink on overflow; no font or size is set
                 used.add(idx)
