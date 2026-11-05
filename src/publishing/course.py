@@ -258,6 +258,18 @@ def summary_items(course, max_items) -> Tuple[List[str], List[str]]:
     return concepts[:max_items], concepts[max_items:]
 
 
+def even_split(items, max_per) -> List[List[str]]:
+    """items over the fewest chunks of at most max_per, the earlier chunks taking one more when they don't divide."""
+    k = max(1, -(-len(items) // max_per))
+    size, extra = divmod(len(items), k)
+    out, at = [], 0
+    for i in range(k):
+        n = size + (i < extra)
+        out.append(items[at:at + n])
+        at += n
+    return out
+
+
 def more_in_notes(rest) -> str:
     """The line that ends the summary face when concepts remain, or "" when none do."""
     return f"+{len(rest)} more in notes" if rest else ""
@@ -278,7 +290,7 @@ def deck_slides(course, max_bullets=DEFAULT_MAX_BULLETS, max_summary=DEFAULT_MAX
     A section yields its body as slides of role section, continuing like a concept; with no body, or when section_body
     is false (the mapping maps no section body), it yields no slide and its children follow as usual.
     A leading heading that repeats the title is dropped before splitting.
-    The summary shows max_summary concepts; the rest go in the last summary slide's notes."""
+    The summary shows max_summary concepts spread evenly over the fewest slides; the rest go in the last one's notes."""
     for role, item in iter_slides(course):
         if role in ("concept", "concept-with-figure"):
             for i, chunk in enumerate(split_bullets(drop_repeated_title(item.title, item.body), max_bullets)):
@@ -293,7 +305,7 @@ def deck_slides(course, max_bullets=DEFAULT_MAX_BULLETS, max_summary=DEFAULT_MAX
                 yield "section", replace(item, title=item.title + (CONT_SUFFIX if i else ""), body=chunk)
         elif role == "summary":
             shown, rest = summary_items(course, max_summary)
-            chunks = split_bullets("\n".join("- " + c for c in shown), max_bullets)
+            chunks = ["\n".join("- " + c for c in part) for part in even_split(shown, max_bullets)]
             if rest:  # the line is not a bullet and does not count against max_bullets
                 chunks[-1] += "\n" + more_in_notes(rest)
             for i, chunk in enumerate(chunks):

@@ -5,7 +5,7 @@ from pptx import Presentation
 
 from src.publishing.course import (
     Course, DeckExportError, SummaryPart, course_concepts, deck_slides, decks, iter_leaves, more_in_notes,
-    sources_body, split_bullets, summary_items,
+    even_split, sources_body, split_bullets, summary_items,
 )
 from src.publishing.deck_export import (
     DEFAULT_MAPPING, check_round_trip, deck_digest, export_deck, load_mapping, validate,
@@ -103,7 +103,7 @@ def test_twelve_concepts_make_three_summary_slides_with_no_overflow_line(tmp_pat
     summaries = _summaries(course)
     assert [s.title for s in summaries] == ["Summary", "Summary (cont.)", "Summary (cont.)"]
     assert all(isinstance(s, SummaryPart) for s in summaries)
-    assert [len(_lines(s)) for s in summaries] == [5, 5, 2]
+    assert [len(_lines(s)) for s in summaries] == [4, 4, 4]
     assert not any("more in notes" in s.body for s in summaries) and all(s.notes == "" for s in summaries)
     out = export_deck(course, DEFAULT_MAPPING, tmp_path / "o.pptx", resolver())
     assert check_round_trip(course, load_mapping(DEFAULT_MAPPING), out) == []
@@ -115,7 +115,7 @@ def test_twelve_concepts_make_three_summary_slides_with_no_overflow_line(tmp_pat
 def test_twenty_eight_concepts_show_twelve_and_the_rest_go_in_the_last_notes(tmp_path):
     course = _course_with(28)
     summaries = _summaries(course)
-    assert [len(_lines(s)) for s in summaries] == [5, 5, 3]
+    assert [len(_lines(s)) for s in summaries] == [4, 4, 5]
     assert _lines(summaries[-1])[-1] == "+16 more in notes"
     assert _lines(summaries[-1])[-2] == "- Concept 11"
     assert [s.notes for s in summaries[:-1]] == ["", ""]
@@ -128,7 +128,7 @@ def test_twenty_eight_concepts_show_twelve_and_the_rest_go_in_the_last_notes(tmp
 
 def test_the_overflow_line_follows_the_shown_split():
     summaries = _summaries(_course_with(10), max_summary=7)
-    assert [len(_lines(s)) for s in summaries] == [5, 3]
+    assert [len(_lines(s)) for s in summaries] == [4, 4]
     assert _lines(summaries[1])[-1] == "+3 more in notes"
     assert summaries[1].notes.splitlines() == ["Concept 7", "Concept 8", "Concept 9"]
 
@@ -281,3 +281,27 @@ def test_notes_on_a_placeholder_are_refused_because_they_carry_filenames(tmp_pat
     with pytest.raises(DeckExportError) as e:
         export_deck(golden_course(), path, tmp_path / "out.pptx", resolver())
     assert any("is on the slide face" in p for p in e.value.problems)
+
+
+@pytest.mark.parametrize("n,sizes", [(12, [4, 4, 4]), (11, [4, 4, 3]), (7, [4, 3]), (6, [3, 3]), (5, [5])])
+def test_the_shown_concepts_spread_evenly_over_the_fewest_slides(n, sizes):
+    summaries = _summaries(_course_with(n), max_summary=n)
+    counts = [len(_lines(s)) for s in summaries]
+    assert counts == sizes and sum(counts) == n
+    assert counts[-1] >= n // len(counts)
+
+
+def test_the_overflow_line_has_no_bullet_and_the_bullets_keep_theirs(tmp_path):
+    out = export_deck(_course_with(28), DEFAULT_MAPPING, tmp_path / "o.pptx", resolver())
+    body_idx = load_mapping(DEFAULT_MAPPING).roles["summary"]["placeholders"]["body"]
+    paras = _ph(_last_summary(Presentation(str(out))), body_idx).text_frame.paragraphs
+    last = paras[-1]
+    assert last.text == "+16 more in notes"
+    assert last._p.pPr.find(A + "buNone") is not None
+    assert not any(r.font.bold is True for r in last.runs)
+    assert all(p._p.pPr is None or p._p.pPr.find(A + "buNone") is None for p in paras[:-1])
+
+
+def test_even_split_edges():
+    assert even_split(["a"], 5) == [["a"]]
+    assert even_split([], 5) == [[]]
