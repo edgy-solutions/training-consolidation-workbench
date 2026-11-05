@@ -216,6 +216,8 @@ Nothing falls back past a failure: if the store holds a pointer but cannot be re
 
 **The flag.** The screen is behind `WB_DECK_TEMPLATE_UI` (chart `api.deckTemplate.ui`), default off, in addition to `can_configure:deck_template`. Off: the gear is not shown and every `/settings/deck-template` route except `/settings/deck-template/enabled` answers 404. Exports do not read the flag: a saved template stays in force, so turning the flag off does not change decks. Going back to the deployment's template means Reset before turning it off, or deleting `active.yaml`.
 
+**Routing.** The screen's routes live under `/settings`. Where the UI and the api share one host, the api's ingress lists its route prefixes (chart `api.ingress.paths`), and that list must include `/settings` (and `/alignment`, for proposal review). A prefix left out is answered by the UI with its `index.html`, so the gear's question gets no `enabled` and the gear never shows, with the flag on and the grant in place. A deployment that gives the api its own host with the path `/` needs nothing. Each deployment's values carry this list, so check them when turning the flag on.
+
 **Store layout.**
 - `<prefix>/<sha256>.pptx`: the template, named by the hash of its bytes. The uploaded file name is never part of a key.
 - `<prefix>/active.yaml`: the one pointer. It holds `deck_template: 1`, `template: s3://…/<sha256>.pptx`, `source: {filename, saved_by, saved_at}` and `roles` (§2). The `.pptx` is written first and the pointer last, so a save either lands whole or not at all.
