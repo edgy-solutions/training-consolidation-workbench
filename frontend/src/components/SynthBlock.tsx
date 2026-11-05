@@ -156,7 +156,17 @@ export const SynthBlock: React.FC<SynthBlockProps> = ({ node, concepts, onRefres
         }
     };
 
-    const handleRemoveConcept = async (concept: string) => {
+    const [openSources, setOpenSources] = useState<Set<string>>(new Set());
+    const toggleSources = (concept: string) => setOpenSources(prev => {
+        const next = new Set(prev);
+        if (next.has(concept)) next.delete(concept); else next.add(concept);
+        return next;
+    });
+
+    const handleRemoveConcept = async (concept: string, sourceCount = 0) => {
+        if (sourceCount > 0 && !window.confirm(
+            `Remove "${concept}" from this section? It is on ${sourceCount} source slide${sourceCount === 1 ? '' : 's'}.`
+        )) return;
         try {
             await api.removeSectionConcept(node.id, concept);
             onRefresh();
@@ -331,7 +341,19 @@ export const SynthBlock: React.FC<SynthBlockProps> = ({ node, concepts, onRefres
                                                 >
                                                     {slideLabel(first.slide_id, first.number)}
                                                 </button>
-                                                {c.sources.length > 1 && <span> +{c.sources.length - 1}</span>}
+                                                {c.sources.length > 1 && (
+                                                    <>
+                                                        {' '}
+                                                        <button
+                                                            onClick={() => toggleSources(c.concept)}
+                                                            aria-expanded={openSources.has(c.concept)}
+                                                            title="Show all source slides"
+                                                            className="text-brand-teal hover:underline cursor-pointer"
+                                                        >
+                                                            {openSources.has(c.concept) ? '−' : `+${c.sources.length - 1}`}
+                                                        </button>
+                                                    </>
+                                                )}
                                             </span>
                                             {!first.in_section && (
                                                 <span className="text-slate-400 italic">not on this section's slides</span>
@@ -340,37 +362,68 @@ export const SynthBlock: React.FC<SynthBlockProps> = ({ node, concepts, onRefres
                                     ) : (
                                         <span className="text-slate-400 italic">no source slide</span>
                                     )}
-                                    {c.repeated_in.length > 0 && (
-                                        <span
-                                            className={clsx(
-                                                "px-1.5 rounded-full border",
-                                                c.overlap
-                                                    ? "bg-amber-50 text-amber-700 border-amber-200"
-                                                    : "bg-slate-100 text-slate-500 border-slate-200"
-                                            )}
-                                            title={c.overlap
-                                                ? "Overlap: rendering will ask for a reason"
-                                                : "Overview, safety and assessment sections revisit by design"}
-                                        >
-                                            also in{' '}
-                                            {c.repeated_in.map((r, i) => (
-                                                <React.Fragment key={r.id}>
-                                                    {i > 0 && ', '}
-                                                    <button onClick={() => goToSection(r.id)} className="hover:underline">
-                                                        {r.title}
-                                                    </button>
-                                                </React.Fragment>
-                                            ))}
-                                        </span>
-                                    )}
+                                    {c.repeated_in.length > 0 && (() => {
+                                        const why = c.overlap
+                                            ? "Overlap: rendering will ask for a reason"
+                                            : "Overview, safety and assessment sections revisit by design";
+                                        const badge = clsx(
+                                            "px-1.5 rounded-full border cursor-pointer",
+                                            c.overlap
+                                                ? "bg-amber-50 text-amber-700 border-amber-200"
+                                                : "bg-slate-100 text-slate-500 border-slate-200"
+                                        );
+                                        if (c.repeated_in.length === 1) {
+                                            const r = c.repeated_in[0];
+                                            return (
+                                                <button
+                                                    onClick={() => goToSection(r.id)}
+                                                    className={clsx(badge, "hover:underline")}
+                                                    title={`${why} — go to ${r.title}`}
+                                                >
+                                                    also in {r.title}
+                                                </button>
+                                            );
+                                        }
+                                        return (
+                                            <span className={badge} title={why}>
+                                                also in{' '}
+                                                {c.repeated_in.map((r, i) => (
+                                                    <React.Fragment key={r.id}>
+                                                        {i > 0 && ', '}
+                                                        <button onClick={() => goToSection(r.id)} className="hover:underline cursor-pointer">
+                                                            {r.title}
+                                                        </button>
+                                                    </React.Fragment>
+                                                ))}
+                                            </span>
+                                        );
+                                    })()}
                                     <button
-                                        onClick={() => handleRemoveConcept(c.concept)}
+                                        onClick={() => handleRemoveConcept(c.concept, c.sources.length)}
                                         className="ml-auto text-slate-300 hover:text-red-500"
                                         title="Remove this concept from this section only"
                                         aria-label={`Remove ${c.concept} from this section`}
                                     >
                                         <X size={12} />
                                     </button>
+                                    {openSources.has(c.concept) && (
+                                        <ul className="basis-full pl-3 text-slate-400">
+                                            {c.sources.map(s => (
+                                                <li key={s.slide_id}>
+                                                    {s.filename} ·{' '}
+                                                    <button
+                                                        onClick={() => setActiveSlideId(s.slide_id)}
+                                                        className="text-brand-teal hover:underline"
+                                                    >
+                                                        {slideLabel(s.slide_id, s.number)}
+                                                    </button>
+                                                    {!s.in_section && (
+                                                        <span className="italic ml-2">not on this section's slides</span>
+                                                    )}
+                                                </li>
+                                            ))}
+                                        </ul>
+                                    )}
                                 </li>
                             );
                         })}
