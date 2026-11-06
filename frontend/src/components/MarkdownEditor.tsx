@@ -10,6 +10,7 @@ import { marked } from 'marked';
 import TurndownService from 'turndown';
 import { useLayout } from './LayoutContext';
 import { api } from '../api';
+import { placeholderFromUrl, resolveAssetPlaceholders } from '../assetPlaceholders';
 
 // ... (other code)
 
@@ -78,6 +79,9 @@ turndownService.addRule('images', {
         const img = node as HTMLImageElement;
         const alt = (img.alt || '').replace(/"/g, '&quot;'); // Escape quotes in ALT
         const rawSrc = img.src || '';
+        // Deck image placeholders go back to {{id}}, never the signed URL
+        const placeholder = placeholderFromUrl(rawSrc);
+        if (placeholder) return placeholder;
         const src = toStableUrl(rawSrc); // Convert to stable URL
         const title = (img.title || '').replace(/"/g, '&quot;'); // Escape quotes in TITLE
         const width = img.getAttribute('width');
@@ -273,7 +277,7 @@ export const MarkdownEditor: React.FC<MarkdownEditorProps> = ({ content, onSave,
 
         const resolve = async () => {
             if (content) {
-                const resolved = await resolveMinioUrls(content);
+                const resolved = await resolveAssetPlaceholders(await resolveMinioUrls(content));
                 if (!cancelled) {
                     setResolvedContent(resolved);
                 }

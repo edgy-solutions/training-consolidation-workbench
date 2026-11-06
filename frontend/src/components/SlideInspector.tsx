@@ -7,9 +7,21 @@ import { goToSection } from '../sectionNav';
 import { conceptKey, mergeByCase } from '../conceptCase';
 import clsx from 'clsx';
 import { marked } from 'marked';
+import { useResolvedMarkdown } from '../assetPlaceholders';
 import { SlidePreview } from './SlidePreview';
 import type { LayoutArchetype } from './LayoutContext';
 import { toast } from 'sonner';
+
+// Own component so the placeholder-resolving hook is legal inside the node map
+const ResolvedMarkdown: React.FC<{ markdown: string }> = ({ markdown }) => {
+    const resolved = useResolvedMarkdown(markdown);
+    return (
+        <div
+            className="prose prose-sm max-w-none text-slate-700"
+            dangerouslySetInnerHTML={{ __html: marked.parse(resolved) as string }}
+        />
+    );
+};
 
 // One line per set of sections that share 2+ repeated concepts.
 function recurringPairs(overlaps: { concept: string; sections: { id: string; title: string }[] }[]): string[] {
@@ -298,10 +310,7 @@ export const SlideInspector: React.FC = () => {
                                 </div>
 
                                 {node.content_markdown ? (
-                                    <div
-                                        className="prose prose-sm max-w-none text-slate-700"
-                                        dangerouslySetInnerHTML={{ __html: marked.parse(node.content_markdown) as string }}
-                                    />
+                                    <ResolvedMarkdown markdown={node.content_markdown} />
                                 ) : (
                                     <div className="text-center text-slate-300 text-xs italic py-4">
                                         (Content pending...)
