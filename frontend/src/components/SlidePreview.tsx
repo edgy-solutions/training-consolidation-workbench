@@ -2,6 +2,7 @@ import React from 'react';
 import type { LayoutArchetype } from './LayoutContext';
 import clsx from 'clsx';
 import { marked } from 'marked';
+import { useResolvedMarkdown } from '../assetPlaceholders';
 
 interface TiptapNode {
     type: string;
@@ -328,6 +329,9 @@ export const SlidePreview: React.FC<SlidePreviewProps> = ({
     layoutArchetype,
     title
 }) => {
+    // Swap {{id}} image placeholders for signed URLs once, for every layout below
+    const resolvedMarkdown = useResolvedMarkdown(markdown || undefined);
+
     // If no content at all, show placeholder
     if (!tiptapContent && !markdown) {
         return (
@@ -340,14 +344,14 @@ export const SlidePreview: React.FC<SlidePreviewProps> = ({
     // Pass content or markdown to layout components
     switch (layoutArchetype) {
         case 'split':
-            return <SplitLayout content={tiptapContent || undefined} markdown={markdown || undefined} title={title} />;
+            return <SplitLayout content={tiptapContent || undefined} markdown={resolvedMarkdown || undefined} title={title} />;
         case 'grid':
-            return <GridLayout content={tiptapContent || undefined} markdown={markdown || undefined} title={title} />;
+            return <GridLayout content={tiptapContent || undefined} markdown={resolvedMarkdown || undefined} title={title} />;
         case 'hero':
-            return <HeroLayout content={tiptapContent || undefined} markdown={markdown || undefined} title={title} />;
+            return <HeroLayout content={tiptapContent || undefined} markdown={resolvedMarkdown || undefined} title={title} />;
         case 'documentary':
         default:
-            return <DocumentaryLayout content={tiptapContent || undefined} markdown={markdown || undefined} title={title} />;
+            return <DocumentaryLayout content={tiptapContent || undefined} markdown={resolvedMarkdown || undefined} title={title} />;
     }
 };
 
