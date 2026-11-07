@@ -81,6 +81,10 @@ spec:
             - name: WB_DECK_TEMPLATE_UI
               value: "on"
             {{- end }}
+            {{- if and .Values.api.alignmentReviewUi (not (hasKey $env "WB_ALIGNMENT_REVIEW_UI")) }}
+            - name: WB_ALIGNMENT_REVIEW_UI
+              value: "on"
+            {{- end }}
             {{- if and .Values.api.deckTemplate.mappingConfigMap (not (hasKey $env "DECK_TEMPLATE")) }}
             - name: DECK_TEMPLATE
               value: /etc/wb/template/deck-template.yaml

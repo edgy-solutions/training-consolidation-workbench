@@ -27,6 +27,9 @@ api:
   env: {}
   # The review capability asked of Topaz is can_review:<this>. Empty refuses every review.
   alignmentReviewSubject: alignment
+  # true renders WB_ALIGNMENT_REVIEW_UI=on and shows the Review entry to users Topaz grants
+  # can_review:<alignmentReviewSubject>; accepting/rejecting also needs WB_STORE_WRITES=on.
+  alignmentReviewUi: false
   # The deck template export uses.
   deckTemplate:
     uri: ""                 # s3://<bucket>/<key> of the .pptx; empty = the stand-in
