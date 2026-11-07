@@ -14,8 +14,6 @@ build/
 .pytest_cache/
 .mypy_cache/
 
-# Dagster
-dagster.yaml
 workspace.yaml
 *.db
 *.db-journal
@@ -38,8 +36,6 @@ data/
 .DS_Store
 Thumbs.db
 
-# dagster
-.tmp_dagster*/
 
 # test_docs
 test_docs/

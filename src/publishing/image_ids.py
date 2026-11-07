@@ -1,4 +1,4 @@
-"""Image ids are '<deck prefix>--<name>'. No dagster or neo4j imports: shared by the synthesizer, readers and exporter."""
+"""Image ids are '<deck prefix>--<name>'. No neo4j imports: shared by the synthesizer, readers and exporter."""
 import re
 
 _SPLIT = re.compile(r"^([0-9a-f]{12})--(.+)$", re.S)
