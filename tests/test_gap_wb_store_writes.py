@@ -7,8 +7,7 @@ b1  `get_current_user` runs `sync_user_to_neo4j` (a MERGE/SET on the shared grap
     (that is the writer being exercised, so the arm cannot pass by never calling it).
 b2  The guard is attached per route. Derive the population from the app (every POST/PUT/PATCH/DELETE)
     and require each to carry `require_store_writes` or be in the declared READ-ONLY set. A route
-    in neither is UNDECIDED and fails: `/render/trigger` is one (it uploads to the shared
-    `published` bucket when the runner is dagster, and creates a job record when local).
+    in neither is UNDECIDED and fails: `/render/trigger` is one (it creates a render job record).
 """
 import pytest
 from fastapi.routing import APIRoute

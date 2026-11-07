@@ -4,16 +4,12 @@ This project supports consolidation of training material from multiple business 
 
 ## High-level Architecture
 
-- **Module 1: Ingestion (Dagster + Unstructured + MinIO)**
-  - **Input**: Word, PowerPoint, and PDF files uploaded to MinIO (`source_docs` -> `training-content` bucket).
-  - **Orchestration**: Dagster sensor (`course_upload_sensor`) detects new files.
-  - **Extraction**:
-    - `unstructured` extracts text and metadata.
-    - `pdf2image` / `libreoffice` renders high-res images of slides/pages.
-    - **Output**: JSON artifacts and PNG images stored in MinIO under `{course_id}/generated/`.
+- **Module 1: Ingestion (runs in the platform's doc-tools pipeline)**
+  - Word, PowerPoint, and PDF files are ingested outside this repo: text and metadata are extracted and slide/page images rendered, then stored in MinIO.
+  - The workbench api does not ingest; it reads the outputs from Neo4j, MinIO and Weaviate (`SOURCE_READER=store`).
 
 - **Module 2: The Cartographer (Neo4j + Weaviate + BAML)**
-  - **Semantic Extraction**: A Dagster asset (`build_knowledge_graph`) processes ingested text.
+  - **Semantic Extraction**: Also runs in the doc-tools pipeline, over the ingested text.
   - **Graph Construction**:
     - Nodes: `Course`, `Section`, `Slide`, `Concept`.
     - Edges: `HAS_SECTION`, `HAS_SLIDE`, `TEACHES`.
@@ -27,7 +23,7 @@ This project supports consolidation of training material from multiple business 
   - **Backend (FastAPI)**:
     - Serves course hierarchies (`/source/tree`) and slide details (`/source/slide/{id}`).
     - Manages the "Consolidated Draft" state in Neo4j.
-    - Triggers AI synthesis via Dagster GraphQL (`/synthesis/trigger`).
+    - Triggers AI synthesis (`/synthesis/trigger`).
   - **Frontend (React)**:
     - **Source Browser**: Visualizes legacy content filtered by Engineering Discipline.
     - **Consolidation Canvas**: A Drag-and-Drop workspace to build the new curriculum.
@@ -39,7 +35,7 @@ This project supports consolidation of training material from multiple business 
 ```mermaid
 graph TD
     subgraph Ingestion ["Ingestion & Knowledge Graph"]
-        RawDocs[("Raw PDFs/PPTs")] -->|Dagster| Processing[("Unstructured.io & Layout Detector")]
+        RawDocs[("Raw PDFs/PPTs")] -->|doc-tools pipeline| Processing[("Text & Layout Extraction")]
         Processing -->|Classify| Archetype{Layout Archetype}
         Archetype -->|Hero, Split, Grid...| Neo4j[(Neo4j Graph)]
         Processing -->|Vectors| Weaviate[(Weaviate Vector DB)]
@@ -74,22 +70,16 @@ This feature allows users to automatically generate a consolidated curriculum sk
 ### Overview
 The "Generate Outline" button triggers a process that synthesizes a new curriculum structure based on the content of the selected source materials. It identifies common themes, eliminates redundancies, and proposes a new hierarchy of sections, each populated with relevant slides.
 
-### Preprocessed Inputs (Dagster)
-The foundation for this feature is built by the Dagster ingestion and semantic pipelines:
+### Preprocessed Inputs (doc-tools pipeline)
+The foundation for this feature is built outside this repo, by the platform's doc-tools ingestion and semantic extraction. The workbench api only reads the results:
 
-1.  **Ingestion (`process_course_job`)**:
-    -   Triggered by the `course_upload_sensor` when files are uploaded to MinIO.
-    -   Extracts text and metadata from documents (PDF, PPTX, DOCX) using `unstructured`.
-    -   Renders slide images.
+1.  **Ingestion**:
+    -   Extracts text and metadata from documents (PDF, PPTX, DOCX) and renders slide images into MinIO.
 
-2.  **Knowledge Graph Construction (`build_knowledge_graph`)**:
-    -   **Asset**: `src/semantic/assets.py:build_knowledge_graph`
-    -   **Process**:
-        -   **Outline Extraction**: An LLM reads the full text of the course and extracts a hierarchical outline, creating `Section` nodes in Neo4j.
-        -   **Concept Extraction**: An LLM analyzes *each slide* to extract key concepts (e.g., "PID Control", "Safety Interlocks"). These are stored as `Concept` nodes and linked to the `Slide` via `TEACHES` edges with a salience score (0.0 - 1.0).
+2.  **Knowledge Graph Construction**:
+    -   **Outline Extraction**: An LLM reads the full text of the course and extracts a hierarchical outline, creating `Section` nodes in Neo4j.
+    -   **Concept Extraction**: An LLM analyzes *each slide* to extract key concepts (e.g., "PID Control", "Safety Interlocks"). These are stored as `Concept` nodes and linked to the `Slide` via `TEACHES` edges with a salience score (0.0 - 1.0).
 
-3.  **Vector Indexing**:
-    -   The text content of each slide is embedded and stored in **Weaviate** under the `SlideText` class to enable semantic search.
 
 ### Assets & Data Sources
 -   **Neo4j**: Acts as the source of truth for the structural relationships (`Course` -> `Section` -> `Slide`) and semantic connections (`Slide` -[:TEACHES]-> `Concept`).
@@ -130,7 +120,7 @@ The `GeneratorService` (`src/services/generator_service.py`) executes the follow
 
 ## Prerequisites
 
-- **Docker**: To run MinIO, Neo4j, Weaviate, and Dagster.
+- **Docker**: To run MinIO, Neo4j, and Weaviate.
 - **Python 3.10+**: With `uv` recommended for dependency management.
 - **Node.js 18+**: For the frontend.
 
@@ -140,7 +130,7 @@ The `GeneratorService` (`src/services/generator_service.py`) executes the follow
     ```powershell
     ./start_infra.ps1
     ```
-    This spins up Docker containers for MinIO, Neo4j, Weaviate, and the Dagster Daemon.
+    This spins up Docker containers for MinIO, Neo4j, and Weaviate.
 
 2.  **Initialize Environment**
     Create a `.env` file in the root (see `.env.example`) with credentials for OpenAI/Ollama, Neo4j, etc.
@@ -173,36 +163,10 @@ This launches the React UI (Vite).
 ```
 Access the UI at **http://localhost:5173**.
 
-### 3. Start Dagster (Optional for Dev)
-If you need to inspect pipelines or trigger jobs manually.
-```powershell
-dagster dev
-```
-
-#### Auto-Enable the Ingestion Sensor
-By default, the `course_upload_sensor` starts in a **stopped** state and must be enabled manually via the Dagster UI.
-
-To have the sensor start **automatically enabled**, set the following environment variable before starting Dagster:
-```powershell
-$env:DAGSTER_SENSOR_DEFAULT_ENABLED = "true"
-dagster dev
-```
-
-Or add it to your `.env` file:
-```env
-DAGSTER_SENSOR_DEFAULT_ENABLED=true
-```
-
-> **Note**: Changes to env vars require restarting Dagster to take effect.
-
 ## Data Management
 
-### Ingesting Data (Priming the Sensor)
-To upload source documents (`.pdf`, `.pptx`, `.docx`) from the `source_docs/` folder into the system:
-```powershell
-./prime_sensor.ps1
-```
-This triggers the ingestion pipeline automatically.
+### Ingesting Data
+Ingestion runs in the platform's doc-tools pipeline, not in this repo. Point the workbench at its outputs with `SOURCE_READER=store`.
 
 ### Resetting Data
 To **wipe all data** from Neo4j and Weaviate (useful for testing):
@@ -244,7 +208,7 @@ OLLAMA_NUM_CTX=131072 # Production (128K tokens)
 | Operation | Strategy | File |
 |-----------|----------|------|
 | **Outline Generation** | Iterative pairwise merging | `src/dspy_modules/outline_harmonizer.py` |
-| **Document Outline Extraction** | Sliding window with overlap | `src/semantic/extraction.py` |
+| **Document Outline Extraction** | Sliding window with overlap | doc-tools pipeline (outside this repo) |
 
 ### Strategy Details
 

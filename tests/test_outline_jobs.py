@@ -114,10 +114,6 @@ def test_get_malformed_id_is_404(client):
 def test_synthesis_status_reads_the_node(client, monkeypatch, node, expect):
     c, state, main = client
 
-    def boom(*a, **k):
-        raise AssertionError("dagster called")
-    monkeypatch.setattr(main, "dagster_client", type("D", (), {"__getattr__": boom})())
-
     def execute_query(query, params=None):
         if "reviewer_ids" in query:
             return [{"n.id": "n1"}] if params["uid"] == "u1" else []

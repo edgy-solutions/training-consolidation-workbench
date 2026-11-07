@@ -9,13 +9,6 @@ ENV PYTHONUNBUFFERED=1 \
     UV_LINK_MODE=copy \
     UV_PROJECT_ENVIRONMENT=/app/.venv
 
-# Poppler for pdf2image, libmagic for unstructured
-RUN apt-get update && apt-get install -y --no-install-recommends \
-        libmagic1 \
-        libgl1 \
-        poppler-utils \
-    && rm -rf /var/lib/apt/lists/*
-
 COPY --from=ghcr.io/astral-sh/uv:0.10.4 /uv /bin/uv
 
 WORKDIR /app
