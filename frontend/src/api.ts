@@ -323,7 +323,7 @@ export const api = {
         return res.data;
     },
     getReviewAccess: async () => {
-        const res = await axios.get<{ enabled: boolean; can_review: boolean }>(`${API_URL}/alignment/review-access`);
+        const res = await axios.get<{ enabled: boolean; can_review: boolean; writes_enabled: boolean }>(`${API_URL}/alignment/review-access`);
         return res.data;
     },
     getAlignmentProposals: async (courseId: string) => {

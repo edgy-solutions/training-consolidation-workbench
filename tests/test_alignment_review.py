@@ -182,20 +182,20 @@ def test_listing_does_not_ask_the_decider(client, monkeypatch, decider):
 def test_review_access_flag_off_asks_nothing(client, monkeypatch, decider):
     monkeypatch.delenv("WB_ALIGNMENT_REVIEW_UI", raising=False)
     r = client.get("/alignment/review-access")
-    assert r.status_code == 200 and r.json() == {"enabled": False, "can_review": False}
+    assert r.status_code == 200 and r.json() == {"enabled": False, "can_review": False, "writes_enabled": True}
     assert decider.calls == []
 
 
 def test_review_access_granted(client, monkeypatch, decider):
     monkeypatch.setenv("WB_ALIGNMENT_REVIEW_UI", "on")
-    assert client.get("/alignment/review-access").json() == {"enabled": True, "can_review": True}
+    assert client.get("/alignment/review-access").json() == {"enabled": True, "can_review": True, "writes_enabled": True}
     assert len(decider.calls) == 1
 
 
 def test_review_access_denied(client, monkeypatch, decider):
     monkeypatch.setenv("WB_ALIGNMENT_REVIEW_UI", "on")
     decider.result = _Resp(200, {"check": False})
-    assert client.get("/alignment/review-access").json() == {"enabled": True, "can_review": False}
+    assert client.get("/alignment/review-access").json() == {"enabled": True, "can_review": False, "writes_enabled": True}
 
 
 def test_review_access_unavailable_is_503(client, monkeypatch, decider):
@@ -210,3 +210,9 @@ def test_review_access_needs_a_token(monkeypatch, decider):
     monkeypatch.delitem(main.app.dependency_overrides, get_current_user, raising=False)
     assert TestClient(main.app).get("/alignment/review-access").status_code == 401
     assert decider.calls == []
+
+
+def test_review_access_reports_writes_off(client, monkeypatch, decider):
+    monkeypatch.setenv("WB_ALIGNMENT_REVIEW_UI", "on")
+    monkeypatch.delenv("WB_STORE_WRITES", raising=False)
+    assert client.get("/alignment/review-access").json() == {"enabled": True, "can_review": True, "writes_enabled": False}

@@ -36,6 +36,8 @@ export const TopBar: React.FC<TopBarProps> = ({ discipline, setDiscipline }) => 
     // The Review entry shows only when the flag is on and the decider grants this user; any failed ask leaves it hidden.
     const [reviewShown, setReviewShown] = useState(false);
     const [reviewOpen, setReviewOpen] = useState(false);
+    // Off (WB_STORE_WRITES) means the panel opens read-only; unknown counts as off.
+    const [reviewWrites, setReviewWrites] = useState(false);
     // const userDisplay = auth.user?.profile.preferred_username || auth.user?.profile.email || "Guest";
 
     // The buttons come from the disciplines the courses actually carry (/source/filters domains).
@@ -56,7 +58,10 @@ export const TopBar: React.FC<TopBarProps> = ({ discipline, setDiscipline }) => 
 
     useEffect(() => {
         api.getReviewAccess()
-            .then(a => setReviewShown(a.enabled && a.can_review))
+            .then(a => {
+                setReviewShown(a.enabled && a.can_review);
+                setReviewWrites(a.writes_enabled === true);
+            })
             .catch(err => console.error("Failed to load review access", err));
     }, []);
 
@@ -127,7 +132,7 @@ export const TopBar: React.FC<TopBarProps> = ({ discipline, setDiscipline }) => 
                         Review
                     </button>
                 )}
-                {reviewOpen && <AlignmentReview onClose={() => setReviewOpen(false)} />}
+                {reviewOpen && <AlignmentReview writesEnabled={reviewWrites} onClose={() => setReviewOpen(false)} />}
                 {settingsEnabled && (
                     <button
                         type="button"

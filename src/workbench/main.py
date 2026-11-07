@@ -886,10 +886,11 @@ def require_can_review(current_user: User = Depends(get_current_user)) -> User:
 
 @app.get("/alignment/review-access")
 def alignment_review_access(current_user: User = Depends(get_current_user)):
-    """Whether to show the Review entry. Flag off asks nothing of the decider."""
+    """Whether to show the Review entry, and whether a decision can be written. Flag off asks nothing of the decider."""
+    writes = store_writes_on()
     if not alignment_review_ui_on():
-        return {"enabled": False, "can_review": False}
-    return {"enabled": True, "can_review": _can_review_or_503(current_user.id)}
+        return {"enabled": False, "can_review": False, "writes_enabled": writes}
+    return {"enabled": True, "can_review": _can_review_or_503(current_user.id), "writes_enabled": writes}
 
 
 @app.get("/alignment/proposals", dependencies=[Depends(require_platform_reader)])

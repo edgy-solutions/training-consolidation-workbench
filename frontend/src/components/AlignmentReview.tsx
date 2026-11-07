@@ -5,6 +5,8 @@ import { api, httpError } from '../api';
 import type { AlignmentProposal } from '../api';
 
 interface Props {
+    // False when the api holds writes to the shared graph (WB_STORE_WRITES): the list shows, decisions don't.
+    writesEnabled: boolean;
     onClose: () => void;
 }
 
@@ -18,7 +20,7 @@ const errorText = (e: unknown, fallback: string) => {
 
 const rowKey = (p: AlignmentProposal) => `${p.concept_id}|${p.canonical_id}`;
 
-export const AlignmentReview: React.FC<Props> = ({ onClose }) => {
+export const AlignmentReview: React.FC<Props> = ({ writesEnabled, onClose }) => {
     const [courses, setCourses] = useState<{ id: string; name: string }[] | null>(null);
     const [courseId, setCourseId] = useState('');
     const [proposals, setProposals] = useState<AlignmentProposal[] | null>(null);
@@ -106,6 +108,11 @@ export const AlignmentReview: React.FC<Props> = ({ onClose }) => {
                 </div>
 
                 <div className="flex-1 min-h-0 overflow-y-auto p-5 space-y-3">
+                    {!writesEnabled && (
+                        <div className="text-sm text-amber-900 bg-amber-50 border border-amber-200 rounded-md px-3 py-2" role="status">
+                            Read-only: writes to the shared graph are off on this deployment, so decisions can't be saved.
+                        </div>
+                    )}
                     {loadError && (
                         <div className="flex items-center gap-2 text-sm text-red-800 bg-red-50 border border-red-200 rounded-md px-3 py-2" role="alert">
                             <AlertTriangle size={14} /> {loadError}
@@ -121,6 +128,7 @@ export const AlignmentReview: React.FC<Props> = ({ onClose }) => {
                     {proposals?.map(p => {
                         const key = rowKey(p);
                         const busy = pending.has(key);
+                        const locked = busy || !writesEnabled;
                         const members = p.members ?? [];
                         const meta = [
                             `${p.shared ?? 0} shared slides`,
@@ -142,14 +150,14 @@ export const AlignmentReview: React.FC<Props> = ({ onClose }) => {
                                     </div>
                                     <div className="flex items-center gap-2 shrink-0">
                                         <button
-                                            disabled={busy}
+                                            disabled={locked}
                                             onClick={() => decide(p, 'reject')}
                                             className="px-3 py-1.5 text-sm rounded-md border border-slate-300 hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed"
                                         >
                                             Reject
                                         </button>
                                         <button
-                                            disabled={busy}
+                                            disabled={locked}
                                             onClick={() => decide(p, 'accept')}
                                             className="flex items-center gap-2 px-3 py-1.5 text-sm rounded-md bg-brand-teal text-white hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed"
                                         >
