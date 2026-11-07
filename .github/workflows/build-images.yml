@@ -54,8 +54,8 @@ jobs:
       packages: write
     strategy:
       fail-fast: false
-      # Native runners per arch: the cluster is arm64, and the API's unstructured[all-docs]
-      # stack is far too slow under QEMU. Each leg pushes by digest; merge tags the index.
+      # Native runners per arch: the cluster is arm64, and building the API's Python stack
+      # under QEMU is slow. Each leg pushes by digest; merge tags the index.
       matrix:
         component: [api, ui]
         arch: [amd64, arm64]

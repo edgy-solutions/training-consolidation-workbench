@@ -187,30 +187,6 @@ def test_route_reason_over_500_is_422(harness):
     assert post(client, render_anyway_reason="x" * 501).status_code == 422
 
 
-def test_route_dagster_gets_the_override_as_json(harness, monkeypatch):
-    client, fake, main = harness
-    seen = {}
-
-    class Dagster:
-        def execute_query(self, q, v=None):
-            return {"addDynamicPartition": {"__typename": "AddDynamicPartitionSuccess"}}
-
-        def submit_job_execution(self, name, run_config=None, tags=None):
-            seen.clear()
-            seen.update(run_config)
-            return "run-1"
-
-    monkeypatch.setattr(main, "dagster_client", Dagster())
-    monkeypatch.setenv("DAGSTER_HOST", "dagster.example")
-    with_overlap(fake)
-    assert post(client, render_anyway_reason="on purpose").status_code == 200
-    cfg = seen["ops"]["rendered_course_file"]["config"]
-    assert json.loads(cfg["render_anyway_json"])["reason"] == "on purpose"
-    fake.nodes = Neo().nodes
-    assert post(client).status_code == 200
-    assert "render_anyway_json" not in seen["ops"]["rendered_course_file"]["config"]
-
-
 def test_route_is_403_while_writes_are_off(harness, monkeypatch):
     client, _, _ = harness
     monkeypatch.delenv("WB_STORE_WRITES", raising=False)

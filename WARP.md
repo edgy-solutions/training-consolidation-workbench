@@ -42,14 +42,9 @@ baml-cli generate
 
 ### Common Commands
 
-- **Run Dagster**:
+- **Run the api**:
   ```bash
-  # Windows
-  .venv\Scripts\dagster dev -m src.pipelines.definitions
-  
-  # Linux/macOS
-  source .venv/bin/activate
-  dagster dev -m src.pipelines.definitions
+  uv run python -m uvicorn src.workbench.main:app --port 8000
   ```
 
 - **Run Tests**:
@@ -67,25 +62,7 @@ brew install poppler libmagic tesseract --cask libreoffice
 
 ### Verification
 
-To verify Module 1 (Asset Foundry):
-
-**Windows (PowerShell):**
-```powershell
-./verify_sensor.ps1
-```
-
-**Linux / macOS (Bash):**
-```bash
-chmod +x verify_sensor.sh
-./verify_sensor.sh
-```
-This script will:
-1. Check for Docker and start MinIO.
-2. Install dependencies.
-3. Create a test document.
-4. Run the Dagster ingestion pipeline.
-
-Check results at http://localhost:9001 (User/Pass: `minioadmin`). Look for the `training-content` bucket.
+Ingestion and semantic extraction run in the platform's doc-tools pipeline; this repo's api reads their outputs (`SOURCE_READER=store`).
 
 ## Conceptual Architecture: The 5-Module System
 
@@ -97,7 +74,7 @@ The project follows a strict 5-module architecture designed to decouple extracti
     *   Pipeline construction (no AI reasoning yet).
     *   High-fidelity parsing and rendering.
     *   Generating raw assets: Slide images (PNGs), Text chunks (JSON), and Source Manifests.
-*   **Tech Stack:** Dagster, Unstructured.io, python-pptx, pdf2image, MinIO (S3).
+*   **Tech Stack:** Runs in the platform's doc-tools pipeline (outside this repo).
 
 ### Module 2: The "Cartographer" (Structure & Concept Extraction)
 *   **Goal:** Understand content structure and map it to the Graph.
@@ -135,21 +112,12 @@ The project follows a strict 5-module architecture designed to decouple extracti
 
 The codebase uses a `src/`-layout. Here is how the directory structure maps to the 5 modules:
 
-*   `src/ingestion/` -> **Module 1 (Asset Foundry)**
-    *   Contains Dagster jobs and Unstructured.io logic.
-*   `src/semantic/` -> **Module 2, 3, & 5**
-    *   *Recommend subdividing this package as the project grows:*
-    *   `src/semantic/extraction/` -> **Module 2 (Cartographer)** (BAML/Ollama extraction logic)
-    *   `src/semantic/harmonization/` -> **Module 3 (Harmonizer)** (DSPy clustering logic)
-    *   `src/semantic/synthesis/` -> **Module 5 (Ghostwriter)** (DSPy generation logic)
+*   `src/dspy_modules/` and `src/services/` -> **Modules 3 & 5** (DSPy harmonization and generation)
 *   `src/storage/` -> **Shared Infrastructure**
-    *   Abstractions for MinIO (Mod 1), Weaviate/Neo4j (Mod 2/3).
-*   `src/ui/` & `src/workbench/` -> **Module 4 (Workbench)**
-    *   `src/ui/`: API endpoints and frontend serving.
-    *   `src/workbench/`: Domain logic for the consolidation workflow (loading trees, saving plans).
-*   `src/pipelines/`
-    *   Orchestration glue that ties these modules together (e.g., triggering Module 2 after Module 1 completes).
-
+    *   Clients for MinIO, Weaviate and Neo4j.
+*   `src/workbench/` -> **Module 4 (Workbench)**
+    *   API endpoints and domain logic for the consolidation workflow (loading trees, saving plans).
+*   *(Module 1 ingestion and Module 2 extraction live outside this repo, in the platform's doc-tools pipeline.)*
 ## Recommended Development Order (Critical Path)
 
 To minimize blockers, follow this implementation order:

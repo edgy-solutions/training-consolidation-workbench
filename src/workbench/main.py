@@ -22,7 +22,6 @@ import asyncio
 import time
 from datetime import datetime, timedelta, timezone
 from sse_starlette.sse import EventSourceResponse
-from dagster_graphql import DagsterGraphQLClient, DagsterGraphQLClientError
 
 from src.storage.neo4j import Neo4jClient
 from src.storage.weaviate import WeaviateClient
@@ -102,10 +101,6 @@ class _LazyClient:
 neo4j_client = _LazyClient(Neo4jClient)
 weaviate_client = _LazyClient(WeaviateClient)
 minio_client = _LazyClient(MinioClient)
-# Dagster client - assuming default port or env var
-DAGSTER_HOST = os.getenv("DAGSTER_HOST", "localhost")
-DAGSTER_PORT = int(os.getenv("DAGSTER_PORT", 3000))
-dagster_client = _LazyClient(lambda: DagsterGraphQLClient(DAGSTER_HOST, port_number=DAGSTER_PORT))
 
 # --- A. The Explorer Module ---
 
@@ -1434,7 +1429,7 @@ def get_synthesis_status(run_id: str, current_user: User = Depends(get_current_u
 @app.get("/synthesis/preview/{node_id}")
 def get_synthesis_preview(node_id: str, current_user: User = Depends(get_current_user)):
     """
-    Fetches the generated text (once Dagster is done).
+    Fetches the generated text (once the synthesis run is done).
     """
     _require_readable(current_user.id, node_id)
     query = """
@@ -1809,20 +1804,10 @@ RENDER_POLL_SECONDS = 1.0
 PPTX_TYPE = "application/vnd.openxmlformats-officedocument.presentationml.presentation"
 
 
-def render_runner() -> str:
-    """local (in the api process) or dagster; unset means dagster only when DAGSTER_HOST is set."""
-    value = os.getenv("RENDER_RUNNER")
-    if not value:
-        return "dagster" if os.getenv("DAGSTER_HOST") else "local"
-    if value not in ("local", "dagster"):
-        raise HTTPException(status_code=500, detail="RENDER_RUNNER must be local or dagster")
-    return value
-
-
 @app.post("/render/trigger", dependencies=[Depends(require_store_writes)])
 def trigger_render(request: RenderRequest, background_tasks: BackgroundTasks, current_user: User = Depends(get_current_user)):
     """
-    Renders (in process, or via Dagster when configured) the project to PPTX/DOCX/PDF.
+    Renders in process (a background job) the project to PPTX/Typst.
     """
     _require_owned(current_user.id, request.project_id)
     # 1. Verify Project
@@ -1852,83 +1837,13 @@ def trigger_render(request: RenderRequest, background_tasks: BackgroundTasks, cu
 
     filename = output_filename(project_title, request.project_id, file_extension)
 
-    if render_runner() == "local":
-        job = create_job(request.project_id, filename, file_extension, current_user.id)
-        background_tasks.add_task(
-            run_job, job["run_id"], request.template_name or "standin",
-            neo4j_client=neo4j_client, minio_client=minio_client, reader=get_source_reader(),
-            override=override,
-        )
-        return {"status": "triggered", "filename": filename, "job": "render_local", "run_id": job["run_id"]}
-
-    print(f"Triggering render for project {request.project_id} -> {filename} (Template: {request.template_name})")
-    
-    # 2. Add Dynamic Partition
-    try:
-        # Execute GraphQL mutation to add the dynamic partition
-        # Must provide repositorySelector and select fields from the Union return type
-        mutation = """
-        mutation AddPartition($partitionsDefName: String!, $partitionKey: String!, $repoName: String!, $repoLocation: String!) {
-          addDynamicPartition(
-            partitionsDefName: $partitionsDefName, 
-            partitionKey: $partitionKey,
-            repositorySelector: {
-              repositoryName: $repoName,
-              repositoryLocationName: $repoLocation
-            }
-          ) {
-            __typename
-            ... on PythonError {
-              message
-              stack
-            }
-          }
-        }
-        """
-        variables = {
-            "partitionsDefName": "published_files",
-            "partitionKey": filename,
-            "repoName": "__repository__",
-            "repoLocation": "src.pipelines.definitions"
-        }
-        
-        # The client's execute_query takes query and variables
-        if hasattr(dagster_client, "execute_query"):
-             res = dagster_client.execute_query(mutation, variables)
-        else:
-             res = dagster_client._execute(mutation, variables)
-             
-        print(f"Partition added response: {res}")
-        
-        # Check for GraphQL errors
-        if res.get("errors"):
-            raise Exception(str(res.get("errors")))
-            
-        # Check for functional errors (PythonError)
-        data = res.get("addDynamicPartition", {})
-        if data.get("__typename") == "PythonError":
-            raise Exception(f"Dagster error: {data.get('message')}")
-        
-    except Exception as e:
-        print(f"Error adding partition: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to register output partition: {str(e)}")
-
-    # 3. Trigger Dagster Job
-    # We use tags to specify the partition for the asset job
-    # And pass RenderConfig run configuration
-    render_config = {
-        "project_id": request.project_id,
-        "template_name": request.template_name or "standin",
-    }
-    if override:
-        render_config["render_anyway_json"] = json.dumps(override, sort_keys=True, separators=(",", ":"))
-    run_id = dagster_client.submit_job_execution(
-        "render_asset_job", 
-        run_config={"ops": {"rendered_course_file": {"config": render_config}}},
-        tags={"dagster/partition/published_files": filename}
+    job = create_job(request.project_id, filename, file_extension, current_user.id)
+    background_tasks.add_task(
+        run_job, job["run_id"], request.template_name or "standin",
+        neo4j_client=neo4j_client, minio_client=minio_client, reader=get_source_reader(),
+        override=override,
     )
-    
-    return {"status": "triggered", "filename": filename, "job": "render_asset_job", "run_id": run_id}
+    return {"status": "triggered", "filename": filename, "job": "render_local", "run_id": job["run_id"]}
 
 
 @app.get("/render/events/{run_id}")
@@ -1966,93 +1881,7 @@ async def render_events(run_id: str):
 
         return EventSourceResponse(local_events())
 
-    async def event_generator():
-        while True:
-            try:
-                status = dagster_client.get_run_status(run_id)
-                # DagsterRunStatus is an enum - use .value to get the string
-                status_str = status.value if hasattr(status, 'value') else str(status)
-                print(f"[SSE] Run {run_id} status: {status_str}")
-                
-                # Send status update
-                yield {
-                    "event": "status",
-                    "data": json.dumps({"run_id": run_id, "status": status_str})
-                }
-                
-                # Check for terminal states
-                if status_str in ["SUCCESS", "COMPLETED"]:
-                    # Get the filename from run tags
-                    try:
-                        # Query Dagster for run info to get the filename tag
-                        query = """
-                        query RunInfo($runId: ID!) {
-                            pipelineRunOrError(runId: $runId) {
-                                ... on Run {
-                                    tags {
-                                        key
-                                        value
-                                    }
-                                }
-                            }
-                        }
-                        """
-                        if hasattr(dagster_client, "execute_query"):
-                            result = dagster_client.execute_query(query, {"runId": run_id})
-                        else:
-                            result = dagster_client._execute(query, {"runId": run_id})
-                        
-                        run_data = result.get("pipelineRunOrError", {})
-                        tags = run_data.get("tags", [])
-                        filename = None
-                        for tag in tags:
-                            if tag.get("key") == "dagster/partition/published_files":
-                                filename = tag.get("value")
-                                break
-                        
-                        if filename:
-                            download_url = minio_client.get_presigned_url("published", filename)
-                            yield {
-                                "event": "complete",
-                                "data": json.dumps({
-                                    "run_id": run_id,
-                                    "status": "SUCCESS",
-                                    "filename": filename,
-                                    "download_url": download_url
-                                })
-                            }
-                        else:
-                            yield {
-                                "event": "complete",
-                                "data": json.dumps({"run_id": run_id, "status": "SUCCESS", "error": "Filename not found"})
-                            }
-                    except Exception as e:
-                        print(f"Error getting run tags: {e}")
-                        yield {
-                            "event": "complete",
-                            "data": json.dumps({"run_id": run_id, "status": "SUCCESS", "error": str(e)})
-                        }
-                    break
-                    
-                elif status_str in ["FAILURE", "CANCELED", "FAILED"]:
-                    yield {
-                        "event": "error",
-                        "data": json.dumps({"run_id": run_id, "status": status_str})
-                    }
-                    break
-                    
-            except Exception as e:
-                print(f"Error polling Dagster: {e}")
-                yield {
-                    "event": "error",
-                    "data": json.dumps({"run_id": run_id, "error": str(e)})
-                }
-                break
-            
-            # Poll every 2 seconds
-            await asyncio.sleep(2)
-    
-    return EventSourceResponse(event_generator())
+    raise HTTPException(status_code=404, detail="Render job not found")
 
 
 @app.get("/render/file/{run_id}")

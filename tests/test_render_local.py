@@ -1,9 +1,7 @@
-"""Render without Dagster: the in-process runner, its job store and the routes."""
+"""Render in process: the runner, its job store and the routes."""
 import json
 import re
 import shutil
-import subprocess
-import sys
 import time
 from io import BytesIO
 from pathlib import Path
@@ -19,7 +17,6 @@ from tests.deck_fixtures import FIXTURE_DIR, course_data, reader
 
 LAYOUTS = ["title", "section", "concept", "concept", "section", "concept-with-figure", "summary", "sources"]
 PPTX = "application/vnd.openxmlformats-officedocument.presentationml.presentation"
-REPO = Path(__file__).resolve().parent.parent
 
 
 class FakeNeo4j:
@@ -61,8 +58,6 @@ def harness(monkeypatch, tmp_path):
     exports.mkdir()
     monkeypatch.setenv("WB_EXPORT_DIR", str(exports))
     monkeypatch.setenv("WB_STORE_WRITES", "on")
-    monkeypatch.delenv("DAGSTER_HOST", raising=False)
-    monkeypatch.delenv("RENDER_RUNNER", raising=False)
     from src.auth.security import User, get_current_user
     from src.workbench import main
 
@@ -174,39 +169,11 @@ def test_events_for_an_unknown_local_id_is_404(harness):
     assert client.get("/render/events/local-zz").status_code == 404
 
 
-class StubDagster:
-    def __init__(self):
-        self.calls = []
-
-    def execute_query(self, query, variables=None):
-        self.calls.append("execute_query")
-        return {"addDynamicPartition": {"__typename": "AddDynamicPartitionSuccess"}}
-
-    def submit_job_execution(self, *a, **k):
-        self.calls.append("submit_job_execution")
-        return "dagster-run-1"
-
-
-def test_runner_choice(harness, monkeypatch, tmp_path):
-    tmp_path = tmp_path / "exports"
-    client, _, main = harness
-    stub = StubDagster()
-    monkeypatch.setattr(main, "dagster_client", stub)
-
-    monkeypatch.setenv("DAGSTER_HOST", "dagster.example")
-    r = trigger(client)
-    assert r.status_code == 200
-    assert r.json()["job"] == "render_asset_job"
-    assert "submit_job_execution" in stub.calls
-    assert not [p for p in tmp_path.iterdir() if p.name.startswith("local-")]
-
-    monkeypatch.setenv("RENDER_RUNNER", "local")
-    assert trigger(client).json()["job"] == "render_local"
-
-    monkeypatch.setenv("RENDER_RUNNER", "bogus")
-    r = trigger(client)
-    assert r.status_code == 500
-    assert r.json()["detail"] == "RENDER_RUNNER must be local or dagster"
+def test_events_for_a_non_local_run_id_is_404(harness):
+    client, _, _ = harness
+    r = client.get("/render/events/some-other-run-id")
+    assert r.status_code == 404
+    assert r.json()["detail"] == "Render job not found"
 
 
 def test_unknown_format_is_400(harness):
@@ -214,12 +181,6 @@ def test_unknown_format_is_400(harness):
     r = trigger(client, format="pdf")
     assert r.status_code == 400
     assert r.json()["detail"] == "format must be one of pptx, typ"
-
-
-def test_render_modules_do_not_import_dagster():
-    code = ("import sys, src.publishing.render, src.publishing.render_jobs; "
-            "sys.exit(any(m == 'dagster' or m.startswith('dagster.') for m in sys.modules))")
-    assert subprocess.run([sys.executable, "-c", code], cwd=str(REPO)).returncode == 0
 
 
 def test_create_job_sweeps_old_jobs(monkeypatch, tmp_path):

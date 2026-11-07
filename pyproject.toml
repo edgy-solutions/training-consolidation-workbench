@@ -4,28 +4,17 @@ version = "0.1.0"
 description = "Workbench for consolidating training material."
 requires-python = ">=3.10"
 dependencies = [
-    "dagster",
-    "dagster-webserver",
-    "unstructured[all-docs]",
     "python-pptx",
-    "pdf2image",
     "minio",
-    "boto3",
-    "pillow",
     "requests",
-    "antlr4-python3-runtime>=4.13",
     "python-dotenv",
     "neo4j",
     "weaviate-client<4.0.0",
-    "openai",
     "baml-py",
     "pydantic",
-    "reportlab",
-    "python-docx",
     "dspy-ai",
     "fastapi",
     "uvicorn",
-    "dagster-graphql",
     "PyJWT[crypto]",
     "python-multipart",
     "sse-starlette"
@@ -35,8 +24,6 @@ dependencies = [
 requires = ["setuptools", "wheel"]
 build-backend = "setuptools.build_meta"
 
-[tool.dagster]
-module_name = "src.pipelines.definitions"
 
 [dependency-groups]
 dev = [

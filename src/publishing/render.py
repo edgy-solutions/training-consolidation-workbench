@@ -1,4 +1,4 @@
-"""Render a project to a file. No Dagster: the api process and the Dagster asset both call this."""
+"""Render a project to a file. The api process calls this."""
 import json
 import os
 import re
