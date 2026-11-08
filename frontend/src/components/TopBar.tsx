@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Settings, Code, Activity, Globe, Cpu, User, Layers, Tag } from 'lucide-react';
+import { Settings, Code, Activity, Globe, Cpu, User, Layers, Tag, ClipboardCheck } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import clsx from 'clsx';
 import { LoginButton } from './LoginButton';
@@ -7,6 +7,7 @@ import { LogoutButton } from './LogoutButton';
 import { useAuth } from 'react-oidc-context';
 import { api } from '../api';
 import { DeckTemplateSettings } from './DeckTemplateSettings';
+import { AlignmentReview } from './AlignmentReview';
 
 interface TopBarProps {
     discipline: string;
@@ -32,6 +33,11 @@ export const TopBar: React.FC<TopBarProps> = ({ discipline, setDiscipline }) => 
     const [settingsOpen, setSettingsOpen] = useState(false);
     // The gear shows only when the api has the settings screen on (WB_DECK_TEMPLATE_UI); a failed ask leaves it hidden.
     const [settingsEnabled, setSettingsEnabled] = useState(false);
+    // The Review entry shows only when the flag is on and the decider grants this user; any failed ask leaves it hidden.
+    const [reviewShown, setReviewShown] = useState(false);
+    const [reviewOpen, setReviewOpen] = useState(false);
+    // Off (WB_STORE_WRITES) means the panel opens read-only; unknown counts as off.
+    const [reviewWrites, setReviewWrites] = useState(false);
     // const userDisplay = auth.user?.profile.preferred_username || auth.user?.profile.email || "Guest";
 
     // The buttons come from the disciplines the courses actually carry (/source/filters domains).
@@ -48,6 +54,15 @@ export const TopBar: React.FC<TopBarProps> = ({ discipline, setDiscipline }) => 
         api.getDeckTemplateEnabled()
             .then(setSettingsEnabled)
             .catch(err => console.error("Failed to load the deck template setting", err));
+    }, []);
+
+    useEffect(() => {
+        api.getReviewAccess()
+            .then(a => {
+                setReviewShown(a.enabled && a.can_review);
+                setReviewWrites(a.writes_enabled === true);
+            })
+            .catch(err => console.error("Failed to load review access", err));
     }, []);
 
     // A persisted choice that no course carries any more would hide every course.
@@ -106,6 +121,18 @@ export const TopBar: React.FC<TopBarProps> = ({ discipline, setDiscipline }) => 
                 )}
                 <LoginButton />
                 <LogoutButton />
+                {reviewShown && (
+                    <button
+                        type="button"
+                        title="Review alignment proposals"
+                        onClick={() => setReviewOpen(true)}
+                        className="flex items-center gap-1.5 text-sm hover:text-white"
+                    >
+                        <ClipboardCheck size={18} />
+                        Review
+                    </button>
+                )}
+                {reviewOpen && <AlignmentReview writesEnabled={reviewWrites} onClose={() => setReviewOpen(false)} />}
                 {settingsEnabled && (
                     <button
                         type="button"

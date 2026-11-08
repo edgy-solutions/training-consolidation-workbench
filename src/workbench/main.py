@@ -12,7 +12,7 @@ from src.publishing.render import FORMATS, output_filename, render_readiness
 from src.publishing.image_ids import list_generated_objects
 from src.publishing.render_jobs import create_job, job_file, read_job, run_job
 from src.services import outline_jobs
-from src.auth.security import get_current_user, optional_bearer, store_writes_on, deck_template_ui_on, User, can_review, can_configure_templates, DeciderUnavailable
+from src.auth.security import get_current_user, optional_bearer, store_writes_on, deck_template_ui_on, alignment_review_ui_on, User, can_review, can_configure_templates, DeciderUnavailable
 from fastapi.middleware.cors import CORSMiddleware
 from typing import List, Dict, Any, Literal, Optional
 from pydantic import BaseModel
@@ -869,16 +869,28 @@ def require_store_writes():
         raise HTTPException(status_code=403, detail="Writes to the shared graph are held (WB_STORE_WRITES is not on).")
 
 
-def require_can_review(current_user: User = Depends(get_current_user)) -> User:
-    """Reviewing a proposal is the decider's call (contract section 4.4)."""
+def _can_review_or_503(user_id: str) -> bool:
     try:
-        allowed = can_review(current_user.id)
+        return can_review(user_id)
     except DeciderUnavailable as e:
         print(f"WARN: proposal review: decider unavailable: {e}")
         raise HTTPException(status_code=503, detail="The authorization service is unavailable.")
-    if not allowed:
+
+
+def require_can_review(current_user: User = Depends(get_current_user)) -> User:
+    """Reviewing a proposal is the decider's call (contract section 4.4)."""
+    if not _can_review_or_503(current_user.id):
         raise HTTPException(status_code=403, detail="Not permitted to review alignment proposals.")
     return current_user
+
+
+@app.get("/alignment/review-access")
+def alignment_review_access(current_user: User = Depends(get_current_user)):
+    """Whether to show the Review entry, and whether a decision can be written. Flag off asks nothing of the decider."""
+    writes = store_writes_on()
+    if not alignment_review_ui_on():
+        return {"enabled": False, "can_review": False, "writes_enabled": writes}
+    return {"enabled": True, "can_review": _can_review_or_503(current_user.id), "writes_enabled": writes}
 
 
 @app.get("/alignment/proposals", dependencies=[Depends(require_platform_reader)])

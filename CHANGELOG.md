@@ -2,6 +2,15 @@
 
 Chart releases, newest first. A release is the GitHub release `v<version>`; earlier ones are described there.
 
+## Unreleased
+
+- **Alignment review UI, behind `api.alignmentReviewUi`** (renders `WB_ALIGNMENT_REVIEW_UI=on`; default off). A Review
+  entry in the top bar opens a per-course list of open alignment proposals with Accept and Reject. The entry shows
+  only when the flag is on and Topaz grants the user `can_review:<alignmentReviewSubject>`. The new
+  `GET /alignment/review-access` answers `{enabled, can_review, writes_enabled}`. With the flag off it asks nothing of
+  the decider; if the decider is unavailable it answers 503. Deciding needs `WB_STORE_WRITES=on`. Without it the
+  panel opens read-only, with Accept and Reject disabled. The ingress must route `/alignment` to the api.
+
 ## 0.1.8
 
 - **Image placeholders show as images in the UI.** Synthesized `{{<deck>--<name>}}` placeholders resolve through

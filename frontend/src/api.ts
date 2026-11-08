@@ -198,6 +198,19 @@ export interface GenerateJob {
     steps: Array<{ key: string; label: string }>;
 }
 
+export interface AlignmentProposal {
+    concept_id: string;
+    concept: string;
+    canonical_id: string;
+    canonical: string;
+    members?: string[];
+    confidence?: number | null;
+    method?: string | null;
+    evidence?: string | null;
+    cos?: number | null;
+    shared?: number | null;
+}
+
 export const api = {
     getSourceTree: async (discipline?: string) => {
         const params = discipline ? { engineering_discipline: discipline } : {};
@@ -307,6 +320,18 @@ export const api = {
     },
     getDeckTemplate: async () => {
         const res = await axios.get<DeckTemplateSettings>(`${API_URL}/settings/deck-template`);
+        return res.data;
+    },
+    getReviewAccess: async () => {
+        const res = await axios.get<{ enabled: boolean; can_review: boolean; writes_enabled: boolean }>(`${API_URL}/alignment/review-access`);
+        return res.data;
+    },
+    getAlignmentProposals: async (courseId: string) => {
+        const res = await axios.get<AlignmentProposal[]>(`${API_URL}/alignment/proposals`, { params: { course_id: courseId } });
+        return res.data;
+    },
+    reviewAlignmentProposal: async (conceptId: string, canonicalId: string, decision: 'accept' | 'reject') => {
+        const res = await axios.post(`${API_URL}/alignment/proposals/review`, { concept_id: conceptId, canonical_id: canonicalId, decision });
         return res.data;
     },
     getDeckTemplateEnabled: async () => {
