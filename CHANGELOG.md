@@ -2,7 +2,7 @@
 
 Chart releases, newest first. A release is the GitHub release `v<version>`; earlier ones are described there.
 
-## Unreleased
+## 0.1.9
 
 - **Alignment review UI, behind `api.alignmentReviewUi`** (renders `WB_ALIGNMENT_REVIEW_UI=on`; default off). A Review
   entry in the top bar opens a per-course list of open alignment proposals with Accept and Reject. The entry shows
