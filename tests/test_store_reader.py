@@ -296,6 +296,24 @@ def test_concepts_and_teaching(reader):
     assert reader.slides_teaching([]) == []
 
 
+def test_related_terms_survive_the_store_reader_into_the_lookup(stores):
+    from src.publishing.course import ReaderLookup
+    neo, m, w = stores
+    cid = next(c for c in COURSE_IDS if GOLDENS[c]["neo4j"]["nondeterministic"]["edges"].get("TEACHES"))
+    plain = neo.subgraph
+
+    def with_terms(p):
+        rows = plain(p)
+        rows[0]["teaches"][0]["related_terms"] = ["alpha", "beta"]
+        return rows
+
+    neo.handlers[sr.COURSE_SUBGRAPH_QUERY] = with_terms
+    slides = ReaderLookup(StoreReader(neo, m, w, BUCKET)).deck_slides(cid)
+    got = [t for s in slides for t in s["teaches"] if t["related_terms"]]
+    assert [t["related_terms"] for t in got] == [["alpha", "beta"]]
+    assert "related_terms: t.related_terms" in sr.COURSE_SUBGRAPH_QUERY
+
+
 def test_model_concepts_match_goldens(reader):
     for cid in COURSE_IDS:
         m = reader._model(cid)

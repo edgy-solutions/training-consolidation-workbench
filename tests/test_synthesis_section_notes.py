@@ -2,7 +2,7 @@
 import json
 
 from src.dspy_modules.synthesizer import ContentSynthesizer
-from src.services.synthesis_service import SECTION_NOTES_QUERY, SynthesisService, section_notes
+from src.services.synthesis_service import SECTION_NOTES_QUERY, SLIDE_TEACHES_QUERY, SynthesisService, section_notes
 
 
 def row(sec_id, slide="s1", level=1, start=1, end=5, title=None, summary="sum", objectives=None):
@@ -119,7 +119,9 @@ def test_general_fallback_still_applies_without_notes():
 # 3. synthesize_node
 
 class FakeNeo4j:
-    def __init__(self, notes_rows=(), notes_error=None):
+    def __init__(self, notes_rows=(), notes_error=None, key_concepts=None):
+        self.key_concepts = key_concepts
+        self.teaches = []
         self.notes_rows = list(notes_rows)
         self.notes_error = notes_error
         self.results = []
@@ -132,6 +134,10 @@ class FakeNeo4j:
             if self.notes_error:
                 raise self.notes_error
             return self.notes_rows
+        if query == SLIDE_TEACHES_QUERY:
+            return [{"id": "s1", "teaches": self.teaches}]
+        if "ALIGNS_TO" in query:
+            return []
         if "content_markdown" in query:
             self.results.append(params)
             return []
@@ -139,7 +145,8 @@ class FakeNeo4j:
             self.statuses.append(params["status"])
             return []
         if "DERIVED_FROM" in query:
-            return [{"slide_ids": ["s1"], "rationale": "Why", "title": "Intro", "target_layout": "split"}]
+            return [{"slide_ids": ["s1"], "rationale": "Why", "title": "Intro", "target_layout": "split",
+                     "key_concepts": self.key_concepts}]
         if "RETURN s.id as id" in query:
             return [{"id": "s1", "elements": None, "text": "slide text", "course_id": None}]
         raise AssertionError(f"unexpected query: {query}")
@@ -184,3 +191,45 @@ def test_a_failing_notes_query_sets_error_and_writes_no_result():
     assert neo4j.statuses == ["error"]
     assert neo4j.results == []
     assert svc.synthesizer.calls == []
+
+
+# 4. section_concepts in the context
+
+FOCUS = "Concepts this section teaches (focus only: favour slide content about these; facts still come only from the slide text):"
+
+
+def test_concepts_and_their_terms_follow_the_purpose_and_precede_the_notes():
+    focus = [{"concept": "A", "terms": ["a1", "a2"]}, {"concept": "B", "terms": []}]
+    notes = [{"title": "N", "summary": "", "objectives": []}]
+    assert context(section_concepts=focus, section_notes=notes) == (
+        f"{TODAY}\n{FOCUS}\n- A (also called: a1; a2)\n- B\n{HEADER}\n- N")
+
+
+def test_no_concepts_add_no_part():
+    assert context(section_concepts=None) == TODAY
+    assert context(section_concepts=[]) == TODAY
+
+
+def test_key_concepts_and_their_vocabulary_reach_the_synthesizer():
+    neo4j = FakeNeo4j(key_concepts=["Gear pump"])
+    neo4j.teaches = [{"name": "Gear pump", "salience": 0.9, "canonical": "Pump", "related_terms": ["spur gear"]},
+                     {"name": "Valve", "salience": 0.8, "canonical": None, "related_terms": None}]
+    svc = service(neo4j)
+    svc.synthesize_node("n1", "go")
+    assert svc.synthesizer.calls[0]["section_concepts"] == [{"concept": "Gear pump", "terms": ["spur gear", "Pump"]}]
+
+
+def test_a_concept_removed_from_key_concepts_is_not_in_the_focus():
+    neo4j = FakeNeo4j(key_concepts=["Valve"])
+    neo4j.teaches = [{"name": "Gear pump", "salience": 0.9}, {"name": "Valve", "salience": 0.8}]
+    svc = service(neo4j)
+    svc.synthesize_node("n1", "go")
+    assert [c["concept"] for c in svc.synthesizer.calls[0]["section_concepts"]] == ["Valve"]
+
+
+def test_without_key_concepts_the_slides_teaches_are_the_focus():
+    neo4j = FakeNeo4j()
+    neo4j.teaches = [{"name": "Low", "salience": 0.1}, {"name": "High", "salience": 0.9}]
+    svc = service(neo4j)
+    svc.synthesize_node("n1", "go")
+    assert [c["concept"] for c in svc.synthesizer.calls[0]["section_concepts"]] == ["High", "Low"]

@@ -458,7 +458,8 @@ class ReaderLookup:
                 "course_id": deck_id,
                 "filename": filename,
                 "number": row["number"],
-                "teaches": [{"name": t["concept"], "salience": t.get("salience")} for t in s.get("teaches") or []],
+                "teaches": [{"name": t["concept"], "salience": t.get("salience"), "related_terms": t.get("related_terms") or []}
+                            for t in s.get("teaches") or []],
             })
         return out
 
@@ -471,7 +472,8 @@ class GraphLookup:
     OPTIONAL MATCH (s)-[t:TEACHES]->(k:Concept)
     OPTIONAL MATCH (k)-[:ALIGNS_TO]->(cc:CanonicalConcept)
     RETURN c.id AS course_id, c.filename AS filename, s.id AS id, s.number AS number,
-           collect(CASE WHEN k IS NULL THEN NULL ELSE {name: k.name, salience: t.salience, canonical: cc.name} END) AS teaches
+           collect(CASE WHEN k IS NULL THEN NULL ELSE {name: k.name, salience: t.salience, canonical: cc.name,
+                                                    related_terms: t.related_terms} END) AS teaches
     """
 
     def __init__(self, client):

@@ -7,7 +7,10 @@ from src.storage.neo4j import Neo4jClient
 from src.storage.weaviate import WeaviateClient
 from src.dspy_modules.synthesizer import ContentSynthesizer
 from src.dspy_modules.config import shared_lm as lm
+from src.publishing.concept_terms import concept_terms
+from src.publishing.course import effective_concepts
 from src.publishing.image_ids import qualify, qualify_placeholders
+from src.workbench.alignment import Neo4jAlignmentStore
 
 
 def asset_menu(rows) -> Dict[str, List[Dict[str, Any]]]:
@@ -43,6 +46,17 @@ UNWIND $slide_ids AS sid
 MATCH (sec:Section)-[:HAS_SLIDE]->(:Slide {id: sid})
 WHERE coalesce(sec.summary, '') <> '' OR size(coalesce(sec.objectives, [])) > 0
 RETURN sid AS slide_id, sec.id AS id, sec.title AS title, sec.level AS level, sec.start_page AS start_page, sec.end_page AS end_page, sec.summary AS summary, sec.objectives AS objectives
+"""
+
+
+SLIDE_TEACHES_QUERY = """
+UNWIND $slide_ids AS sid
+MATCH (s:Slide {id: sid})
+OPTIONAL MATCH (s)-[t:TEACHES]->(k:Concept)
+OPTIONAL MATCH (k)-[:ALIGNS_TO]->(cc:CanonicalConcept)
+RETURN s.id AS id,
+       collect(CASE WHEN k IS NULL THEN NULL ELSE {name: k.name, salience: t.salience, canonical: cc.name,
+                                                    related_terms: t.related_terms} END) AS teaches
 """
 
 
@@ -99,7 +113,8 @@ class SynthesisService:
             RETURN collect(s.id) as slide_ids, 
                    t.rationale as rationale, 
                    t.title as title,
-                   t.target_layout as target_layout
+                   t.target_layout as target_layout,
+                   t.key_concepts as key_concepts
             """
             result = self.neo4j_client.execute_query(query, {"id": target_node_id})
             if not result or not result[0]['slide_ids']:
@@ -111,6 +126,7 @@ class SynthesisService:
             section_rationale = result[0].get('rationale', '')
             section_title = result[0].get('title', '')
             target_layout = result[0].get('target_layout', 'documentary')  # Default to documentary
+            key_concepts = result[0].get('key_concepts') or []
             
             # 2. Get slide content (structured) from Neo4j (previously Weaviate)
             # We now prefer the structured 'elements' from Neo4j over flat text
@@ -162,6 +178,13 @@ class SynthesisService:
                 self._update_status(target_node_id, 'error', "No content found for source slides")
                 return
 
+            teaches = [t for r in self.neo4j_client.execute_query(SLIDE_TEACHES_QUERY, {"slide_ids": slide_ids})
+                       for t in r.get("teaches") or [] if t]
+            on_slides = [{"teaches": teaches}]
+            concepts = effective_concepts({"key_concepts": key_concepts}, on_slides)[0]
+            terms = concept_terms(concepts, on_slides, Neo4jAlignmentStore(self.neo4j_client))
+            focus = [{"concept": c, "terms": terms[c][1:]} for c in concepts]
+
             notes = section_notes(self.neo4j_client.execute_query(SECTION_NOTES_QUERY, {"slide_ids": slide_ids}))
 
             # 3. Call Synthesizer with Retry Logic
@@ -181,7 +204,8 @@ class SynthesisService:
                         section_title=section_title,
                         section_rationale=section_rationale,
                         target_layout=target_layout,
-                        section_notes=notes
+                        section_notes=notes,
+                        section_concepts=focus
                     )
                     if result:
                         break

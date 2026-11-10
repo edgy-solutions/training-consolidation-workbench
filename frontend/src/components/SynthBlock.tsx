@@ -325,6 +325,7 @@ export const SynthBlock: React.FC<SynthBlockProps> = ({ node, concepts, onRefres
                     {!concepts.exported && (
                         <div className="text-[10px] text-slate-400 mb-1">Subsections carry the exported concepts</div>
                     )}
+                    <div className="text-[10px] text-slate-400 mb-1">Concepts pick this section's slides, are listed on the summary and in the notes, and steer synthesis.</div>
                     <ul className="space-y-0.5">
                         {concepts.concepts.map(c => {
                             const first = c.sources[0];
@@ -361,6 +362,14 @@ export const SynthBlock: React.FC<SynthBlockProps> = ({ node, concepts, onRefres
                                         </>
                                     ) : (
                                         <span className="text-slate-400 italic">no source slide</span>
+                                    )}
+                                    {c.covered === false && (
+                                        <span
+                                            className="text-amber-700 italic"
+                                            title="The deck lists this concept but the synthesized text doesn't mention it. Remove it or re-synthesize."
+                                        >
+                                            listed, not covered
+                                        </span>
                                     )}
                                     {c.repeated_in.length > 0 && (() => {
                                         const why = c.overlap

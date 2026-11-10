@@ -3,6 +3,7 @@ import pytest
 
 from src.publishing.render import COURSE_NODES_QUERY, PROJECT_QUERY
 from src.workbench import section_concepts as sc
+from src.workbench.alignment import InMemoryAlignmentStore
 from tests.test_render_local import FakeNeo4j, harness  # noqa: F401  (harness is a fixture)
 
 PROJECT = {"id": "proj", "title": "P", "deck_ids": ["d1"]}
@@ -238,3 +239,43 @@ def test_remove_is_403_while_writes_are_off(api, monkeypatch):
     monkeypatch.delenv("WB_STORE_WRITES", raising=False)
     assert remove(client, "n-pascal", "Pascal's law").status_code == 403
     assert fake.writes == []
+
+
+def test_covered_is_none_without_a_body_or_when_not_exported():
+    v = view([n("a", concepts=["B"], content_markdown=" \n"), n("b", order=1, concepts=["B"], content_markdown=None),
+              n("p", order=2, concepts=["B"], content_markdown="B here"), n("k", parent="p", concepts=["B"])])
+    assert row(v, "a", "B")["covered"] is None and row(v, "b", "B")["covered"] is None
+    assert row(v, "p", "B")["covered"] is None
+
+
+def test_covered_by_name_and_false_when_listed_but_absent():
+    v = view([n("a", concepts=["B", "Raw A"], content_markdown="All about b today.")])
+    assert row(v, "a", "B")["covered"] is True
+    assert row(v, "a", "Raw A")["covered"] is False
+
+
+def test_covered_through_a_related_term_only():
+    s = {**SLIDES["s1"], "teaches": [{"name": "B", "salience": 0.5, "related_terms": ["spur gear"]}]}
+    v = sc.section_concepts(PROJECT, [n("a", concepts=["B"], content_markdown="The spur gears mesh.")], {"s1": s})
+    assert row(v, "a", "B")["covered"] is True
+
+
+def test_covered_through_an_alignment_synonym():
+    nodes = [n("a", concepts=["B"], content_markdown="The sibling term appears.")]
+    assert row(view(nodes), "a", "B")["covered"] is False
+    store = InMemoryAlignmentStore({"B": "Canon", "Sibling term": "Canon"})
+    v = sc.section_concepts(PROJECT, nodes, SLIDES, store)
+    assert row(v, "a", "B")["covered"] is True
+
+
+def test_alignment_is_asked_once_per_concept_name():
+    asked = []
+
+    class Counting(InMemoryAlignmentStore):
+        def synonyms(self, names):
+            asked.append(tuple(names))
+            return super().synonyms(names)
+
+    nodes = [n("a", concepts=["B"], content_markdown="text"), n("b", concepts=["B"], content_markdown="text")]
+    sc.section_concepts(PROJECT, nodes, SLIDES, Counting({}))
+    assert asked == [("B",)]

@@ -76,6 +76,7 @@ export interface SectionConcept {
     sources: ConceptSource[];
     repeated_in: ConceptRepeat[];
     overlap: boolean;
+    covered?: boolean | null;
 }
 
 export interface SectionConcepts {

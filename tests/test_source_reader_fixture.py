@@ -57,7 +57,7 @@ def test_sections_parentage_and_covers(reader):
 def test_slide_teaches(reader):
     for s in SLIDES:
         got = reader.slide(s["id"])["teaches"]
-        want = [{"concept": e["to"], "salience": e["salience"]} for e in EDGES["TEACHES"] if e["from"] == s["id"]]
+        want = [{"concept": e["to"], "salience": e["salience"], "related_terms": []} for e in EDGES["TEACHES"] if e["from"] == s["id"]]
         assert got == want
     assert reader.slide("nope") is None
 

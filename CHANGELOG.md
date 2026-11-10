@@ -7,6 +7,15 @@ Chart releases, newest first. A release is the GitHub release `v<version>`; earl
 - **Image placeholders load when the UI and the api are on different hosts.** 0.1.8 resolved `{{<deck>--<name>}}` to
   an api-relative `/source/fixture-asset/...` link, which the browser fetched from the UI's host and got `index.html`.
   The link now carries the api's host (`VITE_API_URL`), as the asset tray's links already did.
+- **Synthesis is told which concepts the section teaches.** The section's concepts, as the deck will list them, go
+  into the synthesis context as a focus line, each with the other names it goes by: the slides' related terms, its
+  canonical name and its aligned synonyms. The slide text stays the only source of facts. A section with no concepts
+  synthesizes as before.
+- **"listed, not covered" in the concepts panel.** When a section has synthesized text, a concept the deck lists that
+  neither it nor any of its other names appears in is flagged. It is a string check and never blocks a render or an
+  export.
+- **The concepts panel says what concepts do.** One line: they pick the section's slides, are listed on the summary and
+  in the notes, and steer synthesis.
 
 ## 0.1.9
 

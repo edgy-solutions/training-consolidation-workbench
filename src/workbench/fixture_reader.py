@@ -67,7 +67,8 @@ class CourseModel:
             self._covers.setdefault(e["from"], []).append({"concept": e["to"], "score": e.get("score")})
         self._teaches: Dict[str, List[dict]] = {}
         for e in (edges.get("TEACHES") or []):
-            self._teaches.setdefault(e["from"], []).append({"concept": e["to"], "salience": e.get("salience")})
+            self._teaches.setdefault(e["from"], []).append({"concept": e["to"], "salience": e.get("salience"),
+                                                          "related_terms": e.get("related_terms") or []})
         self._concepts = [c["name"] for c in ((nd.get("concepts") or {}).get("nodes") or [])]
 
     @property
