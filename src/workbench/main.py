@@ -1279,8 +1279,10 @@ def update_node_title(node_id: str, request: dict = Body(...), current_user: Use
 def get_section_concepts(project_id: str, current_user: User = Depends(get_current_user)):
     """Each section's concepts, their source slides and where else they are taught. Read only."""
     _require_readable(current_user.id, project_id)
+    reader = get_source_reader()
     try:
-        view = section_concepts.build_view(project_id, neo4j_client=neo4j_client, reader=get_source_reader())
+        view = section_concepts.build_view(project_id, neo4j_client=neo4j_client, reader=reader,
+                                           alignment=get_alignment_store(reader))
     except LookupError:
         raise HTTPException(status_code=404, detail="Draft not found")
     return {"sections": view}

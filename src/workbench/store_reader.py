@@ -68,7 +68,7 @@ CALL {
   WITH c
   OPTIONAL MATCH (c)-[:HAS_SLIDE]->(sl:Slide:TRAINING)-[t:TEACHES]->(k:Concept:TRAINING)
   WITH sl, t, k ORDER BY sl.number, k.name
-  RETURN collect({from: sl.id, to: k.name, salience: t.salience}) AS teaches
+  RETURN collect({from: sl.id, to: k.name, salience: t.salience, related_terms: t.related_terms}) AS teaches
 }
 RETURN properties(c) AS course, slides, sections, has_section, section_slide, covers, teaches
 """

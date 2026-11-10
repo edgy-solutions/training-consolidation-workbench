@@ -81,7 +81,7 @@ class ContentSynthesizer(dspy.Module):
         # Use ChainOfThought like the OutlineHarmonizer
         self.generate = dspy.ChainOfThought(GenerateRichContent)
     
-    def forward(self, slides: List[Dict[str, Any]], instruction: str, section_title: str = "", section_rationale: str = "", target_layout: str = "documentary", section_notes: List[Dict[str, Any]] = None) -> Dict[str, Any]:
+    def forward(self, slides: List[Dict[str, Any]], instruction: str, section_title: str = "", section_rationale: str = "", target_layout: str = "documentary", section_notes: List[Dict[str, Any]] = None, section_concepts: List[Dict[str, Any]] = None) -> Dict[str, Any]:
         """
         Args:
             slides: List of dicts with keys: id, text, assets (List[SourceAsset])
@@ -90,6 +90,7 @@ class ContentSynthesizer(dspy.Module):
             section_rationale: AI-generated rationale explaining why this section exists
             target_layout: Layout archetype (hero, documentary, split, grid, content_caption, table, blank)
             section_notes: Source section notes, dicts with title, summary, objectives; orientation only
+            section_concepts: dicts with concept and terms (other names); focus only
         """
         
         # 1. Format Text Context
@@ -121,6 +122,14 @@ class ContentSynthesizer(dspy.Module):
             section_context_parts.append(f"Section Title: {section_title}")
         if section_rationale:
             section_context_parts.append(f"Purpose: {section_rationale}")
+        if section_concepts:
+            lines = ["Concepts this section teaches (focus only: favour slide content about these; facts still come only from the slide text):"]
+            for sc in section_concepts:
+                line = f"- {sc['concept']}"
+                if sc.get("terms"):
+                    line += f" (also called: {'; '.join(sc['terms'])})"
+                lines.append(line)
+            section_context_parts.append("\n".join(lines))
         if section_notes:
             lines = ["Source section notes (orientation only; facts still come only from the slide text):"]
             for note in section_notes:

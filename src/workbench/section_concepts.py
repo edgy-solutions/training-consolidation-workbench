@@ -1,6 +1,7 @@
 """The concepts each section carries, where they come from, and where else they are taught."""
 from typing import Dict, List
 
+from src.publishing.concept_terms import concept_terms, covered
 from src.publishing.course import (
     REVISITING_ROLES, GraphLookup, ReaderLookup, effective_concepts, outline,
 )
@@ -34,7 +35,21 @@ def _sources(concept, own_slides, slide_index):
     return [_source(s, False) for s in elsewhere[:MAX_FALLBACK_SOURCES]]
 
 
-def section_concepts(project, nodes, slide_index) -> Dict[str, dict]:
+class _SynonymsOnce:
+    """One synonyms lookup per concept name per view: sections share concepts, and each lookup may be a query."""
+
+    def __init__(self, store):
+        self.store, self.seen = store, {}
+
+    def synonyms(self, names):
+        key = tuple(names)
+        if key not in self.seen:
+            self.seen[key] = self.store.synonyms(list(names))
+        return self.seen[key]
+
+
+def section_concepts(project, nodes, slide_index, alignment=None) -> Dict[str, dict]:
+    alignment = _SynonymsOnce(alignment) if alignment is not None else None
     children_of = outline(project, nodes)
     reached: List[tuple] = []  # (node, role, is_leaf) in outline order
 
@@ -64,17 +79,19 @@ def section_concepts(project, nodes, slide_index) -> Dict[str, dict]:
     out = {}
     for n, _, _ in reached:
         leaf, role, concepts, inherited, slides = info[n["id"]]
+        body = (n.get("content_markdown") or "").strip()
         rows = []
         for c in concepts:
             repeated = [r for r in named_by.get(c, []) if r["id"] != n["id"]] if leaf else []
             overlap = leaf and role not in REVISITING_ROLES and any(r["role"] not in REVISITING_ROLES for r in repeated)
             rows.append({"concept": c, "sources": _sources(c, slides, slide_index),
-                         "repeated_in": repeated, "overlap": overlap})
+                         "repeated_in": repeated, "overlap": overlap,
+                         "covered": covered(body, concept_terms([c], slides, alignment)[c]) if leaf and body else None})
         out[n["id"]] = {"exported": leaf, "inherited": inherited, "concepts": rows}
     return out
 
 
-def build_view(project_id, *, neo4j_client, reader):
+def build_view(project_id, *, neo4j_client, reader, alignment=None):
     """The concepts view for a project, read only. Returns {node_id: view}."""
     rows = neo4j_client.execute_query(PROJECT_QUERY, {"id": project_id})
     if not rows:
@@ -92,4 +109,4 @@ def build_view(project_id, *, neo4j_client, reader):
         for sl in lookup.deck_slides(deck_id) or []:
             slide_index.setdefault(sl["id"], sl)
     project = {"id": project_id, "title": rows[0].get("title") or "", "deck_ids": deck_ids}
-    return section_concepts(project, nodes, slide_index)
+    return section_concepts(project, nodes, slide_index, alignment)

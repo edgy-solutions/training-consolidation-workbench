@@ -139,6 +139,11 @@ def test_reader_lookup_shape():
     assert ReaderLookup(reader()).deck_slides("missing") is None
 
 
+def test_reader_lookup_carries_related_terms_and_defaults_to_none_listed():
+    slides = {s["id"]: s for s in ReaderLookup(reader()).deck_slides(COURSE_ID)}
+    assert all(isinstance(t["related_terms"], list) for s in slides.values() for t in s["teaches"])
+
+
 def test_fixture_image_resolver_forms():
     r = FixtureImageResolver(reader(), [COURSE_ID])
     n = image_id("slide_4_img_0")
