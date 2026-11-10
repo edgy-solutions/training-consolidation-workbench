@@ -2,6 +2,12 @@
 
 Chart releases, newest first. A release is the GitHub release `v<version>`; earlier ones are described there.
 
+## 0.1.10
+
+- **Image placeholders load when the UI and the api are on different hosts.** 0.1.8 resolved `{{<deck>--<name>}}` to
+  an api-relative `/source/fixture-asset/...` link, which the browser fetched from the UI's host and got `index.html`.
+  The link now carries the api's host (`VITE_API_URL`), as the asset tray's links already did.
+
 ## 0.1.9
 
 - **Alignment review UI, behind `api.alignmentReviewUi`** (renders `WB_ALIGNMENT_REVIEW_UI=on`; default off). A Review

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { api } from './api';
+import { api, assetSrc } from './api';
 
 // Deck-prefixed image placeholders in stored markdown: {{24ea01202009--figure-17-46.jpg}}.
 // Stored text keeps this form (the pptx export resolves it); the UI swaps in signed URLs for display.
@@ -27,8 +27,9 @@ export async function resolveAssetPlaceholders(markdown: string): Promise<string
             for (const id of stale) {
                 const input = fixtureUrl(id);
                 const url = urls[input];
-                // The api returns the input unchanged when it cannot resolve
-                if (url && url !== input) urlCache.set(id, { url, at: now });
+                // The api returns the input unchanged when it cannot resolve. Its links are api-relative
+                // (/source/fixture-asset/...); assetSrc points them at the api, which may not be the UI's host.
+                if (url && url !== input) urlCache.set(id, { url: assetSrc(url)!, at: now });
             }
         } catch (e) {
             console.error('Failed to resolve asset placeholders:', e);
