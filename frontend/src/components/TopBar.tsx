@@ -61,9 +61,17 @@ export const TopBar: React.FC<TopBarProps> = ({ discipline, setDiscipline }) => 
             .then(a => {
                 setReviewShown(a.enabled && a.can_review);
                 setReviewWrites(a.writes_enabled === true);
+                // /alignment is the review modal's page route; a reviewer who lands there gets it open.
+                if (a.enabled && a.can_review && window.location.pathname === '/alignment') setReviewOpen(true);
             })
             .catch(err => console.error("Failed to load review access", err));
-    }, []);
+    }, [auth.isAuthenticated]);
+
+    // Closing the review leaves /alignment, so a reload does not reopen it.
+    const closeReview = () => {
+        setReviewOpen(false);
+        if (window.location.pathname === '/alignment') window.history.replaceState({}, document.title, '/');
+    };
 
     // A persisted choice that no course carries any more would hide every course.
     useEffect(() => {
@@ -132,7 +140,7 @@ export const TopBar: React.FC<TopBarProps> = ({ discipline, setDiscipline }) => 
                         Review
                     </button>
                 )}
-                {reviewOpen && <AlignmentReview writesEnabled={reviewWrites} onClose={() => setReviewOpen(false)} />}
+                {reviewOpen && <AlignmentReview writesEnabled={reviewWrites} onClose={closeReview} />}
                 {settingsEnabled && (
                     <button
                         type="button"

@@ -40,6 +40,6 @@ app.kubernetes.io/component: {{ .component }}
 {{- if .Values.ui.apiUrl -}}
 {{- .Values.ui.apiUrl -}}
 {{- else if and .Values.api.ingress.enabled .Values.api.ingress.host -}}
-{{- printf "%s://%s" (ternary "https" "http" (not (empty .Values.api.ingress.tls))) .Values.api.ingress.host -}}
+{{- printf "%s://%s%s" (ternary "https" "http" (not (empty .Values.api.ingress.tls))) .Values.api.ingress.host (ternary "/api" "" (has "/api" (.Values.api.ingress.paths | default list))) -}}
 {{- end -}}
 {{- end -}}

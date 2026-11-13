@@ -8,7 +8,8 @@
 #   usage: KUBE_CONTEXT=<context> scripts/roll.sh <values file> [extra helm args ...]
 #   env:   NS (default training), RELEASE (default training-workbench),
 #          EXPECTED_MIN (default 20), the lock's expected_end from now,
-#          GATE_URL (optional, scheme://host): /healthz and / must answer 200 there,
+#          GATE_URL (optional, scheme://host): / must answer 200 there, and /healthz at GATE_API_URL,
+#          GATE_API_URL (optional, default GATE_URL): where the api answers; on a shared host that is <host>/api,
 #          GATE_INSECURE=1 accepts a self-signed cert on it (sandbox hosts, until cert-manager).
 #
 # THE LOCK. Before any helm upgrade the roller creates ConfigMap sandbox/roll-lock
@@ -71,10 +72,11 @@ if [ -n "${GATE_URL:-}" ]; then
   insecure=()
   [ "${GATE_INSECURE:-}" = 1 ] && insecure=(-k)
   for path in /healthz /; do
+    base="$GATE_URL"; [ "$path" = /healthz ] && base="${GATE_API_URL:-$GATE_URL}"
     # helm --wait returns when the new pod is Ready; the ingress can still route to the
     # terminating old one for a few seconds (a 502), so give it up to a minute.
     for _ in 1 2 3 4 5 6 7 8 9 10 11 12; do
-      code=$(curl -s ${insecure[@]+"${insecure[@]}"} -o /dev/null -w '%{http_code}' --max-time 15 "${GATE_URL%/}$path")
+      code=$(curl -s ${insecure[@]+"${insecure[@]}"} -o /dev/null -w '%{http_code}' --max-time 15 "${base%/}$path")
       [ "$code" = 200 ] && break
       sleep 5
     done
