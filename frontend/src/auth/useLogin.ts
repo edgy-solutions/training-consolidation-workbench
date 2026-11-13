@@ -46,7 +46,7 @@ export function useLogin(): LoginStatus {
     const start = useCallback(() => {
         if (!auth || !LOGIN_CONFIGURED) return;
         setStore(true, null);
-        auth.signinRedirect().catch((err: unknown) => {
+        auth.signinRedirect({ state: { returnTo: window.location.pathname } }).catch((err: unknown) => {
             setStore(false, err instanceof Error ? err.message : String(err));
         });
     }, [auth]);

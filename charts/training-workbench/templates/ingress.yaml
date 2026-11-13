@@ -1,3 +1,8 @@
+{{- if and .Values.api.enabled .Values.ui.enabled .Values.api.ingress.enabled .Values.ui.ingress.enabled (eq .Values.api.ingress.host .Values.ui.ingress.host) }}
+{{- if ne (toJson (.Values.api.ingress.paths | default (list "/"))) (toJson (list "/api")) }}
+{{- fail (printf "api and ui share host %s: set api.ingress.paths to [\"/api\"] so the api cannot answer page routes" .Values.api.ingress.host) }}
+{{- end }}
+{{- end }}
 {{- range $component := list "api" "ui" }}
 {{- $v := index $.Values $component }}
 {{- if and $v.enabled $v.ingress.enabled }}
@@ -9,9 +14,16 @@ metadata:
   labels:
     {{- include "tw.labels" $ | nindent 4 }}
     app.kubernetes.io/component: {{ $component }}
-  {{- with $v.ingress.annotations }}
+  {{- $ann := deepCopy ($v.ingress.annotations | default dict) }}
+  {{- if $.Values.traefikHttpsRedirect }}
+  {{- $key := "traefik.ingress.kubernetes.io/router.middlewares" }}
+  {{- if not (hasKey $ann $key) }}
+  {{- $_ := set $ann $key (printf "%s-%s-https-redirect@kubernetescrd" $.Release.Namespace (include "tw.fullname" $)) }}
+  {{- end }}
+  {{- end }}
+  {{- if $ann }}
   annotations:
-    {{- toYaml . | nindent 4 }}
+    {{- toYaml $ann | nindent 4 }}
   {{- end }}
 spec:
   {{- with $v.ingress.className }}
