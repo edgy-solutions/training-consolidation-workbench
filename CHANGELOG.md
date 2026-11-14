@@ -2,6 +2,16 @@
 
 Chart releases, newest first. A release is the GitHub release `v<version>`; earlier ones are described there.
 
+## 0.1.11
+
+- **The api answers under `/api` as well as at the root, so page routes such as `/alignment` reach the UI.** On a shared
+  host the chart routes only `/api` to the api and refuses any other api path there, and the UI's `VITE_API_URL`
+  derives with the `/api` suffix. Upgrade: shared-host values must change `api.ingress.paths` to `["/api"]`.
+- **Opt-in `traefikHttpsRedirect`.** Traefik only: renders a `Middleware` that redirects http to https permanently and
+  attaches it to both ingresses, unless an ingress sets its own `router.middlewares` annotation.
+- **`/alignment` opens the proposal review for a reviewer, and sign-in returns to the page it started from.** The
+  Review entry now appears right after sign-in, without a reload, and closing the review leaves `/alignment`.
+
 ## 0.1.10
 
 - **Image placeholders load when the UI and the api are on different hosts.** 0.1.8 resolved `{{<deck>--<name>}}` to

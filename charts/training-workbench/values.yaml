@@ -58,10 +58,9 @@ api:
     className: ""
     annotations: {}
     host: ""
-    # Prefix paths routed to this component. To share the UI's host, list the API's route
-    # prefixes here (/source, /draft, /render, /templates, /search, /synthesis, /curriculum,
-    # /project, /settings, /alignment, /healthz); the UI keeps / and the ingress picks the longest
-    # prefix. A prefix left out is answered by the UI's index.html: without /settings the gear never shows.
+    # The api answers every route under /api as well as at the root. On its own host keep ["/"].
+    # To share the UI's host set ["/api"] (the chart refuses anything else there); the UI's apiUrl then
+    # derives as <scheme>://<host>/api and the UI keeps every other path, so page routes like /alignment reach it.
     paths: ["/"]
     tls: []
   resources:
@@ -102,6 +101,10 @@ ui:
       memory: 32Mi
     limits:
       memory: 128Mi
+
+# Traefik only: answer http on this chart's ingresses with a permanent redirect to https.
+# Renders a traefik.io/v1alpha1 Middleware and attaches it to both ingresses.
+traefikHttpsRedirect: false
 
 podSecurityContext:
   runAsNonRoot: true

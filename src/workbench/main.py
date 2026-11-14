@@ -32,6 +32,7 @@ from src.workbench.models import (
     RenderRequest
 )
 
+from src.workbench.api_prefix import ApiPrefix
 from src.workbench.source_reader import get_source_reader
 from src.workbench import alignment, asset_links, section_concepts
 from src.workbench.source_routes import (
@@ -54,6 +55,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# The api answers every route both at the root and under /api; a shared-host ingress routes only /api to it.
+app.add_middleware(ApiPrefix)
 
 
 
